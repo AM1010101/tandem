@@ -45,6 +45,47 @@ CLI
 chmod +x "$APP/Contents/MacOS/tandem"
 [[ "$(TANDEM_APP_DIR="$APP" "$BIN/tandem" 'two words' --json)" == $'two words\n--json' ]]
 
+# `tandem url` adds this Mac's key to a tandem:// link and opens it in
+# the background. A fake `open` shows what it would have opened.
+FAKE_BIN="$SCRATCH/fake-bin"
+mkdir -p "$FAKE_BIN"
+cat > "$FAKE_BIN/open" <<'OPEN'
+#!/usr/bin/env bash
+printf '%s\n' "$@"
+OPEN
+chmod +x "$FAKE_BIN/open"
+if PATH="$FAKE_BIN:$PATH" "$BIN/tandem" url 'debug?out=/tmp/tree.txt' 2>/dev/null; then
+  echo "FAIL: tandem url sent a link without a key" >&2
+  exit 1
+fi
+KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+mkdir -p "$HOME/Library/Application Support/Tandem"
+printf '%s' "$KEY" > "$HOME/Library/Application Support/Tandem/url-key"
+# A bare [[ ]] doesn't stop macOS's bash 3.2 under `set -e`, so these
+# checks say what went wrong and exit themselves. The link goes to the
+# selected app (here the fake one), never whichever app claims the scheme.
+opens() {
+  local got want
+  got="$(PATH="$FAKE_BIN:$PATH" TANDEM_APP_DIR="$APP" "$BIN/tandem" url "$1")"
+  want="$(printf '%s\n' -g -a "$APP" "$2")"
+  if [[ "$got" != "$want" ]]; then
+    echo "FAIL: tandem url '$1' opened '$got', not '$want'" >&2
+    exit 1
+  fi
+}
+opens 'screenshot?out=/tmp/a b.png' "tandem://screenshot?out=/tmp/a b.png&key=$KEY"
+opens 'command' "tandem://command?key=$KEY"
+opens 'tandem-dev://seek?t=3' "tandem-dev://seek?t=3&key=$KEY"
+# The key goes before a #fragment, in the query where the app reads it.
+opens 'seek?t=3#here' "tandem://seek?t=3&key=$KEY#here"
+# A link that isn't Tandem's never gets the key.
+for link in 'https://example.com/?' 'file:///tmp/a' 'tandemx://seek?t=3'; do
+  if OUT="$(PATH="$FAKE_BIN:$PATH" "$BIN/tandem" url "$link" 2>/dev/null)" || [[ -n "$OUT" ]]; then
+    echo "FAIL: tandem url sent the key to $link" >&2
+    exit 1
+  fi
+done
+
 # While an install swaps the app in, the launcher waits for it instead of
 # starting a build of its own. A copy of it with a fake setup shows which.
 LAUNCHER="$SCRATCH/launcher"

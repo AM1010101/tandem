@@ -175,6 +175,9 @@ export class Tandem {
   check = (opts: { from?: number | string; to?: number | string; changed?: boolean; quick?: boolean } = {}) =>
     this.call<CheckResult>("check", opts);
   frame = (time: number | string, output: string) => this.call("frame", { time, output });
+  /** Several frames on one contact sheet PNG, each labelled with its time. */
+  frames = (opts: { times?: (number | string)[]; every?: number | string; from?: number | string; to?: number | string; width?: number; format?: string }, output: string) =>
+    this.call("frames", { ...opts, output });
   clip = (start: number | string, end: number | string, output?: string) => this.call("clip", { start, end, output });
   /** The readable text view (`tandem timeline`), for when you do want to look. */
   timelineText = async (opts: { summary?: boolean; from?: number | string; to?: number | string; words?: boolean } = {}) =>

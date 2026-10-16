@@ -635,6 +635,86 @@ public final class TandemService: @unchecked Sendable {
         }
     }
 
+    /// The same for a contact sheet: every frame rendered as `frame` would
+    /// render it, then laid out on one PNG.
+    public func prepareFrames(_ request: FramesRequest) throws -> @Sendable () async throws -> ImageResult {
+        let project = coordinator.project
+        let times = try Self.sheetTimes(request, duration: project.duration)
+        let width = request.width ?? ContactSheet.defaultTileWidth
+        guard ContactSheet.tileWidths.contains(width) else {
+            throw ServiceError(.badRequest, "Each frame's width is \(ContactSheet.tileWidths.lowerBound) to \(ContactSheet.tileWidths.upperBound) pixels, not \(width).")
+        }
+        let context = try renderContext(project, format: request.format)
+        let layout = ContactSheet.Layout(count: times.count, tileWidth: width, canvas: context.renderSize)
+        let maxSize = CGSize(width: layout.tileWidth, height: layout.tileHeight)
+        let output = request.output.map(outputURL)
+        if let output { try checkOutput(output, what: "contact sheet") }
+        let renderer = self.renderer
+        let frameDuration = project.settings.frameRate.frameDuration
+        return {
+            var frames: [(time: Time, png: Data)] = []
+            var warnings: [String] = []
+            // One at a time: each frame builds a whole composition, and doing
+            // several at once only fights over the decoders.
+            for time in times {
+                let rendered: RenderedFrame
+                do {
+                    rendered = try await renderer.frame(context: context, at: time, maxSize: maxSize)
+                } catch {
+                    throw ServiceError.wrap(error)
+                }
+                frames.append((time, rendered.png))
+                for warning in RenderWarnings.relevant(rendered.warnings, in: project, range: TimeRange(start: time, duration: frameDuration)) where !warnings.contains(warning) {
+                    warnings.append(warning)
+                }
+            }
+            let sheet = try ContactSheet.compose(frames, layout: layout)
+            var result = try Self.deliver(sheet, to: output, time: nil)
+            result.times = times
+            result.warnings = warnings
+            return result
+        }
+    }
+
+    /// The times a contact sheet shows, in order and once each: the ones
+    /// asked for, and one every `every` seconds through the range.
+    static func sheetTimes(_ request: FramesRequest, duration: Time) throws -> [Time] {
+        var times = request.times ?? []
+        if let every = request.every {
+            guard every > .zero else { throw ServiceError(.badRequest, "--every needs a positive number of seconds, not \(every.seconds).") }
+            let start = request.from ?? .zero
+            let end = request.to ?? duration
+            guard end >= start else { throw ServiceError(.badRequest, "The range is backwards (\(start) to \(end)).") }
+            // An explicit end is shown; the timeline's own end is an empty
+            // frame, so it isn't.
+            var time = start
+            var count = 0
+            while time < end || (request.to != nil && time == end) {
+                times.append(time)
+                count += 1
+                // Stops runaway steps (every 0.001 over an hour) before they
+                // allocate; the count check below says why.
+                if count > ContactSheet.maxTiles * 4 { break }
+                time = start + Time(flicks: every.flicks * Int64(count))
+            }
+        } else if request.from != nil || request.to != nil {
+            throw ServiceError(.badRequest, "--from and --to go with --every, like --every 5 --from 1:00 --to 2:00.")
+        }
+        guard !times.isEmpty else {
+            if request.every != nil { throw ServiceError(.badRequest, "There are no frames between \(request.from ?? .zero) and \(request.to ?? duration).") }
+            throw ServiceError(.badRequest, "Give some times, or --every <seconds> (with --from and --to for part of the timeline).")
+        }
+        if let negative = times.first(where: { $0 < .zero }) {
+            throw ServiceError(.badRequest, "The time can't be negative (\(negative)).")
+        }
+        let unique = Array(Set(times)).sorted()
+        guard unique.count <= ContactSheet.maxTiles else {
+            let shown = unique.count > ContactSheet.maxTiles * 4 ? "More than \(ContactSheet.maxTiles * 4)" : "\(unique.count)"
+            throw ServiceError(.badRequest, "That's \(shown) frames; a sheet takes at most \(ContactSheet.maxTiles). Use a bigger --every, a shorter range or fewer times, or make more than one sheet.")
+        }
+        return unique
+    }
+
     public func screenshot(output: String?) async throws -> ImageResult {
         guard let provider = screenshotProvider else {
             throw ServiceError(.unavailable, "Screenshots capture the Tandem app's window, so they need the app open. Use `frame` for a rendered frame.")

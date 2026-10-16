@@ -20,7 +20,7 @@ struct Arguments {
         "project", "author", "from", "to", "min", "keep", "limit", "label", "key", "expect",
         "output", "preset", "width", "height", "port", "timeout", "name", "format",
         "out", "search", "rewrite", "recipe", "max-words", "y", "track", "size",
-        "kind", "provider", "at", "duration", "variations", "clips", "field", "value", "mode", "kicker", "marker", "anchor", "media"
+        "kind", "provider", "at", "duration", "variations", "clips", "field", "value", "mode", "kicker", "marker", "anchor", "media", "every"
     ]
     /// Options that are on or off.
     static let flagOptions: Set<String> = ["json", "refresh", "words", "summary", "apply", "dry-run", "help", "version", "once", "portrait", "online", "optional", "keep-levels", "with-cache", "replace", "insert", "no-sounds", "pop", "changed", "quick", "all", "default", "copy"]

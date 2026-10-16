@@ -685,6 +685,21 @@ enum MCPTools {
             required: ["time"], readOnly: true, idempotent: true, defaults: ["maxWidth": .number(1280)]
         ),
         Tool(
+            name: "frames", title: "Look at several frames",
+            description: "Renders the timeline at several times and returns one contact sheet, each frame labelled with its time underneath. Give times, or every (seconds) with from and to, or both. At most 48 frames; each 480 px wide by default. Pass output to save the PNG instead.",
+            operation: .frames,
+            properties: [
+                "times": S.array(time("Timeline time."), "The times to show."),
+                "every": time("A frame every this many seconds, from from to to."),
+                "from": time("Where every starts. Default 0."),
+                "to": time("Where every stops (shown). Default the end of the timeline (not shown)."),
+                "width": S.integer("Each frame's width in pixels, 64 to 1920. Default 480."),
+                "output": S.string("Save the PNG here instead of returning it (absolute, or relative to the project folder)."),
+                "format": S.string("An alternate output format ID, like portrait.")
+            ],
+            readOnly: true, idempotent: true
+        ),
+        Tool(
             name: "screenshot", title: "Screenshot the app",
             description: "Captures the Tandem app's window, to see what Mike sees. Needs the app open.",
             operation: .screenshot, properties: ["output": S.string("Save the PNG here instead of returning it.")], readOnly: true

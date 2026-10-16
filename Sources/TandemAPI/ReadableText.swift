@@ -282,7 +282,10 @@ extension ValidateResult: ReadableResult {
 
 extension ImageResult: ReadableResult {
     public var readableText: String {
-        let at = time.map { " at \($0)" } ?? ""
+        var at = time.map { " at \($0)" } ?? ""
+        if let times {
+            at = ": \(times.count) frame\(times.count == 1 ? "" : "s"), at " + times.map(\.description).joined(separator: ", ")
+        }
         let head = path.map { "Wrote \($0) (\(bytes) bytes)\(at)." } ?? "PNG\(at), \(bytes) bytes (base64 in the JSON result)."
         return ([head] + warnings.map { "Warning: \($0)" }).joined(separator: "\n")
     }

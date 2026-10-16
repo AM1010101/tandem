@@ -108,6 +108,52 @@ final class CLITests: XCTestCase {
         XCTAssertTrue(badTime.stderr.contains("isn't a time"), badTime.stderr)
     }
 
+    func testHelpExplainsEditCommandsFromTheSchema() throws {
+        let folder = TempFolder()
+        let help = try tandem("help", "addTransition", in: folder.url)
+        XCTAssertEqual(help.status, 0, help.stderr)
+        XCTAssertTrue(help.stdout.hasPrefix("addTransition (an edit command for tandem apply): Adds a transition"), help.stdout)
+        XCTAssertTrue(help.stdout.contains("trackID"), help.stdout)
+        XCTAssertTrue(help.stdout.contains("required"), help.stdout)
+        XCTAssertTrue(help.stdout.contains(#"{"addTransition": {"trackID": "trk_camera""#), help.stdout)
+
+        let anyCase = try tandem("help", "addtransition", in: folder.url)
+        XCTAssertEqual(anyCase.stdout, help.stdout)
+
+        // join is a CLI command and an edit command: both are explained.
+        let join = try tandem("help", "join", in: folder.url)
+        XCTAssertTrue(join.stdout.hasPrefix("Usage: tandem join"), join.stdout)
+        XCTAssertTrue(join.stdout.contains(#"{"join": {"clipID""#), join.stdout)
+
+        let typo = try tandem("help", "addTransiton", in: folder.url)
+        XCTAssertEqual(typo.status, 2)
+        XCTAssertTrue(typo.stderr.contains("Did you mean `tandem help addTransition`?"), typo.stderr)
+
+        let overview = try tandem("help", in: folder.url)
+        XCTAssertTrue(overview.stdout.contains("tandem help <edit command>"), overview.stdout)
+    }
+
+    func testFramesWritesOneContactSheet() throws {
+        let folder = TempFolder()
+        XCTAssertEqual(try tandem("new", "Sheet.tandem", in: folder.url).status, 0)
+        let screen = try XCTUnwrap(try ProjectFile.load(from: folder.file("Sheet.tandem")).project.track(named: "Screen")).id
+        let solid = try tandem("apply", #"{"insertClip": {"trackID": "\#(screen)", "clip": {"content": {"solid": {"color": {"r": 0.2, "g": 0.4, "b": 0.8}}}, "start": 0, "duration": 4}}}"#, in: folder.url)
+        XCTAssertEqual(solid.status, 0, solid.stderr)
+        let named = try tandem("frames", "0", "0:01.5", "1", in: folder.url)
+        XCTAssertEqual(named.status, 0, named.stderr)
+        XCTAssertTrue(named.stdout.contains("3 frames"), named.stdout)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.file("frames-00.00.000-00.01.500.png").path), named.stdout)
+
+        let stepped = try tandem("frames", "--every", "1", "--to", "3", "--width", "160", "-o", "sheets/step.png", in: folder.url)
+        XCTAssertEqual(stepped.status, 0, stepped.stderr)
+        XCTAssertTrue(stepped.stdout.contains("4 frames"), stepped.stdout)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.file("sheets/step.png").path))
+
+        let nothing = try tandem("frames", in: folder.url)
+        XCTAssertEqual(nothing.status, 2)
+        XCTAssertTrue(nothing.stderr.contains("--every"), nothing.stderr)
+    }
+
     func testApplyTakesTheBatchQuotedAsItsArgument() throws {
         // As `tandem media` suggests fixes: tandem apply '{"updateMedia": ...}'.
         let folder = TempFolder()

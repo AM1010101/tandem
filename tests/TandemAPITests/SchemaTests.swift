@@ -1,4 +1,5 @@
 import XCTest
+import TandemRender
 @testable import TandemAPI
 @testable import TandemCore
 
@@ -182,5 +183,33 @@ final class SchemaTests: XCTestCase {
         XCTAssertEqual(CommandSchema.validate(batch, against: CommandSchema.batch), [])
         let bad = try json(#"{"commands": [{"blade": {"at": 12}}], "expectedRevison": 3}"#)
         XCTAssertEqual(CommandSchema.validate(bad, against: CommandSchema.batch).count, 1)
+    }
+
+    func testThePresetFieldNamesEveryTitlePreset() throws {
+        guard case .object(let fields) = CommandSchema.textContent,
+              case .object(let properties)? = fields["properties"],
+              case .object(let preset)? = properties["preset"],
+              case .string(let description)? = preset["description"] else {
+            return XCTFail("TextContent needs a described preset field")
+        }
+        for id in TitlePresets.builtIn.map(\.id) {
+            XCTAssertTrue(description.contains(id), "\(id) isn't in \(description)")
+        }
+    }
+
+    func testHelpForAnEditCommandShowsItsArgumentsAndExample() throws {
+        let help = CommandSchema.help(.addTransition)
+        XCTAssertTrue(help.hasPrefix("addTransition (an edit command for tandem apply): Adds a transition"), help)
+        XCTAssertTrue(help.contains("\n  trackID     string, required\n"), help)
+        XCTAssertTrue(help.contains("\n  transition  Transition, required\n"), help)
+        // A shared model is opened up one level, so its fields are there too.
+        XCTAssertTrue(help.contains("\n      fromClipID   string. Outgoing clip; leave out for a head transition.\n"), help)
+        XCTAssertTrue(help.contains("one of"), help)
+        XCTAssertTrue(help.contains(CommandSchema.entry(.addTransition)!.example), help)
+        XCTAssertFalse(CommandSchema.help(.removeTransition).contains("trackID"), "removeTransition takes only the transition's ID")
+
+        for command in CommandCase.allCases {
+            XCTAssertTrue(CommandSchema.help(command).contains(CommandSchema.entry(command)!.example), command.rawValue)
+        }
     }
 }

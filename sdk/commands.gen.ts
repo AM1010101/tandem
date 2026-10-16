@@ -230,7 +230,7 @@ export type TextContent = {
   animationIn?: "none" | "fade" | "pop" | "slideUp" | "typewriter" | "fadeIn" | "fadeOut" | "popIn" | "popOut";
   /** fade, pop, slideUp or typewriter, played backwards as animationOut. none switches the preset's off. */
   animationOut?: "none" | "fade" | "pop" | "slideUp" | "typewriter" | "fadeIn" | "fadeOut" | "popIn" | "popOut";
-  /** A title preset, like callout, label or sectionHeader. */
+  /** A title preset: label (Plain label such as JAMIES SCREEN, 8x or VS); callout (Punchy boxed callout such as 14 TIPS or FULL VIDEO LINKED BELOW); sectionHeader (Two lines: a small accent line over a big title, such as TIP 1 / CURSOR DOCS); version (Big version number at the start of a release video, such as v1.46.0); caption (Short-form caption that highlights each word as it's spoken). */
   preset?: string;
   style?: TextStyle;
   text?: string;

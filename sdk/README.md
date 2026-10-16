@@ -1,4 +1,4 @@
-# Tandem SDK (spike)
+# Tandem SDK
 
 A thin TypeScript client for Tandem's local HTTP API, for "code mode": write
 one short script that reads the project, works out the edit and applies it as

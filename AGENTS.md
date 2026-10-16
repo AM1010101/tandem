@@ -46,6 +46,10 @@ this repo root. It requires macOS 15 or newer and Xcode 26 or newer with Swift 6
   Core model and time logic stay independent of UI and media frameworks.
 - `docs/AGENTS.md` documents the CLI, MCP and HTTP API. Keep it current when
   command behaviour changes.
+- `sdk/` is a TypeScript client over the HTTP API for agents' bulk edits.
+  When edit commands change, regenerate `sdk/commands.gen.ts` from a running
+  server (`bun sdk/gen-types.ts <project.tandem>`) and run
+  `cd sdk && bun run typecheck`.
 - `skills/tandem/SKILL.md` is the short skill that teaches agents to edit
   with Tandem; it points at `docs/AGENTS.md`. Keep its rules and the
   commands it names current too. On Mike's Mac it's linked into

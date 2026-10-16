@@ -619,6 +619,12 @@ export type SetFormatLayoutArgs = {
   slot: "top" | "bottom" | "full";
 };
 
+/** Makes an alternate output format the canvas, so the app shows it: the project takes the format's size, and each clip's placement there becomes its main one. Scale-only keyframes (a sticker's pop) are scaled to match; a zoom that also moves is dropped with a warning, since the format never showed it. A clip hidden in the format is switched off. Use it on a copy (tandem short --copy does both), as the landscape layout is gone afterwards. */
+export type AdoptFormatArgs = {
+  /** Format ID, like portrait. */
+  format: string;
+};
+
 /** A slow zoom or pan over the whole of each clip (Ken Burns), for stills and photos. Starts from the clip's current placement, so apply the fill layout first in a short. amount is how much bigger the zoomed end is (default 1.12). Replaces the clip's position and scale animation. */
 export type AddMotionArgs = {
   /** How much bigger the zoomed end is, 1 to 3. Default 1.12. */
@@ -747,6 +753,7 @@ export interface CommandArgs {
   applyLayout: ApplyLayoutArgs;
   zoomToRegion: ZoomToRegionArgs;
   setFormatLayout: SetFormatLayoutArgs;
+  adoptFormat: AdoptFormatArgs;
   addMotion: AddMotionArgs;
   addTransition: AddTransitionArgs;
   updateTransition: UpdateTransitionArgs;
@@ -766,4 +773,4 @@ export type CommandName = keyof CommandArgs;
 /** One edit command: an object with exactly one key, the command's name. */
 export type Command = { [K in CommandName]: { [P in K]: CommandArgs[P] } }[CommandName];
 
-export const commandNames = ["updateProject","updateSettings","addTrack","removeTrack","moveTrack","updateTrack","addMedia","updateMedia","removeMedia","placeMedia","insertClip","removeClips","rippleDeleteRange","closeGap","insertTime","insertTemplate","addSectionCards","fitSectionCards","blade","join","joinThroughEdits","trim","roll","slip","slide","setSpeed","moveClips","updateClip","link","unlink","applyLayout","zoomToRegion","setFormatLayout","addMotion","addTransition","updateTransition","removeTransition","addEffect","updateEffect","removeEffect","moveEffect","setKeyframes","normalizeSpeech","addMarker","updateMarker","removeMarker"] as const;
+export const commandNames = ["updateProject","updateSettings","addTrack","removeTrack","moveTrack","updateTrack","addMedia","updateMedia","removeMedia","placeMedia","insertClip","removeClips","rippleDeleteRange","closeGap","insertTime","insertTemplate","addSectionCards","fitSectionCards","blade","join","joinThroughEdits","trim","roll","slip","slide","setSpeed","moveClips","updateClip","link","unlink","applyLayout","zoomToRegion","setFormatLayout","adoptFormat","addMotion","addTransition","updateTransition","removeTransition","addEffect","updateEffect","removeEffect","moveEffect","setKeyframes","normalizeSpeech","addMarker","updateMarker","removeMarker"] as const;

@@ -44,6 +44,16 @@ rounds up.
    by its label. Pass `--expect <revision>` from your last read so you never
    edit over his changes. On a stale revision, read again. Try big batches
    with `--dry-run` first.
+   For a job that touches many things at once (every caption, every push,
+   every pause), write a short script against the SDK in the Tandem repo's
+   `sdk/` folder instead of hand-building JSON or throwaway Python:
+   `~/.bun/bin/bun ~/dev/me/tandem/sdk/run.ts "<name>.tandem" script.ts`
+   (or `-e '<code>'`). `t.project()` finds clips, transitions and captions,
+   `t.edit(label, commands)` dry-runs then applies one labelled batch against
+   the revision you read, and it prints only what the script returns.
+   `sdk/README.md` has the API and `sdk/examples/` the caption fix, swooshes
+   on pushes and music swells. Small edits are still quicker with
+   `tandem apply`.
 3. **Look.** `tandem frame <time> -o frame.png` for a still,
    `tandem clip <start> <end>` for a 720p review MP4. Look at what you
    changed instead of trusting the numbers.

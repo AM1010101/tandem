@@ -195,6 +195,21 @@ curl -s -N -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$PORT/v1/watch"
   status: 400 bad request, 401 token, 404 not found, 409 conflict (stale
   revision, overlap, locked, nothing to undo), 501 not built yet.
 
+### Code mode (the SDK)
+
+`sdk/` is a thin TypeScript client over the HTTP API, for bulk jobs: one
+script reads the project, works out the edit and applies it as one labelled
+batch, and only its result prints. It finds the project's lock file, and
+starts `tandem serve` for the run when nothing is serving the project.
+
+```bash
+~/.bun/bin/bun sdk/run.ts "<name>.tandem" sdk/examples/swoosh-pushes.ts
+~/.bun/bin/bun sdk/run.ts "<name>.tandem" -e 'const p = await t.project(); return p.captions().length'
+```
+
+`sdk/README.md` has the API. After edit commands change, regenerate its
+types from a running server with `bun sdk/gen-types.ts <project.tandem>`.
+
 ## How editing works
 
 **One way to change a project.** Every change is an edit command in a

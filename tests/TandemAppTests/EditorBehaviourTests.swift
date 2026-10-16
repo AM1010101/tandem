@@ -528,6 +528,47 @@ final class EditorBehaviourTests: XCTestCase {
         XCTAssertTrue(editor.model.review.isEmpty, "and the violet's gone")
     }
 
+    func testPausingHalfwayThroughAnAgentChangeStillReviewsIt() throws {
+        let playback = editor.model.playback
+        func addChange(at start: Double) {
+            editor.model.apply(EditBatch(label: "B-roll over the intro", author: "claude", commands: [.placeMedia(mediaIDs: [editor.clip("B-roll").mediaID!], at: t(start), duration: t(2))]))
+            editor.settle()
+            XCTAssertFalse(editor.model.reviewLog.isEmpty)
+        }
+        addChange(at: 4)
+        playback.seek(to: t(3.8))
+        editor.settle(0.3)
+
+        // Play into it, pause halfway, then play on to the end: every
+        // second of it was watched, so it's reviewed.
+        editor.press("space")
+        editor.wait(for: "halfway") { playback.time > t(5) }
+        editor.press("space")
+        editor.settle(0.4)
+        XCTAssertFalse(editor.model.reviewLog.isEmpty, "only half watched so far")
+        editor.press("space", settling: 0)
+        editor.wait(for: "past the end of it") { playback.time > t(6.2) }
+        editor.press("space")
+        editor.settle()
+        XCTAssertTrue(editor.model.reviewLog.isEmpty, "watched it all, with a pause in the middle")
+
+        // A jump while paused skips some of it, so that doesn't count.
+        addChange(at: 10)
+        playback.seek(to: t(9.8))
+        editor.settle(0.3)
+        editor.press("space")
+        editor.wait(for: "into it") { playback.time > t(10.6) }
+        editor.press("space")
+        editor.settle(0.3)
+        playback.seek(to: playback.time + Time(seconds: 0.6))
+        editor.settle(0.3)
+        editor.press("space", settling: 0)
+        editor.wait(for: "past the end of it") { playback.time > t(12.2) }
+        editor.press("space")
+        editor.settle()
+        XCTAssertFalse(editor.model.reviewLog.isEmpty, "jumped over a bit of it")
+    }
+
     func testTheSidebarFollowsWhatsNearThePlayhead() throws {
         editor.model.apply(try XCTUnwrap(CommentEdits.add("Cut the umm", at: t(12), id: "mk_umm")))
         editor.model.apply(EditBatch(label: "To-do", commands: [.addMarker(marker: Marker(id: "mk_todo", time: t(16), name: "B-roll: the SQLite file", kind: .todo, note: "Open it in TablePlus"))]))

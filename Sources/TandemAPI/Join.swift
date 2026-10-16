@@ -130,9 +130,7 @@ extension TandemService {
             throw ServiceError(.badRequest, "`to` (\(to)) can't be before `from` (\(from)).")
         }
         let (project, revision) = coordinator.snapshot()
-        if let expected = request.expectedRevision, expected != revision {
-            throw ServiceError.wrap(EditError.staleRevision(expected: expected, actual: revision))
-        }
+        try checkExpected(request.expectedRevision, at: revision)
         var range: TimeRange?
         if request.from != nil || request.to != nil {
             let start = request.from ?? .zero

@@ -381,9 +381,7 @@ public final class TandemService: @unchecked Sendable {
             throw ServiceError(.badRequest, "`keep` (\(TimeText.duration(keep))) must be shorter than `min` (\(TimeText.duration(minimum))).")
         }
         let (project, revision) = coordinator.snapshot()
-        if let expected = request.expectedRevision, expected != revision {
-            throw ServiceError.wrap(EditError.staleRevision(expected: expected, actual: revision))
-        }
+        try checkExpected(request.expectedRevision, at: revision)
         let map = TranscriptTools.speechMap(project, analysis: analysis)
         let pauses = TranscriptTools.pauses(in: map, minimum: minimum, from: request.from, to: request.to)
         let cuts = TranscriptTools.plan(pauses, keep: keep, frameRate: project.settings.frameRate)
@@ -421,6 +419,14 @@ public final class TandemService: @unchecked Sendable {
     }
 
     // MARK: - apply
+
+    /// Refuses a call made from a stale read. Media scans since the read
+    /// don't count (see `ProjectCoordinator.isCurrent`).
+    func checkExpected(_ expected: Int?, at revision: Int) throws {
+        if let expected, !coordinator.isCurrent(expected, at: revision) {
+            throw ServiceError.wrap(EditError.staleRevision(expected: expected, actual: revision))
+        }
+    }
 
     public func apply(_ request: ApplyRequest, context: CallContext) throws -> ApplyResult {
         guard !request.commands.isEmpty else {
@@ -474,9 +480,7 @@ public final class TandemService: @unchecked Sendable {
     /// would, and reports the outcome without committing.
     func dryRun(_ batch: EditBatch) throws -> ApplyResult {
         let (project, revision) = coordinator.snapshot()
-        if let expected = batch.expectedRevision, expected != revision {
-            throw ServiceError.wrap(EditError.staleRevision(expected: expected, actual: revision))
-        }
+        try checkExpected(batch.expectedRevision, at: revision)
         var working = project
         var context = EditContext()
         for (index, command) in batch.commands.enumerated() {
@@ -504,21 +508,45 @@ public final class TandemService: @unchecked Sendable {
 
     // MARK: - undo and redo
 
-    public func undo(expectedRevision: Int?) throws -> UndoResult {
-        try step(.undo, expectedRevision: expectedRevision)
+    public func undo(expectedRevision: Int?, count: Int? = nil) throws -> UndoResult {
+        try steps(.undo, expectedRevision: expectedRevision, count: count)
     }
 
-    public func redo(expectedRevision: Int?) throws -> UndoResult {
-        try step(.redo, expectedRevision: expectedRevision)
+    public func redo(expectedRevision: Int?, count: Int? = nil) throws -> UndoResult {
+        try steps(.redo, expectedRevision: expectedRevision, count: count)
     }
 
-    private func step(_ kind: ServiceEvent.Kind, expectedRevision: Int?) throws -> UndoResult {
+    /// Undoes or redoes `count` steps under one lock, so an agent backing
+    /// out several of its edits doesn't have to chase the revision each
+    /// step makes. Stops early, without failing, when it runs out.
+    private func steps(_ kind: ServiceEvent.Kind, expectedRevision: Int?, count: Int?) throws -> UndoResult {
+        let count = count ?? 1
+        guard count >= 1 else { throw ServiceError(.badRequest, "`count` must be 1 or more.") }
         editLock.lock()
         defer { editLock.unlock() }
-        let (current, revision) = coordinator.snapshot()
+        let revision = coordinator.revision
+        // Strict, unlike edits: after a media scan the step on top of the
+        // stack is the scan, not the edit the caller read.
         if let expected = expectedRevision, expected != revision {
             throw ServiceError.wrap(EditError.staleRevision(expected: expected, actual: revision))
         }
+        var done: [UndoResult] = []
+        while done.count < count {
+            do {
+                done.append(try step(kind))
+            } catch let error as ServiceError where !done.isEmpty && (error.code == "nothingToUndo" || error.code == "nothingToRedo") {
+                break
+            }
+        }
+        var result = done[done.count - 1]
+        result.count = done.count
+        result.labels = done.map(\.label)
+        result.authors = done.map(\.author)
+        return result
+    }
+
+    private func step(_ kind: ServiceEvent.Kind) throws -> UndoResult {
+        let (current, revision) = coordinator.snapshot()
         let action = kind == .undo ? "undo" : "redo"
         if let result = kind == .undo ? coordinator.undo() : coordinator.redo() {
             // The coordinator labels the step "Undo <label>"; report the edit's own label.

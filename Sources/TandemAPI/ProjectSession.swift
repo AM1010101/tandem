@@ -272,7 +272,7 @@ public final class ProjectSession: @unchecked Sendable {
             let (commands, added) = Self.refreshCommands(report.items, scannedFrom: project, into: current, folder: folder)
             guard !commands.isEmpty else { return MediaRefresh(added: [], cameraTakes: []) }
             do {
-                try coordinator.apply(EditBatch(label: "Found new media", author: "system", commands: commands, expectedRevision: revision))
+                try coordinator.apply(EditBatch(label: EditBatch.mediaScanLabel, author: EditAuthor.system, commands: commands, expectedRevision: revision))
             } catch EditError.staleRevision where attempt < 20 {
                 continue
             }

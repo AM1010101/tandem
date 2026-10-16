@@ -262,6 +262,16 @@ public struct EditBatch: Codable, Equatable, Sendable {
         self.idempotencyKey = idempotencyKey
     }
 
+    /// The label of the edit Tandem makes when it finds new files in the
+    /// project folder.
+    public static let mediaScanLabel = "Found new media"
+
+    /// Tandem adding files it found in the folder, which doesn't make an
+    /// agent's `expectedRevision` stale.
+    public var isMediaScan: Bool {
+        author == EditAuthor.system && label == Self.mediaScanLabel
+    }
+
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         label = try c.decode(.label, or: "Edit")

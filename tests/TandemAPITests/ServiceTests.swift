@@ -56,6 +56,64 @@ final class ServiceTests: XCTestCase {
         }
     }
 
+    private func mediaScan(_ h: ServiceHarness, _ id: String) throws {
+        let item = MediaItem(id: id, path: "\(id).mp4", kind: .video, role: .broll, duration: t(5), hasVideo: true)
+        try h.service.coordinator.apply(EditBatch(label: EditBatch.mediaScanLabel, author: EditAuthor.system, commands: [.addMedia(item: item)]))
+    }
+
+    func testAMediaScanDoesntBreakExpectedRevision() throws {
+        let h = try ServiceHarness()
+        defer { h.close() }
+        try mediaScan(h, "med_new1")
+        let dry = try h.service.apply(ApplyRequest(commands: [.blade(at: t(20))], expectedRevision: 1, dryRun: true), context: h.context)
+        XCTAssertEqual(dry.revision, 2)
+        let applied = try h.service.apply(ApplyRequest(commands: [.blade(at: t(20))], expectedRevision: 1), context: h.context)
+        XCTAssertEqual(applied.revision, 3)
+        // Undo stays strict: the step on top of the stack would be the scan,
+        // not the edit the caller read.
+        try mediaScan(h, "med_new2")
+        assertServiceError(.staleRevision) { _ = try h.service.undo(expectedRevision: 3) }
+    }
+
+    func testUndoSeveralStepsInOneCall() throws {
+        let h = try ServiceHarness()
+        defer { h.close() }
+        let before = h.service.coordinator.project
+        try h.apply(.blade(at: t(10)), label: "Cut")
+        try h.apply(.blade(at: t(20)), label: "Second cut")
+        let undone = try h.service.undo(expectedRevision: 3, count: 2)
+        XCTAssertEqual(undone.revision, 5)
+        XCTAssertEqual(undone.count, 2)
+        XCTAssertEqual(undone.labels, ["Second cut", "Cut"])
+        XCTAssertEqual(undone.label, "Cut")
+        XCTAssertEqual(h.service.coordinator.project, before)
+        XCTAssertTrue(undone.readableText.contains("Second cut"), undone.readableText)
+
+        let redone = try h.service.redo(expectedRevision: 5, count: 2)
+        XCTAssertEqual(redone.labels, ["Cut", "Second cut"])
+
+        // Asking for more steps than there are undoes what there is.
+        let all = try h.service.undo(expectedRevision: nil, count: 5)
+        XCTAssertEqual(all.count, 2)
+        assertServiceError(.nothingToUndo) { _ = try h.service.undo(expectedRevision: nil, count: 2) }
+        assertServiceError(.badRequest) { _ = try h.service.undo(expectedRevision: nil, count: 0) }
+    }
+
+    func testHeadlessUndoSeveralSteps() throws {
+        let folder = TempFolder()
+        let url = try APIFixture.write(to: folder.url)
+        let original = try ProjectFile.load(from: url).project
+        try headless(url) { service in
+            _ = try service.apply(ApplyRequest(label: "Cut", commands: [.blade(at: t(10))]), context: CallContext(author: "claude"))
+        }
+        try headless(url) { service in
+            _ = try service.apply(ApplyRequest(label: "Marker", commands: [.addMarker(marker: Marker(id: "mk_new", time: t(5), name: "New"))]), context: CallContext(author: "claude"))
+        }
+        let undone = try headless(url) { try $0.undo(expectedRevision: nil, count: 2) }
+        XCTAssertEqual(undone.labels, ["Marker", "Cut"])
+        XCTAssertEqual(try ProjectFile.load(from: url).project, original)
+    }
+
     func testFailedEditKeepsEditErrorWording() throws {
         let h = try ServiceHarness()
         defer { h.close() }

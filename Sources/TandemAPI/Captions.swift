@@ -137,9 +137,7 @@ extension TandemService {
         }
         let trackName = request.track ?? "Captions"
         let (project, revision) = coordinator.snapshot()
-        if let expected = request.expectedRevision, expected != revision {
-            throw ServiceError.wrap(EditError.staleRevision(expected: expected, actual: revision))
-        }
+        try checkExpected(request.expectedRevision, at: revision)
         let map = TranscriptTools.speechMap(project, analysis: analysis)
         let words = map.words.filter { word in
             (request.from.map { word.start >= $0 } ?? true) && (request.to.map { word.end <= $0 } ?? true)

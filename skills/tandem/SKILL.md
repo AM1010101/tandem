@@ -41,8 +41,10 @@ rounds up.
    the quiet.)
 2. **Edit in labelled batches.** `tandem apply '{"label": "B-roll over the
    config file", "commands": [...]}'` makes one undo step, which Mike reads
-   by its label. Pass `--expect <revision>` from your last read so you never
-   edit over his changes. On a stale revision, read again. Try big batches
+   by its label. Pass `--expect <revision>` from the read you based the
+   edit on (`tandem status --revision` prints just the number), not one
+   taken right before applying, so you never edit over his changes. Tandem
+   finding new media doesn't make it stale. On a stale revision, read again. Try big batches
    with `--dry-run` first.
    For a job that touches many things at once (every caption, every push,
    every pause), write a short script against the SDK in the Tandem repo's
@@ -515,7 +517,8 @@ His first review round, 16 comments, became these:
   project at hand-back. While it restarts, commands wait for it (up to 90 s).
 - Mike may be editing at the same time: keep batches small, label them, and
   always pass `--expect`.
-- Undo only your own edits: `tandem undo --expect <revision>`.
+- Undo only your own edits: `tandem undo --expect <revision>`, and
+  `--count N` to undo several in one go (each undo is a new revision).
 - Use what Tandem does natively instead of workarounds:
   - `holdEdges` on a clip to hold its first or last frame, never a still
     exported from it (stills go stale and flicker);

@@ -193,6 +193,44 @@ final class CLITests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: ProjectSession.lockURL(for: folder.file("Loop.tandem")).path))
     }
 
+    func testRevisionUndoCountAndJSONErrors() throws {
+        let folder = TempFolder()
+        XCTAssertEqual(try tandem("new", "Revs.tandem", in: folder.url).status, 0)
+        let marker = { (id: String) in #"{"addMarker": {"marker": {"id": "\#(id)", "time": 2, "name": "M"}}}"# }
+        XCTAssertEqual(try tandem("apply", marker("mk_a"), "--label", "First", in: folder.url).status, 0)
+        XCTAssertEqual(try tandem("apply", marker("mk_b"), "--label", "Second", in: folder.url).status, 0)
+
+        let revision = try tandem("status", "--revision", in: folder.url)
+        XCTAssertEqual(revision.status, 0, revision.stderr)
+        XCTAssertEqual(revision.stdout, "2\n")
+
+        let badCount = try tandem("undo", "--count", "zero", in: folder.url)
+        XCTAssertEqual(badCount.status, 2)
+
+        let undo = try tandem("undo", "--count", "2", "--expect", "2", in: folder.url)
+        XCTAssertEqual(undo.status, 0, undo.stderr)
+        XCTAssertEqual(undo.stdout, "Undid 2 edits: \"Second\" (by cli), \"First\" (by cli). Now at revision 4.\n")
+        XCTAssertEqual(try tandem("status", "--revision", in: folder.url).stdout, "4\n")
+
+        let undoJSON = try tandem("redo", "--count", "2", "--json", in: folder.url)
+        XCTAssertEqual(undoJSON.status, 0, undoJSON.stderr)
+        let redone = try ServiceJSON.decoder().decode(UndoResult.self, from: Data(undoJSON.stdout.utf8))
+        XCTAssertEqual(redone.labels, ["First", "Second"])
+
+        // An error in --json mode is a JSON object on stdout and a non-zero exit.
+        XCTAssertEqual(try tandem("new", "Other.tandem", in: folder.url).status, 0)
+        for arguments in [["status", "--json"], ["status", "--revision"]] {
+            let ambiguous = try tandem(arguments, in: folder.url)
+            XCTAssertEqual(ambiguous.status, 1, arguments.joined(separator: " "))
+            if arguments.contains("--json") {
+                let envelope = try ServiceJSON.decoder().decode(ErrorEnvelope.self, from: Data(ambiguous.stdout.utf8))
+                XCTAssertTrue(envelope.error.message.contains("has 2 projects"), envelope.error.message)
+            } else {
+                XCTAssertEqual(ambiguous.stdout, "")
+            }
+        }
+    }
+
     func testServeTakesCommandsOverHTTP() throws {
         let folder = TempFolder()
         let url = try APIFixture.write(to: folder.url)

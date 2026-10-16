@@ -513,26 +513,31 @@ public struct UndoRequest: ServiceCall {
     /// Refuse if the project has moved on, so an agent never undoes
     /// someone else's edit.
     public var expectedRevision: Int?
+    /// How many steps to undo, newest first. Defaults to 1.
+    public var count: Int?
 
-    public init(expectedRevision: Int? = nil) {
+    public init(expectedRevision: Int? = nil, count: Int? = nil) {
         self.expectedRevision = expectedRevision
+        self.count = count
     }
 
     public func run(on service: TandemService, context: CallContext) async throws -> UndoResult {
-        try service.undo(expectedRevision: expectedRevision)
+        try service.undo(expectedRevision: expectedRevision, count: count)
     }
 }
 
 public struct RedoRequest: ServiceCall {
     public static let operation = ServiceOperation.redo
     public var expectedRevision: Int?
+    public var count: Int?
 
-    public init(expectedRevision: Int? = nil) {
+    public init(expectedRevision: Int? = nil, count: Int? = nil) {
         self.expectedRevision = expectedRevision
+        self.count = count
     }
 
     public func run(on service: TandemService, context: CallContext) async throws -> UndoResult {
-        try service.redo(expectedRevision: expectedRevision)
+        try service.redo(expectedRevision: expectedRevision, count: count)
     }
 }
 
@@ -540,9 +545,17 @@ public struct UndoResult: Codable, Sendable {
     /// `undo` or `redo`.
     public var action: String
     public var revision: Int
-    /// The label of the edit that was undone or redone.
+    /// The label of the edit that was undone or redone (the last one, with
+    /// `count`).
     public var label: String
     public var author: String
+    /// How many steps were undone or redone, which can be fewer than asked
+    /// for when the history ran out.
+    public var count: Int?
+    /// Each step's edit label and author, in the order they were undone or
+    /// redone.
+    public var labels: [String]?
+    public var authors: [String]?
 }
 
 public struct HistoryRequest: ServiceCall {

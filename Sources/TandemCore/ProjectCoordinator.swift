@@ -50,6 +50,9 @@ public final class ProjectCoordinator: @unchecked Sendable {
     private var undoStack: [UndoEntry] = []
     private var redoStack: [UndoEntry] = []
     private var idempotencyResults: [String: CommitResult] = [:]
+    /// Revisions made by the app finding new files in the folder. They only
+    /// add or refresh media, so a batch read before them can still go ahead.
+    private var mediaScanRevisions: Set<Int> = []
     private var observers: [UUID: (ChangeEvent) -> Void] = [:]
     private let journal: ProjectJournal?
     private let maxUndo = 500
@@ -69,6 +72,21 @@ public final class ProjectCoordinator: @unchecked Sendable {
         queue.sync { (_project, _revision) }
     }
 
+    /// Whether a caller that read the project at `expected` can still edit
+    /// it at `revision`: nothing changed since, or the only changes are
+    /// media scans. Media scans add files and refresh their details, which
+    /// doesn't change anything an agent read off the timeline, so they
+    /// shouldn't fail its `expectedRevision`. Any other edit, an undo or a
+    /// reload in between makes it stale.
+    public func isCurrent(_ expected: Int, at revision: Int) -> Bool {
+        queue.sync { _isCurrent(expected, at: revision) }
+    }
+
+    private func _isCurrent(_ expected: Int, at revision: Int) -> Bool {
+        guard expected <= revision else { return false }
+        return (expected..<revision).allSatisfy { mediaScanRevisions.contains($0 + 1) }
+    }
+
     public var undoLabel: String? { queue.sync { undoStack.last?.label } }
     public var redoLabel: String? { queue.sync { redoStack.last?.label } }
 
@@ -78,7 +96,7 @@ public final class ProjectCoordinator: @unchecked Sendable {
             if let key = batch.idempotencyKey, let previous = idempotencyResults[key] {
                 return previous
             }
-            if let expected = batch.expectedRevision, expected != _revision {
+            if let expected = batch.expectedRevision, !_isCurrent(expected, at: _revision) {
                 throw EditError.staleRevision(expected: expected, actual: _revision)
             }
             var working = _project
@@ -97,6 +115,11 @@ public final class ProjectCoordinator: @unchecked Sendable {
             let before = _project
             _project = working
             _revision += 1
+            if batch.isMediaScan {
+                mediaScanRevisions.insert(_revision)
+                // Only recent revisions matter; anything older is long stale.
+                if mediaScanRevisions.count > maxUndo { mediaScanRevisions = mediaScanRevisions.filter { $0 > _revision - maxUndo } }
+            }
             undoStack.append(UndoEntry(label: batch.label, author: batch.author, before: before, after: working))
             if undoStack.count > maxUndo { undoStack.removeFirst(undoStack.count - maxUndo) }
             redoStack.removeAll()

@@ -215,9 +215,7 @@ public struct CardsResult: Codable, Sendable {
 extension TandemService {
     public func cards(_ request: CardsRequest, context: CallContext) async throws -> CardsResult {
         let (project, revision) = coordinator.snapshot()
-        if let expected = request.expectedRevision, expected != revision {
-            throw ServiceError.wrap(EditError.staleRevision(expected: expected, actual: revision))
-        }
+        try checkExpected(request.expectedRevision, at: revision)
         let insert = request.insert == true
         var placements: [SectionCard.Placement]
         var cuts: [String: Time] = [:]

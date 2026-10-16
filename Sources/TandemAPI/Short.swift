@@ -63,9 +63,7 @@ public struct ShortResult: Codable, Sendable {
 extension TandemService {
     public func short(_ request: ShortRequest, context: CallContext) throws -> ShortResult {
         let (project, revision) = coordinator.snapshot()
-        if let expected = request.expectedRevision, expected != revision {
-            throw ServiceError.wrap(EditError.staleRevision(expected: expected, actual: revision))
-        }
+        try checkExpected(request.expectedRevision, at: revision)
         let existing = project.settings.alternateFormats.first { $0.id == OutputFormat.portrait.id }
         // A project made 9:16 (`tandem new --portrait`) is its own short.
         // Laying a portrait format over it would stack the screen and the

@@ -261,8 +261,9 @@ public final class MCPServer: @unchecked Sendable {
     waiting for his review, stop and ask him whether to continue with N unreviewed changes. These tools read and edit a .tandem project: the app's copy when the app has it open, \
     otherwise the file. Start with `timeline` (add words: true to see what's said in each voice clip). Change things with `apply`, a batch \
     of edit commands applied atomically as one undo step credited to you; label it with what it does (Mike reads the labels), pass \
-    expectedRevision from your last read so you never edit a timeline that changed under you, and try dryRun: true when unsure. `undo` \
-    reverts your last edit; only undo your own. `search` finds a phrase's timeline time, `pauses` lists silences and `tighten` shortens them \
+    expectedRevision from the read you based the edit on (not a fresh status right before applying) so you never edit a timeline that \
+    changed under you; Tandem finding new media in the folder doesn't count as a change. Try dryRun: true when unsure. `undo` \
+    reverts your last edit (count: n for several); only undo your own. `search` finds a phrase's timeline time, `pauses` lists silences and `tighten` shortens them \
     (a dry run unless apply: true). Look at your work with `frame` and `clip` (a review MP4), and before handing back run `check` with \
     changed: true and fix what it finds (black frames, flickers, green screen that didn't key); its notes (dead air, page changes with no \
     transition, soft zooms) are judgement calls. Mike's saved segments (his intro, outro and \
@@ -622,13 +623,19 @@ enum MCPTools {
         ),
         Tool(
             name: "undo", title: "Undo",
-            description: "Undoes the last edit. Pass expectedRevision so you only undo your own edit if nothing changed since.",
-            operation: .undo, properties: ["expectedRevision": S.integer("Refuse unless the project is at this revision.")], readOnly: false
+            description: "Undoes the last edit, or the last `count` edits in one go (stopping early if the history runs out). Each undo makes a new revision, so undo several with count rather than one call after another. Pass expectedRevision so you only undo your own edit if nothing changed since.",
+            operation: .undo, properties: [
+                "expectedRevision": S.integer("Refuse unless the project is at this revision."),
+                "count": S.integer("How many steps to undo. Default 1.")
+            ], readOnly: false
         ),
         Tool(
             name: "redo", title: "Redo",
-            description: "Redoes the last undone edit.",
-            operation: .redo, properties: ["expectedRevision": S.integer("Refuse unless the project is at this revision.")], readOnly: false
+            description: "Redoes the last undone edit, or the last `count`.",
+            operation: .redo, properties: [
+                "expectedRevision": S.integer("Refuse unless the project is at this revision."),
+                "count": S.integer("How many steps to redo. Default 1.")
+            ], readOnly: false
         ),
         Tool(
             name: "history", title: "Edit history",

@@ -241,7 +241,12 @@ extension ApplyResult: ReadableResult {
 
 extension UndoResult: ReadableResult {
     public var readableText: String {
-        "\(action == "undo" ? "Undid" : "Redid") \"\(label)\" (by \(author)). Now at revision \(revision)."
+        let verb = action == "undo" ? "Undid" : "Redid"
+        if let labels, let authors, labels.count > 1, labels.count == authors.count {
+            let steps = zip(labels, authors).map { "\"\($0)\" (by \($1))" }.joined(separator: ", ")
+            return "\(verb) \(labels.count) edits: \(steps). Now at revision \(revision)."
+        }
+        return "\(verb) \"\(label)\" (by \(author)). Now at revision \(revision)."
     }
 }
 

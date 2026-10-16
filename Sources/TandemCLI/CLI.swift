@@ -114,7 +114,13 @@ struct CLI {
         switch name {
         case "status":
             try args.expectPositionals(atMost: 0, command: name)
-            return show(try await client().call(StatusRequest()), json: json)
+            let status = try await client().call(StatusRequest())
+            // Just the number, for scripts; --json has it as `revision` too.
+            if args.has("revision") && !json {
+                print(status.revision)
+                return 0
+            }
+            return show(status, json: json)
         case "media":
             try args.expectPositionals(atMost: 0, command: name)
             return show(try await client().call(MediaRequest(refresh: args.has("refresh"))), json: json)
@@ -131,10 +137,10 @@ struct CLI {
             return show(try await client().call(request), json: json)
         case "undo":
             try args.expectPositionals(atMost: 0, command: name)
-            return show(try await client().call(UndoRequest(expectedRevision: try args.integer("expect"))), json: json)
+            return show(try await client().call(UndoRequest(expectedRevision: try args.integer("expect"), count: try args.integer("count"))), json: json)
         case "redo":
             try args.expectPositionals(atMost: 0, command: name)
-            return show(try await client().call(RedoRequest(expectedRevision: try args.integer("expect"))), json: json)
+            return show(try await client().call(RedoRequest(expectedRevision: try args.integer("expect"), count: try args.integer("count"))), json: json)
         case "history":
             try args.expectPositionals(atMost: 0, command: name)
             return show(try await client().call(HistoryRequest(limit: try args.integer("limit"))), json: json)

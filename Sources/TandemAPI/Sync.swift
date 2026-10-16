@@ -101,9 +101,7 @@ extension TandemService {
                 throw ServiceError(.badRequest, "\(delay.seconds) s is more than a second. Webcams run about 0.04 to 0.15 s behind their mic; the delay is in seconds, so 80 ms is 0.08.")
             }
             let (project, revision) = coordinator.snapshot()
-            if let expected = request.expectedRevision, expected != revision {
-                throw ServiceError.wrap(EditError.staleRevision(expected: expected, actual: revision))
-            }
+            try checkExpected(request.expectedRevision, at: revision)
             let targets: [MediaItem]
             if let ids = request.media {
                 targets = try ids.map { id in

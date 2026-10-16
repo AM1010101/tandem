@@ -17,7 +17,8 @@ enum Help {
                     The canvas is 3840x2160 unless you say otherwise: --portrait makes a 1080x1920 short, --size any other size.
                     It says which file it took for the camera take and why: a record-it -camera file, or a video from a phone or camera (or in source/) with speech and a face in it. Live Photos stay one item each, the still, with its movie in livePhotoVideo.
                     """),
-        CommandHelp(name: "status", usage: "tandem status", summary: "Revision, length, unsaved changes, who has it open, undo, background jobs and agent edits waiting for Mike's review.", options: []),
+        CommandHelp(name: "status", usage: "tandem status [--revision] [--json]", summary: "Revision, length, unsaved changes, who has it open, undo, background jobs and agent edits waiting for Mike's review.", options: ["revision"],
+                    details: "--revision prints just the revision number, to pass to --expect. Read it when you read the timeline you're about to edit, not right before applying, or --expect protects nothing. Tandem finding new files in the folder doesn't make it stale."),
         CommandHelp(name: "media", usage: "tandem media [--refresh]", summary: "Media files, how many clips use each, and analysis status.", options: ["refresh"],
                     details: "--refresh scans the project folder for new files first."),
         CommandHelp(name: "timeline", usage: "tandem timeline [--from <time>] [--to <time>] [--words] [--summary] [--json]", summary: "The edit as readable text (or the project JSON).", options: ["from", "to", "words", "summary"],
@@ -28,8 +29,9 @@ enum Help {
                     --expect refuses the edit unless the project is at that revision. --key makes a retry safe (idempotency key).
                     `tandem schema` prints the JSON schema; docs/AGENTS.md has an example of every command.
                     """),
-        CommandHelp(name: "undo", usage: "tandem undo [--expect <revision>]", summary: "Undo the last edit.", options: ["expect"]),
-        CommandHelp(name: "redo", usage: "tandem redo [--expect <revision>]", summary: "Redo the last undone edit.", options: ["expect"]),
+        CommandHelp(name: "undo", usage: "tandem undo [--count <n>] [--expect <revision>]", summary: "Undo the last edit, or the last n with --count.", options: ["expect", "count"],
+                    details: "--count undoes several steps in one go, stopping early if the history runs out; use it rather than undoing twice, since each undo makes a new revision. --expect refuses unless the project is at that revision, even if Tandem only found new media since, because the top undo step would then be that."),
+        CommandHelp(name: "redo", usage: "tandem redo [--count <n>] [--expect <revision>]", summary: "Redo the last undone edit, or the last n with --count.", options: ["expect", "count"]),
         CommandHelp(name: "history", usage: "tandem history [--limit <n>]", summary: "What undo would undo, newest first, and recent changes.", options: ["limit"]),
         CommandHelp(name: "validate", usage: "tandem validate", summary: "Check the project for problems (exit code 1 if it has errors).", options: []),
         CommandHelp(name: "check", usage: "tandem check [--changed | --from <time> --to <time>] [--quick] [--width <pixels>]", summary: "Look for what Mike would catch in review: black frames, flickers, green screens that didn't key, white blocks and gaps (exit code 1 if it finds any), and notes on soft zooms, dead air and page changes with no transition.", options: ["from", "to", "changed", "quick", "width"],

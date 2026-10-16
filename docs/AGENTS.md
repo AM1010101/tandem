@@ -34,10 +34,13 @@ credited to you. Without it they show up as `cli`.
 
 Output is plain text for reading. Add `--json` to any command for the JSON
 result. Errors go to standard error with exit code 1 (2 for usage
-mistakes); with `--json` the error is printed as `{"error": {...}}`.
+mistakes); with `--json` the error is printed on standard output as
+`{"error": {...}}` and the exit code is still 1. If you pipe `--json` into
+another program, check the pipeline's status (`set -o pipefail`) or the
+output's `error` key, since a pipe reports the last program's exit code.
 
 ```
-tandem status                      revision, length, who has it open, jobs, missing fonts, edits waiting for review
+tandem status [--revision]         revision, length, who has it open, jobs, missing fonts, edits waiting for review
 tandem timeline [--summary] [--from T] [--to T] [--words] [--json]
 tandem media [--refresh]           files, clip counts, analysis status
 tandem transcript [<clip or media id>] [--from T] [--to T]
@@ -49,7 +52,7 @@ tandem captions [--from T] [--to T] [--max-words 3] [--y 0.42] [--apply]
 tandem short [--apply]             lay out a 9:16 short from the same edit
 tandem cards [--insert] [--no-sounds] [--apply]   a section card at every section marker
 tandem apply <batch.json | - | '<json>'>   [--dry-run] [--expect N] [--label L] [--key K]
-tandem undo [--expect N]    tandem redo    tandem history    tandem validate
+tandem undo [--count N] [--expect N]    tandem redo [--count N]    tandem history    tandem validate
 tandem check [--changed | --from T --to T] [--quick]   what Mike would catch: black, flickers, keys, dead air, bare page changes
 tandem frame <time> [-o out.png]   tandem clip <start> <end> [-o out.mp4]
 tandem export [--preset <name>] [-o out.mp4] [--from T] [--to T] [--format <id>]
@@ -222,7 +225,12 @@ undo step with a label and an author.
 `status` or `timeline`, and send it back as `expectedRevision`: if Mike (or
 another agent) changed the timeline in the meantime the batch is refused
 with a `staleRevision` error instead of editing something you haven't seen.
-Re-read and try again.
+Re-read and try again. `tandem status --revision` prints just the number.
+Take it when you read what you're basing the edit on: read right before
+applying, it protects nothing. Tandem finding new files in the project
+folder ("Found new media", by system) bumps the revision too, but a batch
+whose revision is behind only by those still goes ahead. Any other change in
+between (an edit, an undo) makes it stale.
 
 **Dry runs.** `"dryRun": true` (or `tandem apply --dry-run`) checks a batch
 on a copy and reports what it would do: warnings, clips added, removed and
@@ -244,7 +252,12 @@ closed they edit the file directly. `tandem watch`, with or without
 so `tandem` never runs a half-installed copy.
 
 **Undo.** `undo` reverts the last batch, whoever made it, so pass
-`expectedRevision` to undo only if nothing happened since your edit. With
+`expectedRevision` to undo only if nothing happened since your edit. That
+check is strict, new media included, because the last batch would then be
+Tandem's media scan rather than your edit. Each undo makes a new revision,
+so to back out several edits use `tandem undo --count N` (MCP and HTTP
+`count`) rather than undoing twice; it stops early if the history runs out,
+and the result lists each step's `labels` and `authors`. With
 the app closed, undo history for CLI and MCP edits is kept in
 `.tandem/<name>.undo.json`, so `tandem undo` works across commands. It's
 dropped as soon as the project is edited somewhere that doesn't keep it
@@ -1883,7 +1896,8 @@ still when it's beside it. It's one undo step.
   pass it as `expectedRevision`. On `staleRevision`, read again.
 - Try a big batch with `dryRun` first.
 - Give retried batches an `idempotencyKey`.
-- Undo with `expectedRevision` so you only undo your own edit.
+- Undo with `expectedRevision` so you only undo your own edit, and with
+  `count` to undo several at once.
 - `tandem watch --once` (MCP `watch`) waits until the project changes, for
   example after asking Mike to fix something in the app. `tandem watch`
   prints every change as it happens.
@@ -1903,7 +1917,7 @@ still when it's beside it. It's one undo step.
 
 | Operation | CLI | HTTP | MCP tool |
 | --- | --- | --- | --- |
-| status | `tandem status` | `POST /v1/status` | `status` |
+| status | `tandem status [--revision]` | `POST /v1/status` | `status` |
 | media | `tandem media [--refresh]` | `POST /v1/media {"refresh": true}` | `media` |
 | timeline | `tandem timeline [--summary] [--from] [--to] [--words] [--json]` | `POST /v1/timeline {"summary", "from", "to", "words", "format"}` | `timeline` |
 | transcript | `tandem transcript [<id>]` | `POST /v1/transcript {"id"}` | `transcript` |
@@ -1915,7 +1929,7 @@ still when it's beside it. It's one undo step.
 | short | `tandem short [--apply]` | `POST /v1/short {"apply"}` | `short` |
 | cards | `tandem cards [--kicker] [--duration] [--insert] [--no-sounds] [--marker]... [--apply]` | `POST /v1/cards {"markers", "kicker", "duration", "insert", "sounds", "apply"}` | `cards` |
 | apply | `tandem apply <file, - or '<json>'>` | `POST /v1/apply <batch>` | `apply` |
-| undo, redo | `tandem undo`, `tandem redo` | `POST /v1/undo`, `/v1/redo` | `undo`, `redo` |
+| undo, redo | `tandem undo [--count N]`, `tandem redo [--count N]` | `POST /v1/undo`, `/v1/redo` `{"count", "expectedRevision"}` | `undo`, `redo` |
 | history | `tandem history` | `POST /v1/history` | `history` |
 | validate | `tandem validate` | `POST /v1/validate` | `validate` |
 | check | `tandem check [--changed]` | `POST /v1/check {"from", "to", "changed", "quick"}` | `check` |

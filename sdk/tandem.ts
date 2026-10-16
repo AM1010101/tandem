@@ -222,8 +222,12 @@ export class Tandem {
     return summarize(await this.apply(batch), commands.length);
   }
 
-  async undo(expectedRevision = this.revision) {
-    return this.call("undo", expectedRevision === undefined ? {} : { expectedRevision });
+  /** Undoes the last edit, or the last `count` in one call (each undo is a new revision). */
+  async undo(expectedRevision = this.revision, count?: number) {
+    return this.call("undo", {
+      ...(expectedRevision === undefined ? {} : { expectedRevision }),
+      ...(count === undefined ? {} : { count }),
+    });
   }
 }
 

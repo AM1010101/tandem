@@ -506,6 +506,43 @@ final class CoordinatorTests: XCTestCase {
         }
     }
 
+    private func mediaScan(_ c: ProjectCoordinator, _ id: String) throws {
+        let item = MediaItem(id: id, path: "\(id).mp4", kind: .video, role: .broll, duration: t(5), hasVideo: true)
+        try c.apply(EditBatch(label: EditBatch.mediaScanLabel, author: EditAuthor.system, commands: [.addMedia(item: item)]))
+    }
+
+    func testMediaScansDontMakeARevisionStale() throws {
+        let (_, c) = try Fixture.edited()
+        let revision = c.revision
+        try mediaScan(c, "med_new1")
+        try mediaScan(c, "med_new2")
+        XCTAssertTrue(c.isCurrent(revision, at: c.revision))
+        let result = try c.apply(EditBatch(label: "Agent", author: "claude", commands: [.blade(at: t(20))], expectedRevision: revision))
+        XCTAssertEqual(result.revision, revision + 3)
+    }
+
+    func testOtherEditsAmongMediaScansStillMakeARevisionStale() throws {
+        let (_, c) = try Fixture.edited()
+        let revision = c.revision
+        try mediaScan(c, "med_new1")
+        try c.run("Cut", .blade(at: t(10)))
+        try mediaScan(c, "med_new2")
+        XCTAssertFalse(c.isCurrent(revision, at: c.revision))
+        XCTAssertThrowsError(try c.apply(EditBatch(label: "Agent", author: "claude", commands: [.blade(at: t(20))], expectedRevision: revision))) { error in
+            XCTAssertEqual(error as? EditError, .staleRevision(expected: revision, actual: revision + 3))
+        }
+    }
+
+    func testUndoingAMediaScanMakesARevisionStale() throws {
+        let (_, c) = try Fixture.edited()
+        try mediaScan(c, "med_new1")
+        let revision = c.revision
+        c.undo()
+        XCTAssertFalse(c.isCurrent(revision, at: c.revision))
+        // A revision ahead of the project is never current either.
+        XCTAssertFalse(c.isCurrent(c.revision + 1, at: c.revision))
+    }
+
     func testIdempotencyKeyAppliesOnce() throws {
         let (_, c) = try Fixture.edited()
         let batch = EditBatch(label: "Cut", commands: [.blade(at: t(10))], idempotencyKey: "abc")

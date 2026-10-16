@@ -96,7 +96,7 @@ public final class ProjectCoordinator: @unchecked Sendable {
             if let key = batch.idempotencyKey, let previous = idempotencyResults[key] {
                 return previous
             }
-            if let expected = batch.expectedRevision, !_isCurrent(expected, at: _revision) {
+            if let expected = batch.expectedRevision, expected != _revision, batch.changesMedia || !_isCurrent(expected, at: _revision) {
                 throw EditError.staleRevision(expected: expected, actual: _revision)
             }
             var working = _project

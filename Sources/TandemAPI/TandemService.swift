@@ -480,6 +480,9 @@ public final class TandemService: @unchecked Sendable {
     /// would, and reports the outcome without committing.
     func dryRun(_ batch: EditBatch) throws -> ApplyResult {
         let (project, revision) = coordinator.snapshot()
+        if batch.changesMedia, let expected = batch.expectedRevision, expected != revision {
+            throw ServiceError.wrap(EditError.staleRevision(expected: expected, actual: revision))
+        }
         try checkExpected(batch.expectedRevision, at: revision)
         var working = project
         var context = EditContext()

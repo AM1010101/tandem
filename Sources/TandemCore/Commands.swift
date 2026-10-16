@@ -272,6 +272,18 @@ public struct EditBatch: Codable, Equatable, Sendable {
         author == EditAuthor.system && label == Self.mediaScanLabel
     }
 
+    /// Adds, changes or removes media. Such a batch was worked out against
+    /// the media a scan may have just added (the same file under another
+    /// ID), so a scan in between does make it stale.
+    public var changesMedia: Bool {
+        commands.contains { command in
+            switch command {
+            case .addMedia, .updateMedia, .removeMedia: return true
+            default: return false
+            }
+        }
+    }
+
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         label = try c.decode(.label, or: "Edit")

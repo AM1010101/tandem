@@ -233,8 +233,9 @@ Re-read and try again. `tandem status --revision` prints just the number.
 Take it when you read what you're basing the edit on: read right before
 applying, it protects nothing. Tandem finding new files in the project
 folder ("Found new media", by system) bumps the revision too, but a batch
-whose revision is behind only by those still goes ahead. Any other change in
-between (an edit, an undo) makes it stale.
+whose revision is behind only by those still goes ahead, unless it adds,
+changes or removes media itself (the scan may have just added the same
+file). Any other change in between (an edit, an undo) makes it stale.
 
 **Dry runs.** `"dryRun": true` (or `tandem apply --dry-run`) checks a batch
 on a copy and reports what it would do: warnings, clips added, removed and

@@ -40,17 +40,35 @@ extension EditorModel {
     /// stretch it went through counts as watched, and the agent changes
     /// Mike has now watched in full are reviewed: their highlights go as
     /// he plays past them. A jump, a scrub, playing backwards or fast
-    /// forwards doesn't count.
+    /// forwards doesn't count. Pausing and playing on from the same spot
+    /// does: Mike often stops halfway through a change to think.
     func notePlayhead() {
         let now = playback.time
-        guard playback.isPlaying, playback.rate > 0, playback.rate <= 2, !reviewLog.isEmpty else {
+        guard !reviewLog.isEmpty else {
             lastWatched = nil
             return
         }
-        if let last = lastWatched, now >= last, (now - last).seconds < 1 {
+        let ahead = lastWatched.map { now >= $0 && (now - $0).seconds < 1 } ?? false
+        if playback.isPlaying {
+            guard playback.rate > 0, playback.rate <= 2 else {
+                lastWatched = nil
+                return
+            }
+            if ahead, let last = lastWatched { noteWatched(from: last, to: now) }
+            lastWatched = now
+            pausedWatching = false
+        } else if ahead, !pausedWatching, let last = lastWatched {
+            // Pausing: the picture stops a moment after the last tick.
+            // Up to there counts, and the spot is kept, so playing on
+            // carries on from it without a gap.
             noteWatched(from: last, to: now)
+            lastWatched = now
+            pausedWatching = true
+        } else {
+            // Moved while paused: a jump or a scrub.
+            lastWatched = nil
+            pausedWatching = false
         }
-        lastWatched = now
     }
 
     /// Mike watched `from` to `to` on the timeline as it is now: what he's

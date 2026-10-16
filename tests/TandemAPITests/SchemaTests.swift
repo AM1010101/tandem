@@ -24,6 +24,16 @@ final class SchemaTests: XCTestCase {
         }
     }
 
+    func testTextAnimationsAreTheNamesTheRendererDraws() throws {
+        func problems(_ name: String) throws -> [String] {
+            CommandSchema.validate(command: try json(#"{"insertClip": {"trackID": "trk_text", "clip": {"content": {"text": {"text": "Hi", "animationIn": "\#(name)", "animationOut": "\#(name)"}}, "start": 0, "duration": 2}}}"#))
+        }
+        for name in ["fade", "pop", "slideUp", "typewriter", "none", "popIn", "fadeOut"] {
+            XCTAssertEqual(try problems(name), [], name)
+        }
+        XCTAssertFalse(try problems("slideDown").isEmpty, "draws nothing, so it's turned away")
+    }
+
     func testFullyPopulatedValuesValidate() throws {
         // Every field set, so a field added to the model without a schema
         // entry fails here.

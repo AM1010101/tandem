@@ -1397,6 +1397,12 @@ and insert a text clip:
 Change the words later with
 `{"updateClip": {"clipID": "clip_...", "patch": {"content": {"text": {"text": "TIP 2"}}}}}`.
 
+`animationIn` and `animationOut` take `fade`, `pop`, `slideUp` or
+`typewriter`, and `animationOut` plays them backwards. `fadeIn`, `fadeOut`,
+`popIn` and `popOut` work too. `none` switches off the preset's. Leave them out
+for the preset's, and set `animationDuration` (seconds) for how long each
+takes. Any other name is turned away, since it would draw nothing.
+
 The preset gives the look. A clip's `style` holds only what it changes
 (`font`, `size`, `weight`, `color`, `strokeColor`, `strokeWidth`,
 `backgroundColor`, `alignment`, `uppercase`, `shadow`, `lineSpacing`), and

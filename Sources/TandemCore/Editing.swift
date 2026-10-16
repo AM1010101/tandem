@@ -6,7 +6,8 @@ import Foundation
 /// whole batch on a copy of the project and only commits it if every command
 /// succeeds and the result validates.
 public enum Editing {
-    public static func apply(_ command: EditCommand, to project: inout Project, context: inout EditContext) throws {
+    public static func apply(_ submitted: EditCommand, to project: inout Project, context: inout EditContext) throws {
+        let command = try resolvingTrackNames(in: submitted, project)
         // Transitions' sounds are kept in step with them after whatever
         // this command does (`TransitionSounds`).
         let sounds = TransitionSounds.anchors(in: project)
@@ -124,6 +125,63 @@ public enum Editing {
     }
 
     // MARK: - Lookups
+
+    /// A track reference is an ID or, failing that, a track's name ignoring
+    /// case, so agents can write "Music" instead of looking up its ID. A
+    /// name two tracks share is an error rather than a guess. Anything that
+    /// matches neither is returned as it is, for `requireTrack` to report.
+    static func resolveTrack(_ p: Project, _ reference: String) throws -> String {
+        if p.location(ofTrack: reference) != nil { return reference }
+        let named = p.allTracks.filter { $0.name.caseInsensitiveCompare(reference) == .orderedSame }
+        if named.count > 1 {
+            let ids = named.map(\.id).joined(separator: ", ")
+            throw EditError.invalid("\(named.count) tracks are named \"\(reference)\" (\(ids)); use one of their IDs")
+        }
+        return named.first?.id ?? reference
+    }
+
+    /// The command with every track name swapped for its track's ID, so the
+    /// edits below only ever see IDs.
+    static func resolvingTrackNames(in command: EditCommand, _ p: Project) throws -> EditCommand {
+        func one(_ reference: String) throws -> String { try resolveTrack(p, reference) }
+        func optional(_ reference: String?) throws -> String? { try reference.map(one) }
+        func many(_ references: [String]?) throws -> [String]? { try references.map { try $0.map(one) } }
+        switch command {
+        case .removeTrack(let trackID):
+            return .removeTrack(trackID: try one(trackID))
+        case .moveTrack(let trackID, let index):
+            return .moveTrack(trackID: try one(trackID), index: index)
+        case .updateTrack(let trackID, let patch):
+            return .updateTrack(trackID: try one(trackID), patch: patch)
+        case .placeMedia(let mediaIDs, let at, let sourceStart, let duration, let mode, let videoTrackID, let audioTrackID, let includeAudio, let anchor, let pop):
+            return .placeMedia(
+                mediaIDs: mediaIDs, at: at, sourceStart: sourceStart, duration: duration, mode: mode,
+                videoTrackID: try optional(videoTrackID), audioTrackID: try optional(audioTrackID),
+                includeAudio: includeAudio, anchor: anchor, pop: pop
+            )
+        case .insertClip(let trackID, let clip, let mode):
+            return .insertClip(trackID: try one(trackID), clip: clip, mode: mode)
+        case .rippleDeleteRange(let range, let trackIDs):
+            return .rippleDeleteRange(range: range, trackIDs: try many(trackIDs))
+        case .closeGap(let trackID, let at):
+            return .closeGap(trackID: try one(trackID), at: at)
+        case .insertTime(let at, let duration, let trackIDs):
+            return .insertTime(at: at, duration: duration, trackIDs: try many(trackIDs))
+        case .addSectionCards(let markerIDs, let trackID, let duration, let kicker, let mode, let soundIn, let soundOut, let cuts):
+            return .addSectionCards(
+                markerIDs: markerIDs, trackID: try optional(trackID), duration: duration, kicker: kicker,
+                mode: mode, soundIn: soundIn, soundOut: soundOut, cuts: cuts
+            )
+        case .blade(let at, let trackIDs, let clipIDs):
+            return .blade(at: at, trackIDs: try many(trackIDs), clipIDs: clipIDs)
+        case .moveClips(let clipIDs, let delta, let toTrackID, let includeLinked, let mode):
+            return .moveClips(clipIDs: clipIDs, delta: delta, toTrackID: try optional(toTrackID), includeLinked: includeLinked, mode: mode)
+        case .addTransition(let trackID, let transition, let sound):
+            return .addTransition(trackID: try one(trackID), transition: transition, sound: sound)
+        default:
+            return command
+        }
+    }
 
     static func requireTrack(_ p: Project, _ id: String) throws -> TrackLocation {
         guard let location = p.location(ofTrack: id) else { throw EditError.notFound("track \(id)") }

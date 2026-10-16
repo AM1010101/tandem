@@ -158,6 +158,15 @@ enum S {
         array(string(), description)
     }
 
+    /// A track reference: its ID or its name (`Editing.resolveTrack`).
+    static func track(_ description: String? = nil) -> JSONValue {
+        string(["Track ID or name, like Music.", description].compactMap { $0 }.joined(separator: " "))
+    }
+
+    static func tracks(_ description: String) -> JSONValue {
+        array(string(), "Track IDs or names, like [\"Camera\", \"Voice\"]. \(description)")
+    }
+
     /// A JSON merge patch (RFC 7396) on a model object. The validator
     /// checks its keys against the model's schema; `null` removes a key.
     static func patch(of model: String, _ description: String) -> JSONValue {
@@ -510,19 +519,19 @@ extension CommandSchema {
         Entry(
             command: .removeTrack,
             summary: "Removes a track and everything on it.",
-            arguments: S.object(["trackID": S.string()], required: ["trackID"]),
+            arguments: S.object(["trackID": S.track()], required: ["trackID"]),
             example: #"{"removeTrack": {"trackID": "trk_stickers"}}"#
         ),
         Entry(
             command: .moveTrack,
             summary: "Moves a track to another position among tracks of its kind.",
-            arguments: S.object(["trackID": S.string(), "index": S.integer()], required: ["trackID", "index"]),
+            arguments: S.object(["trackID": S.track(), "index": S.integer()], required: ["trackID", "index"]),
             example: #"{"moveTrack": {"trackID": "trk_stickers", "index": 2}}"#
         ),
         Entry(
             command: .updateTrack,
             summary: "Changes a track's name, mute, solo, lock, hidden, targeted or ripple mode.",
-            arguments: S.object(["trackID": S.string(), "patch": S.patch(of: "Track", "Fields: name, muted, solo, locked, hidden, targeted, rippleMode (cut, follow, off).")], required: ["trackID", "patch"]),
+            arguments: S.object(["trackID": S.track(), "patch": S.patch(of: "Track", "Fields: name, muted, solo, locked, hidden, targeted, rippleMode (cut, follow, off).")], required: ["trackID", "patch"]),
             example: #"{"updateTrack": {"trackID": "trk_music", "patch": {"muted": true}}}"#
         ),
         Entry(
@@ -552,8 +561,8 @@ extension CommandSchema {
                 "sourceStart": S.time("Where to start in the take (or file), in seconds. Default: where all files have started."),
                 "duration": S.time("Default: all the media that's left."),
                 "mode": insertMode,
-                "videoTrackID": S.string("Force the video track (single file only)."),
-                "audioTrackID": S.string("Force the audio track (single file only)."),
+                "videoTrackID": S.track("Force the video track (single file only)."),
+                "audioTrackID": S.track("Force the audio track (single file only)."),
                 "includeAudio": S.boolean("Place the file's sound too. Default depends on the role (camera, music, sfx: yes)."),
                 "anchor": S.enumeration(StickerAnchor.allCases.map(\.rawValue), "Put the picture at this edge or corner, fitted to 40% of the frame's width and 30% of its height. Stickers default to bottom; other files fill the frame."),
                 "pop": S.boolean("Pop it in at the start and out at the end (scale keyframes).")
@@ -563,7 +572,7 @@ extension CommandSchema {
         Entry(
             command: .insertClip,
             summary: "Adds one clip to a track: a text title, a solid, a graphic, an adjustment layer or part of a media file.",
-            arguments: S.object(["trackID": S.string(), "clip": S.ref("Clip"), "mode": insertMode], required: ["trackID", "clip"]),
+            arguments: S.object(["trackID": S.track(), "clip": S.ref("Clip"), "mode": insertMode], required: ["trackID", "clip"]),
             example: #"{"insertClip": {"trackID": "trk_text", "clip": {"content": {"text": {"text": "TIP 1", "preset": "callout"}}, "start": 12, "duration": 3}}}"#
         ),
         Entry(
@@ -575,19 +584,19 @@ extension CommandSchema {
         Entry(
             command: .rippleDeleteRange,
             summary: "Removes a stretch of time and closes it up: every cut track (screen, camera, voice) loses it and follow tracks (B-roll, music, titles) move with it. This is how pauses get tightened.",
-            arguments: S.object(["range": S.ref("TimeRange"), "trackIDs": S.ids("Only cut these tracks (and ripple from them). Default: every cut track.")], required: ["range"]),
+            arguments: S.object(["range": S.ref("TimeRange"), "trackIDs": S.tracks("Only cut these tracks (and ripple from them). Default: every cut track.")], required: ["range"]),
             example: #"{"rippleDeleteRange": {"range": {"start": 12.4, "duration": 0.8}}}"#
         ),
         Entry(
             command: .closeGap,
             summary: "Closes the gap on a track that contains a time. Fails if another cut track has content in that gap.",
-            arguments: S.object(["trackID": S.string(), "at": S.time("Any time inside the gap.")], required: ["trackID", "at"]),
+            arguments: S.object(["trackID": S.track(), "at": S.time("Any time inside the gap.")], required: ["trackID", "at"]),
             example: #"{"closeGap": {"trackID": "trk_broll", "at": 27}}"#
         ),
         Entry(
             command: .insertTime,
             summary: "Opens up empty time, pushing everything later to the right.",
-            arguments: S.object(["at": S.time(), "duration": S.time(), "trackIDs": S.ids("Default: every cut track, with the rest following.")], required: ["at", "duration"]),
+            arguments: S.object(["at": S.time(), "duration": S.time(), "trackIDs": S.tracks("Default: every cut track, with the rest following.")], required: ["at", "duration"]),
             example: #"{"insertTime": {"at": 30, "duration": 2}}"#
         ),
         Entry(
@@ -606,7 +615,7 @@ extension CommandSchema {
             summary: "Puts a numbered section card (the built-in sectionCard graphic: Convex bands wiping in and out, a number chip, the title, a subtitle and progress bars) at every section marker after the start, or at markerIDs. Cards are numbered in time order, total is the count, titles come from the marker names and subtitles from their notes. Each card is as long as its words need (1.4 s for the wipes and 0.8 s to take it in, plus title, subtitle and kicker at 15 characters a second, 4 to 7 s) unless duration is given, and hides the frame from its marker on. A card already at a marker is renumbered and keeps its own words and length. mode insert also makes room so the card is a pause.",
             arguments: S.object([
                 "markerIDs": S.ids("Markers to put cards at, any kind. Default: every section marker after 0:00."),
-                "trackID": S.string("Video track for the cards. Default Graphics (made on top if missing)."),
+                "trackID": S.track("Video track for the cards. Default Graphics (made on top if missing)."),
                 "duration": S.time("Every card's length. Default: each fitted to its words (4 to 7 s); the wipes keep their length and the hold changes."),
                 "kicker": S.string("Words beside the chip, like Tip (shown as TIP 1 OF 14). Default none, which Mike prefers: the number alone reads faster. Only add one when asked. On cards already there, empty removes it."),
                 "mode": S.enumeration(["overwrite", "insert", "place"], "overwrite (default) lays the cards over the timeline, insert also makes room at each marker (the whole take moves), place fails where the card track is taken."),
@@ -627,7 +636,7 @@ extension CommandSchema {
         Entry(
             command: .blade,
             summary: "Cuts clips at a time. With clipIDs only those clips (and their linked partners); otherwise every clip under the time on the given tracks, or on all targeted tracks.",
-            arguments: S.object(["at": S.time(), "trackIDs": S.ids("Only these tracks."), "clipIDs": S.ids("Only these clips.")], required: ["at"]),
+            arguments: S.object(["at": S.time(), "trackIDs": S.tracks("Only these tracks."), "clipIDs": S.ids("Only these clips.")], required: ["at"]),
             example: #"{"blade": {"at": 12.5}}"#
         ),
         Entry(
@@ -682,16 +691,20 @@ extension CommandSchema {
             command: .moveClips,
             summary: "Moves clips in time and optionally to another track.",
             arguments: S.object([
-                "clipIDs": S.ids("Clips to move."), "delta": S.time("Seconds to move by."), "toTrackID": S.string("Another track (clips from one track only)."),
+                "clipIDs": S.ids("Clips to move."), "delta": S.time("Seconds to move by."), "toTrackID": S.track("Another track (clips from one track only)."),
                 "includeLinked": includeLinked, "mode": S.enumeration(["place", "overwrite"], "place (default) fails if the destination is taken.")
             ], required: ["clipIDs"]),
             example: #"{"moveClips": {"clipIDs": ["clip_k3f9x2mq"], "delta": 5, "toTrackID": "trk_graphics"}}"#
         ),
         Entry(
             command: .updateClip,
-            summary: "Changes a clip's settings: transform, crop, opacity, cutout, audio gain and fades, text, speed...",
-            arguments: S.object(["clipID": S.string(), "patch": S.patch(of: "Clip", "Any Clip field except id, like {\"video\": {\"transform\": {\"scale\": 0.5}}} or {\"audio\": {\"gainDB\": -3}}.")], required: ["clipID", "patch"]),
-            example: #"{"updateClip": {"clipID": "clip_k3f9x2mq", "patch": {"video": {"opacity": 0.5}}}}"#
+            summary: "Changes a clip's settings: transform, crop, opacity, cutout, audio gain and fades, text, speed... Give clipID for one clip or clipIDs to apply the same patch to each of several.",
+            arguments: S.object([
+                "clipID": S.string("The clip to change. Give this or clipIDs."),
+                "clipIDs": S.ids("Clips to give the same patch, instead of clipID. Each becomes its own updateClip."),
+                "patch": S.patch(of: "Clip", "Any Clip field except id, like {\"video\": {\"transform\": {\"scale\": 0.5}}} or {\"audio\": {\"gainDB\": -3}}.")
+            ], required: ["patch"]),
+            example: #"{"updateClip": {"clipIDs": ["clip_k3f9x2mq", "clip_p7d2wn4a"], "patch": {"video": {"opacity": 0.5}}}}"#
         ),
         Entry(
             command: .link,
@@ -750,7 +763,7 @@ extension CommandSchema {
             command: .addTransition,
             summary: "Adds a transition between two touching clips (centred on the cut; a clip with no frames past it holds its edge frame) or at one clip's head or tail. sound plays a sound effect with it, as its own clip on the first free SFX track, which follows the transition from then on and goes when it goes.",
             arguments: S.object([
-                "trackID": S.string(),
+                "trackID": S.track(),
                 "transition": S.ref("Transition"),
                 "sound": transitionSound("A sound effect to play with it, like the light swoosh push, slide, cut slide and wipe get in the app.", patch: false)
             ], required: ["trackID", "transition"]),

@@ -478,8 +478,8 @@ public struct ApplyRequest: ServiceCall {
         idempotencyKey = try c.decodeIfPresent(String.self, forKey: .idempotencyKey)
         dryRun = try c.decodeIfPresent(Bool.self, forKey: .dryRun)
         let raw = try c.decode([JSONValue].self, forKey: .commands)
-        commands = try raw.enumerated().map { index, value in
-            try CommandJSON.decode(value, path: "commands[\(index)]")
+        commands = try raw.enumerated().flatMap { index, value in
+            try CommandJSON.decodeAll(value, path: "commands[\(index)]")
         }
     }
 

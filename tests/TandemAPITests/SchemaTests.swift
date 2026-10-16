@@ -14,13 +14,21 @@ final class SchemaTests: XCTestCase {
         for entry in CommandSchema.entries {
             let value = try json(entry.example)
             XCTAssertEqual(CommandSchema.validate(command: value), [], "\(entry.command) example doesn't match its schema")
-            let command = try JSONDecoder().decode(EditCommand.self, from: Data(entry.example.utf8))
-            XCTAssertEqual(command.commandCase, entry.command)
-            // Examples leave IDs out, so each decode makes fresh ones; compare the kind.
-            XCTAssertEqual(try CommandJSON.decode(value).commandCase, entry.command)
-            // What Swift encodes for the command must validate too.
-            let encoded = try JSONValue.from(command)
-            XCTAssertEqual(CommandSchema.validate(command: encoded), [], "\(entry.command) encoded form doesn't match its schema")
+            // Examples leave IDs out, so each decode makes fresh ones; compare
+            // the kind. One example (updateClip's clipIDs) is a friendly form
+            // that becomes several commands.
+            let commands = try CommandJSON.decodeAll(value)
+            XCTAssertFalse(commands.isEmpty)
+            if commands.count == 1 {
+                let direct = try JSONDecoder().decode(EditCommand.self, from: Data(entry.example.utf8))
+                XCTAssertEqual(direct.commandCase, entry.command, "Swift's own decoding reads the example too")
+            }
+            for command in commands {
+                XCTAssertEqual(command.commandCase, entry.command)
+                // What Swift encodes for the command must validate too.
+                let encoded = try JSONValue.from(command)
+                XCTAssertEqual(CommandSchema.validate(command: encoded), [], "\(entry.command) encoded form doesn't match its schema")
+            }
         }
     }
 
@@ -143,6 +151,24 @@ final class SchemaTests: XCTestCase {
         // Free-form values that look like times stay strings.
         let metadata = try CommandJSON.decode(try json(#"{"updateProject": {"patch": {"metadata": {"time": "12"}}}}"#))
         XCTAssertEqual(metadata, .updateProject(patch: .object(["metadata": .object(["time": .string("12")])])))
+    }
+
+    func testUpdateClipTakesManyClips() throws {
+        let patch = JSONValue.object(["audio": .object(["gainDB": .number(-6)])])
+        let many = try CommandJSON.decodeAll(try json(#"{"updateClip": {"clipIDs": ["clip_a", "clip_b"], "patch": {"audio": {"gainDB": -6}}}}"#))
+        XCTAssertEqual(many, [.updateClip(clipID: "clip_a", patch: patch), .updateClip(clipID: "clip_b", patch: patch)])
+        let one = try CommandJSON.decodeAll(try json(#"{"updateClip": {"clipID": "clip_a", "patch": {"audio": {"gainDB": -6}}}}"#))
+        XCTAssertEqual(one, [.updateClip(clipID: "clip_a", patch: patch)])
+        for bad in [
+            #"{"updateClip": {"patch": {}}}"#,
+            #"{"updateClip": {"clipIDs": [], "patch": {}}}"#,
+            #"{"updateClip": {"clipID": "clip_a", "clipIDs": ["clip_b"], "patch": {}}}"#
+        ] {
+            XCTAssertThrowsError(try CommandJSON.decodeAll(try json(bad)), bad)
+        }
+        let request = try JSONDecoder().decode(ApplyRequest.self, from: Data(#"{"commands": [{"blade": {"at": 1}}, {"updateClip": {"clipIDs": ["clip_a", "clip_b", "clip_c"], "patch": {"enabled": false}}}]}"#.utf8))
+        XCTAssertEqual(request.commands.count, 4)
+        XCTAssertEqual(CommandText.label(for: Array(request.commands.dropFirst())), "Update 3 clips")
     }
 
     func testEveryReferenceResolves() {

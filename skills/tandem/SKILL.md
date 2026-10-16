@@ -44,8 +44,11 @@ rounds up.
    by its label. Pass `--expect <revision>` from the read you based the
    edit on (`tandem status --revision` prints just the number), not one
    taken right before applying, so you never edit over his changes. Tandem
-   finding new media doesn't make it stale. On a stale revision, read again. Try big batches
-   with `--dry-run` first.
+   finding new media doesn't make it stale. On a stale revision, read
+   again. Try big batches with `--dry-run` first. Name tracks by name
+   (`"trackID": "Music"`) rather than looking up IDs, and give one
+   `updateClip` patch to many clips with `clipIDs`. The `--json` shapes are
+   in docs/AGENTS.md ("JSON output").
    For a job that touches many things at once (every caption, every push,
    every pause), write a short script against the SDK in the Tandem repo's
    `sdk/` folder instead of hand-building JSON or throwaway Python:

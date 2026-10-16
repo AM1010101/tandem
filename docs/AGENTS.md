@@ -306,6 +306,12 @@ shows them top to bottom like the app.
 Video clips are silent. Sound always lives on audio tracks, linked to its
 picture.
 
+Wherever a command takes a track (`trackID`, `trackIDs`, `videoTrackID`,
+`audioTrackID`, `toTrackID`), you can give the track's ID or its name, like
+`"Music"` or `["Camera", "Voice"]`. An ID is tried first, then a name
+ignoring case. If two tracks share the name the edit fails, naming both IDs,
+so use one of those.
+
 ### Ripple modes in plain words
 
 - **cut** tracks hold the take (screen, camera, voice). A ripple edit that
@@ -514,6 +520,91 @@ clips in the range).
   all say so with the fix, like `Tilt Warp, the caption preset's font, isn't
   installed, so 42 text clips are drawn in SF Pro instead. Install it with:
   tandem assets use fontsource:tilt-warp`.
+
+### JSON output
+
+A `--json` result is an object, and the project's `revision` is in it.
+These are the shapes of the ones you'll read most; a field marked `?` can be
+missing (or `null`), so read it with a default (`clip.get("video")` in
+Python, not `clip["video"]`).
+
+`tandem timeline --json` (MCP `timeline` with `format: json`) wraps the
+project. Tracks are in two lists, not one `tracks`, and video tracks go
+bottom to top (`videoTracks[0]` is V1, Screen). With `--from`/`--to`, each
+track keeps only the clips that overlap the range.
+
+```
+{"revision": 4,
+ "project": {"id", "name", "schemaVersion", "settings": {"width", "height", "frameRate": {"numerator", "denominator"}, ...},
+             "metadata": {}, "markers": [{"id", "time", "duration", "name", "kind", "note"?}],
+             "media": [{"id", "path", "kind", "role", "duration", ...}],
+             "videoTracks": [Track], "audioTracks": [Track]}}
+
+Track: {"id", "name", "kind", "rippleMode", "muted", "solo", "locked", "hidden", "targeted",
+        "clips": [Clip], "transitions": [{"id", "type", "duration", "direction"?, "fromClipID"?, "toClipID"?, "soundClipID"?}]}
+
+Clip:  {"id", "start", "duration", "sourceStart", "speed", "enabled", "freezeFrame", "keyframes": {}, "tags": [],
+        "content": one of {"media": {"mediaID"}}, {"text": {"text", "preset"?, ...}},
+                          {"graphic": {...}}, {"solid": {"color"}}, {"adjustment": {}},
+        "name"?, "linkGroup"?, "video"?, "audio"?}
+```
+
+- A clip on the timeline from a file has its media ID at
+  `content.media.mediaID`, and its source range is `sourceStart` for
+  `duration * speed`.
+- `name` is missing on clips with no name (titles, solids).
+- `video` is missing until something sets it (a default transform, full
+  opacity, no crop), and `audio` likewise. Once set, `video` has
+  `transform` (`position {x, y}` 0 to 1, `scale`, `rotation`), `crop`,
+  `opacity`, `effects`, and maybe `layoutPreset` and `cutout`; `audio` has
+  `gainDB`, `fadeIn`, `fadeOut`, `muted`, `effects`, and maybe
+  `normalizeTo`.
+- `linkGroup` is missing on clips that aren't linked; linked clips share it.
+
+`tandem media --json`:
+
+```
+{"revision": 4, "added": ["med_..."],          // what --refresh added, usually []
+ "items": [{"id", "path", "kind", "role", "hasVideo", "hasAudio", "clips", "exists",
+            "duration"?, "width"?, "height"?, "frameRate"?, "takeID"?, "takeOffset"?,
+            "analysis": {"transcript": {"state", "progress"?, "message"?}, "loudness": ..., "waveform": ..., "proxy": ..., "thumbnails": ...}}]}
+```
+
+`clips` is how many timeline clips use the file, and `state` is `ready`,
+`queued`, `running`, `failed`, `cancelled` or `none`.
+
+`tandem transcript --json`:
+
+```
+{"revision": 4, "scope": "timeline" | "clip" | "media", "id"?, "timelineTimes": true,
+ "words": [{"text", "start", "end", "clipID"?, "confidence"?}],
+ "missing": ["med_..."]}                       // media whose transcript isn't ready
+```
+
+`timelineTimes` is false for a media transcript, whose times are the
+file's own. `clipID` is set on timeline transcripts.
+
+`tandem status --json`:
+
+```
+{"name", "path", "revision", "savedRevision", "dirty", "duration", "width", "height", "frameRate",
+ "tracks", "clips", "media", "markers", "headless", "recoveredEdits", "apiVersion",
+ "undo"?, "redo"?, "openIn"?: {"owner", "pid", "started"},
+ "jobs": [...], "exports": [...], "warnings": [...],
+ "reviewPending": [{"label", "author", "date", "clipIDs", "removals"}]}
+```
+
+`tandem history --json`:
+
+```
+{"revision": 4, "undo": [{"label", "author"}],  // newest first
+ "redo"?: "label", "events": [{"seq", "kind", "date", "revision"?, "label"?, "author"?}]}
+```
+
+`tandem apply --json` gives `{"revision", "label", "author", "createdIDs",
+"added", "changed", "removed", "duration", "warnings", "dryRun",
+"repeated"}`; `createdIDs` lists new clips, tracks, transitions and markers
+in the order the commands made them.
 
 ## Assets
 
@@ -968,6 +1059,14 @@ about -18. `null` stops normalising.
 
 ```json
 {"updateClip": {"clipID": "clip_k3f9x2mq", "patch": {"video": {"opacity": 0.5}}}}
+```
+
+To give several clips the same patch, send `clipIDs` instead of `clipID`.
+It becomes one `updateClip` per clip in the batch, so it's still one undo
+step:
+
+```json
+{"updateClip": {"clipIDs": ["clip_k3f9x2mq", "clip_p7d2wn4a"], "patch": {"audio": {"gainDB": -6}}}}
 ```
 
 `holdEdges` lets a clip run past the ends of its file: its first frame
@@ -1449,12 +1548,12 @@ or name another track with `"videoTrackID"`.
 
 ### Add a title
 
-Find the Text track's ID in `tandem timeline` (the `V5 Text trk_...` line)
-and insert a text clip:
+Insert a text clip on the Text track (by name, or by the ID on the `V5 Text
+trk_...` line of `tandem timeline`):
 
 ```json
 {"label": "Title for tip 1", "commands": [
-  {"insertClip": {"trackID": "trk_text", "clip": {"content": {"text": {"text": "TIP 1", "preset": "callout", "animationIn": "popIn", "animationOut": "fadeOut"}}, "start": 95, "duration": 3}}}
+  {"insertClip": {"trackID": "Text", "clip": {"content": {"text": {"text": "TIP 1", "preset": "callout", "animationIn": "popIn", "animationOut": "fadeOut"}}, "start": 95, "duration": 3}}}
 ]}
 ```
 

@@ -342,12 +342,14 @@ export type AddTrackArgs = {
 
 /** Removes a track and everything on it. */
 export type RemoveTrackArgs = {
+  /** Track ID or name, like Music. */
   trackID: string;
 };
 
 /** Moves a track to another position among tracks of its kind. */
 export type MoveTrackArgs = {
   index: number;
+  /** Track ID or name, like Music. */
   trackID: string;
 };
 
@@ -355,6 +357,7 @@ export type MoveTrackArgs = {
 export type UpdateTrackArgs = {
   /** Fields: name, muted, solo, locked, hidden, targeted, rippleMode (cut, follow, off). JSON merge patch: only the fields you send change, null removes one. */
   patch: Patch<TrackFields>;
+  /** Track ID or name, like Music. */
   trackID: string;
 };
 
@@ -381,7 +384,7 @@ export type PlaceMediaArgs = {
   anchor?: "bottom" | "bottomLeft" | "bottomRight" | "top" | "topLeft" | "topRight" | "centre" | "lowerThird";
   /** Timeline time to place at. */
   at: number;
-  /** Force the audio track (single file only). */
+  /** Track ID or name, like Music. Force the audio track (single file only). */
   audioTrackID?: string;
   /** Default: all the media that's left. */
   duration?: number;
@@ -395,7 +398,7 @@ export type PlaceMediaArgs = {
   pop?: boolean;
   /** Where to start in the take (or file), in seconds. Default: where all files have started. */
   sourceStart?: number;
-  /** Force the video track (single file only). */
+  /** Track ID or name, like Music. Force the video track (single file only). */
   videoTrackID?: string;
 };
 
@@ -404,6 +407,7 @@ export type InsertClipArgs = {
   clip: Clip;
   /** place (default) fails if the range is taken, overwrite replaces what's there, insert pushes later clips right. */
   mode?: "place" | "overwrite" | "insert";
+  /** Track ID or name, like Music. */
   trackID: string;
 };
 
@@ -419,7 +423,7 @@ export type RemoveClipsArgs = {
 /** Removes a stretch of time and closes it up: every cut track (screen, camera, voice) loses it and follow tracks (B-roll, music, titles) move with it. This is how pauses get tightened. */
 export type RippleDeleteRangeArgs = {
   range: TimeRange;
-  /** Only cut these tracks (and ripple from them). Default: every cut track. */
+  /** Track IDs or names, like ["Camera", "Voice"]. Only cut these tracks (and ripple from them). Default: every cut track. */
   trackIDs?: Array<string>;
 };
 
@@ -427,6 +431,7 @@ export type RippleDeleteRangeArgs = {
 export type CloseGapArgs = {
   /** Any time inside the gap. */
   at: number;
+  /** Track ID or name, like Music. */
   trackID: string;
 };
 
@@ -436,7 +441,7 @@ export type InsertTimeArgs = {
   at: number;
   /** Seconds. */
   duration: number;
-  /** Default: every cut track, with the rest following. */
+  /** Track IDs or names, like ["Camera", "Voice"]. Default: every cut track, with the rest following. */
   trackIDs?: Array<string>;
 };
 
@@ -481,7 +486,7 @@ export type AddSectionCardsArgs = {
     /** Seconds after its sweep starts. */
     offset?: number;
   };
-  /** Video track for the cards. Default Graphics (made on top if missing). */
+  /** Track ID or name, like Music. Video track for the cards. Default Graphics (made on top if missing). */
   trackID?: string;
 };
 
@@ -497,7 +502,7 @@ export type BladeArgs = {
   at: number;
   /** Only these clips. */
   clipIDs?: Array<string>;
-  /** Only these tracks. */
+  /** Track IDs or names, like ["Camera", "Voice"]. Only these tracks. */
   trackIDs?: Array<string>;
 };
 
@@ -568,13 +573,16 @@ export type MoveClipsArgs = {
   includeLinked?: boolean;
   /** place (default) fails if the destination is taken. */
   mode?: "place" | "overwrite";
-  /** Another track (clips from one track only). */
+  /** Track ID or name, like Music. Another track (clips from one track only). */
   toTrackID?: string;
 };
 
-/** Changes a clip's settings: transform, crop, opacity, cutout, audio gain and fades, text, speed... */
+/** Changes a clip's settings: transform, crop, opacity, cutout, audio gain and fades, text, speed... Give clipID for one clip or clipIDs to apply the same patch to each of several. */
 export type UpdateClipArgs = {
-  clipID: string;
+  /** The clip to change. Give this or clipIDs. */
+  clipID?: string;
+  /** Clips to give the same patch, instead of clipID. Each becomes its own updateClip. */
+  clipIDs?: Array<string>;
   /** Any Clip field except id, like {"video": {"transform": {"scale": 0.5}}} or {"audio": {"gainDB": -3}}. JSON merge patch: only the fields you send change, null removes one. */
   patch: Patch<Clip>;
 };
@@ -645,6 +653,7 @@ export type AddTransitionArgs = {
     /** When the sound starts, in seconds from the middle of the transition (the cut, for one between two clips): -0.39 puts the loudest moment of a sound 0.39 s in on the cut. Default: as the transition starts. */
     offset?: number;
   };
+  /** Track ID or name, like Music. */
   trackID: string;
   transition: Transition;
 };

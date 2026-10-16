@@ -462,9 +462,9 @@ struct CLI {
         case .object(let fields) where fields["commands"] != nil:
             request = try ServiceJSON.decodeRequest(ApplyRequest.self, from: data)
         case .array(let items):
-            request = ApplyRequest(commands: try items.enumerated().map { try CommandJSON.decode($1, path: "[\($0)]") })
+            request = ApplyRequest(commands: try items.enumerated().flatMap { try CommandJSON.decodeAll($1, path: "[\($0)]") })
         case .object:
-            request = ApplyRequest(commands: [try CommandJSON.decode(value)])
+            request = ApplyRequest(commands: try CommandJSON.decodeAll(value))
         default:
             throw ServiceError(.badRequest, "Expected a batch object, a list of commands or one command.")
         }

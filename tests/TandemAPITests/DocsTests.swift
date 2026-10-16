@@ -52,7 +52,7 @@ final class DocsTests: XCTestCase {
             case .object(let fields) where fields["commands"] != nil:
                 XCTAssertNoThrow(try ServiceJSON.decodeRequest(ApplyRequest.self, from: Data(block.utf8)), block)
             case .object(let fields) where fields.count == 1 && CommandCase(rawValue: fields.keys.first!) != nil:
-                XCTAssertNoThrow(try CommandJSON.decode(value), block)
+                XCTAssertNoThrow(try CommandJSON.decodeAll(value), block)
             default:
                 XCTFail("unexpected JSON example in the guide: \(block)")
             }

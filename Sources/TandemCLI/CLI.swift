@@ -197,7 +197,10 @@ struct CLI {
             return show(try await client().call(request), json: json)
         case "short":
             try args.expectPositionals(atMost: 0, command: name)
-            let request = ShortRequest(apply: args.has("apply"), label: args.options["label"], expectedRevision: try args.integer("expect"))
+            let request = ShortRequest(
+                apply: args.has("apply"), copy: args.has("copy") ? true : nil, copyPath: args.has("copy") ? args.options["output"] : nil,
+                label: args.options["label"], expectedRevision: try args.integer("expect")
+            )
             return show(try await client().call(request), json: json)
         case "captions":
             try args.expectPositionals(atMost: 0, command: name)

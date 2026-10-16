@@ -90,6 +90,8 @@ public enum Editing {
             try addMotion(&project, clipIDs, style: style, amount: amount)
         case .setFormatLayout(let clipIDs, let format, let slot, let cutout):
             try setFormatLayout(&project, clipIDs, format: format, slot: slot, cutout: cutout)
+        case .adoptFormat(let format):
+            try adoptFormat(&project, format: format, &context)
         case .addTransition(let trackID, let transition, let sound):
             try addTransition(&project, trackID: trackID, transition, sound: sound, &context)
         case .updateTransition(let transitionID, let patch):
@@ -1171,6 +1173,66 @@ public enum Editing {
             video.formatOverrides[format] = override
             clip.video = video
             p[location].clips[index] = clip
+        }
+    }
+
+    static func adoptFormat(_ p: inout Project, format: String, _ context: inout EditContext) throws {
+        guard let output = p.settings.alternateFormats.first(where: { $0.id == format }) else {
+            throw EditError.notFound("output format \(format) in settings.alternateFormats")
+        }
+        let transformPaths = ["video.transform.position", "video.transform.scale", "video.transform.rotation"]
+        let cropPaths = ["video.crop.left", "video.crop.top", "video.crop.right", "video.crop.bottom"]
+        var droppedZooms: [String] = []
+        for track in p.videoTracks.indices {
+            let location = TrackLocation(kind: .video, index: track)
+            for index in p[location].clips.indices {
+                var clip = p[location].clips[index]
+                guard var video = clip.video, let override = video.formatOverrides.removeValue(forKey: format) else { continue }
+                if override.hidden { clip.enabled = false }
+                if let target = override.transform {
+                    let main = video.transform
+                    if clip.keyframes["video.transform.position"] != nil {
+                        // A zoom or pan: in the format the override replaced
+                        // it, and a landscape move doesn't fit a half-frame.
+                        for path in transformPaths { clip.keyframes.removeValue(forKey: path) }
+                        droppedZooms.append(clip.name ?? clip.id)
+                    } else {
+                        // Keyframes are absolute, so a pop from the
+                        // landscape size is scaled to the format's size.
+                        if let frames = clip.keyframes["video.transform.scale"], main.scale > 0 {
+                            let factor = target.scale / main.scale
+                            clip.keyframes["video.transform.scale"] = frames.map { frame in
+                                var frame = frame
+                                if let n = frame.value.number { frame.value = .number(n * factor) }
+                                return frame
+                            }
+                        }
+                        if let frames = clip.keyframes["video.transform.rotation"] {
+                            let delta = target.rotation - main.rotation
+                            clip.keyframes["video.transform.rotation"] = frames.map { frame in
+                                var frame = frame
+                                if let n = frame.value.number { frame.value = .number(n + delta) }
+                                return frame
+                            }
+                        }
+                    }
+                    video.transform = target
+                    video.layoutPreset = nil
+                }
+                if let crop = override.crop {
+                    video.crop = crop
+                    for path in cropPaths { clip.keyframes.removeValue(forKey: path) }
+                }
+                if let cutout = override.cutout, video.cutout != nil { video.cutout?.enabled = cutout }
+                clip.video = video
+                p[location].clips[index] = clip
+            }
+        }
+        p.settings.width = output.width
+        p.settings.height = output.height
+        p.settings.alternateFormats.removeAll { $0.id == format }
+        if !droppedZooms.isEmpty {
+            context.warn("Dropped the zoom on \(droppedZooms.joined(separator: ", ")): the \(output.name) format never showed it, and a landscape pan doesn't fit there. Zoom again with zoomToRegion if you want one.")
         }
     }
 

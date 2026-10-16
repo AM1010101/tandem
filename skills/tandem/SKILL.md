@@ -386,18 +386,14 @@ while its topic was news. The project is `muse-wonder/Muse Wonder
 Shorts.tandem`; `muse-wonder/upload/shorts/` has the exports, the crop spec
 and the upload batch.
 
-- **Make them in a copy.** Copy the project to "<Name> Shorts.tandem" in the
-  same folder (what Save As does), then `tandem short --apply` there. The
-  long video's project never changes.
-- **A Short is portrait in Tandem too, not just in the export.** The app only
-  shows a project's canvas, so after `tandem short --apply` Mike opened the
-  Short and saw landscape: "YouTube shorts are always portrait" (Convex 1.47,
-  2026-10-16). Make the Short's project itself 1080x1920 before handing it
-  back: `updateSettings {"width": 1080, "height": 1920, "alternateFormats": []}`,
-  then move each clip's `formatOverrides.portrait` transform and crop into its
-  `video.transform` and `crop`. Scale keyframes (sticker pops) are absolute,
-  so multiply them by the clip's portrait scale or they shrink back to their
-  landscape size.
+- **Make them with `tandem short --copy --apply`.** It writes "<Name>
+  Short.tandem" beside the long video, laid out and made 1080x1920, so the
+  app shows it portrait: "YouTube shorts are always portrait" (Convex 1.47,
+  2026-10-16, when a Short made with plain `tandem short` opened landscape).
+  The long video's project never changes. Cut the Short down in the copy.
+  For a project already laid out with plain `tandem short`, `--copy` keeps
+  its placements, and the `adoptFormat` command does the same conversion in
+  place.
 - **A whole release video as a Short (Convex 1.47):** cut the copy to under
   3:00 by dropping whole sections, not by trimming every item. Re-render each
   screen shot for the phone window (`broll/short/`, 2160x1680, about 36 px

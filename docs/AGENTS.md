@@ -1013,6 +1013,21 @@ project.
 {"setFormatLayout": {"clipIDs": ["clip_cam1"], "format": "portrait", "slot": "bottom", "cutout": false}}
 ```
 
+#### adoptFormat
+
+Makes an alternate output format the canvas, so the app shows it: the
+project takes the format's size and the format leaves `alternateFormats`,
+and each clip's placement there (transform, crop, cutout) becomes its main
+one. Keyframes are absolute, so a scale-only animation (a sticker's pop) is
+scaled to the format's size. A zoom that also moves is dropped, with a
+warning, since the format never showed it. A clip hidden in the format is
+switched off. The landscape layout is gone afterwards, so run it on a copy:
+`tandem short --copy` does that.
+
+```json
+{"adoptFormat": {"format": "portrait"}}
+```
+
 ### Transitions
 
 #### addTransition
@@ -1307,23 +1322,27 @@ To restyle them, patch the captions' `style` (see Add a title).
 A short is 1080x1920, and there are two ways to make one.
 `tandem export --preset short` renders either.
 
-**Cut from a landscape video.** The short is an alternate output format
-of the same project (1080x1920):
+**Cut from a landscape video.** Make the short a project of its own,
+beside the long one:
 
 ```bash
-tandem short                                   # the plan, nothing changes
-tandem short --apply
-tandem captions --apply                        # word captions between the halves
-tandem frame 0:30 --format portrait -o /tmp/short.png
-tandem export --preset short -o ~/Movies/short.mp4
+tandem short --copy                            # the plan, nothing written
+tandem short --copy --apply                    # writes "<Name> Short.tandem"
+tandem app "Decision Models Short.tandem"      # cut it down there
+tandem captions --apply --project "Decision Models Short.tandem"
+tandem export --preset short --project "Decision Models Short.tandem"
 ```
 
 Screen, B-roll and graphics fill the top half, the camera fills the bottom
 half with its background, and full-frame camera moments fill the frame.
-Every edit to the project shows up in both videos. To cut the short down
-without touching the long one, save a version first and edit that. The
-landscape video still exports with plain `tandem export` (YouTube 4K for a
-4K canvas).
+Then the copy's canvas becomes 1080x1920 (`adoptFormat`), so the app shows
+the short portrait, as it exports. The long video's project isn't edited,
+and an existing file is never replaced (`-o` names the copy).
+
+Without `--copy`, `tandem short --apply` adds the short to the same
+project as an alternate output format instead, so every edit shows up in
+both videos. The app still shows the landscape canvas then; look at the
+short with `tandem frame 0:30 --format portrait -o /tmp/short.png`.
 
 **Made portrait from the start**, for a short that isn't cut from a long
 video (phone footage, photos). The canvas is the short, so there's no

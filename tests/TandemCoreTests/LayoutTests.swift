@@ -85,6 +85,105 @@ final class PortraitLayoutTests: XCTestCase {
     }
 }
 
+/// `adoptFormat`: a project's 9:16 format becomes its canvas, so the app
+/// shows the short as it exports (Convex 1.47 Short, 2026-10-16).
+final class AdoptFormatTests: XCTestCase {
+    /// What the short shows of a clip, as TandemRender's
+    /// `resolvedVideo(at:format:)` works it out: the override's transform
+    /// and crop replace the animated ones.
+    func inShort(_ clip: Clip?, at time: Time) -> VideoProperties? {
+        guard let clip else { return nil }
+        var video = clip.resolvedVideo(at: time)
+        guard let override = clip.video?.formatOverrides["portrait"] else { return video }
+        if let transform = override.transform { video.transform = transform }
+        if let crop = override.crop { video.crop = crop }
+        return video
+    }
+
+    /// The edited fixture laid out as a short: camera PiP in the landscape
+    /// edit and the bottom half in the short, the screen in the top half.
+    func laidOut() throws -> (ProjectCoordinator, camera: String, screen: String) {
+        let (f, c) = try Fixture.edited()
+        let camera = f.clips("Camera")[0].id
+        let screen = f.clips("Screen")[0].id
+        try c.run("Format", .updateSettings(patch: .object(["alternateFormats": .array([try JSONValue.from(OutputFormat.portrait)])])))
+        try c.run("PiP", .applyLayout(clipIDs: [camera], preset: .pipRight))
+        try c.run("Short", .setFormatLayout(clipIDs: [camera], format: "portrait", slot: .bottom, cutout: false),
+                  .setFormatLayout(clipIDs: [screen], format: "portrait", slot: .top))
+        return (c, camera, screen)
+    }
+
+    func testTheShortBecomesTheCanvas() throws {
+        let (c, camera, screen) = try laidOut()
+        let before = c.project
+        try c.run("Portrait", .adoptFormat(format: "portrait"))
+        let p = c.project
+        XCTAssertEqual(p.settings.width, 1080)
+        XCTAssertEqual(p.settings.height, 1920)
+        XCTAssertTrue(p.settings.alternateFormats.isEmpty, "it's the canvas now")
+        for id in [camera, screen] {
+            let was = try XCTUnwrap(inShort(before.clip(id), at: t(5)))
+            let now = try XCTUnwrap(p.clip(id)?.resolvedVideo(at: t(5)))
+            XCTAssertEqual(now.transform, was.transform, "placed where the short had it")
+            XCTAssertEqual(now.crop, was.crop)
+            XCTAssertNil(p.clip(id)?.video?.formatOverrides["portrait"])
+        }
+        XCTAssertEqual(p.clip(camera)?.video?.cutout?.enabled, false, "the short's camera keeps its background")
+        XCTAssertNil(p.clip(camera)?.video?.layoutPreset, "no longer the PiP")
+        assertValid(p)
+    }
+
+    func testAStickersPopKeepsItsSizeInTheShort() throws {
+        // A sticker at 0.3 in landscape and 0.85 in the short pops in to
+        // 0.33 and out to 0.01. Its keyframes are absolute, so moved across
+        // as they were it would shrink back to its landscape size.
+        let (c, _, screen) = try laidOut()
+        try c.run("Sticker", .updateClip(clipID: screen, patch: .object(["video": .object(["transform": .object(["scale": .number(0.3)])])])))
+        try c.run("Pop", .setKeyframes(clipID: screen, parameter: "video.transform.scale", keyframes: [
+            Keyframe(time: t(0), value: .number(0.3)), Keyframe(time: t(1), value: .number(0.33)), Keyframe(time: t(2), value: .number(0.01))
+        ]))
+        var video = try XCTUnwrap(c.project.clip(screen)?.video)
+        video.formatOverrides["portrait"]?.transform?.scale = 0.85
+        try c.run("Short size", .updateClip(clipID: screen, patch: .object(["video": .object(["formatOverrides": try JSONValue.from(video.formatOverrides)])])))
+        try c.run("Portrait", .adoptFormat(format: "portrait"))
+        let clip = try XCTUnwrap(c.project.clip(screen))
+        XCTAssertEqual(clip.video?.transform.scale ?? 0, 0.85, accuracy: 1e-9)
+        let values = (clip.keyframes["video.transform.scale"] ?? []).compactMap(\.value.number)
+        XCTAssertEqual(values.count, 3)
+        XCTAssertEqual(values[0], 0.85, accuracy: 1e-9)
+        XCTAssertEqual(values[1], 0.935, accuracy: 1e-9)
+        XCTAssertEqual(values[2], 0.85 / 30, accuracy: 1e-9)
+    }
+
+    func testAZoomThatMovesIsDroppedWithAWarning() throws {
+        // The short never showed it (an override's transform replaces the
+        // animated one), and a landscape pan doesn't map onto a half-frame.
+        let (c, _, screen) = try laidOut()
+        try c.run("Zoom", .zoomToRegion(clipID: screen, rect: Rect(x: 0.5, y: 0.25, width: 0.5, height: 0.5), at: t(10)))
+        let shown = try XCTUnwrap(inShort(c.project.clip(screen), at: t(15))?.transform)
+        let result = try c.run("Portrait", .adoptFormat(format: "portrait"))
+        let clip = try XCTUnwrap(c.project.clip(screen))
+        XCTAssertNil(clip.keyframes["video.transform.scale"])
+        XCTAssertNil(clip.keyframes["video.transform.position"])
+        XCTAssertEqual(clip.resolvedVideo(at: t(15)).transform, shown, "as the short showed it")
+        XCTAssertTrue(result.warnings.contains { $0.contains("zoom") }, "\(result.warnings)")
+    }
+
+    func testAClipHiddenInTheShortIsSwitchedOff() throws {
+        let (c, _, screen) = try laidOut()
+        var video = try XCTUnwrap(c.project.clip(screen)?.video)
+        video.formatOverrides["portrait"]?.hidden = true
+        try c.run("Hide", .updateClip(clipID: screen, patch: .object(["video": .object(["formatOverrides": try JSONValue.from(video.formatOverrides)])])))
+        try c.run("Portrait", .adoptFormat(format: "portrait"))
+        XCTAssertEqual(c.project.clip(screen)?.enabled, false)
+    }
+
+    func testItNeedsTheFormat() throws {
+        let (_, c) = try Fixture.edited()
+        XCTAssertThrowsError(try c.run("Portrait", .adoptFormat(format: "portrait")))
+    }
+}
+
 final class StillsTests: XCTestCase {
     /// A landscape photo in a 1080x1920 short.
     func shortWithPhoto() throws -> (ProjectCoordinator, String) {

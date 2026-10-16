@@ -731,6 +731,12 @@ extension CommandSchema {
             example: #"{"setFormatLayout": {"clipIDs": ["clip_cam1"], "format": "portrait", "slot": "bottom", "cutout": false}}"#
         ),
         Entry(
+            command: .adoptFormat,
+            summary: "Makes an alternate output format the canvas, so the app shows it: the project takes the format's size, and each clip's placement there becomes its main one. Scale-only keyframes (a sticker's pop) are scaled to match; a zoom that also moves is dropped with a warning, since the format never showed it. A clip hidden in the format is switched off. Use it on a copy (tandem short --copy does both), as the landscape layout is gone afterwards.",
+            arguments: S.object(["format": S.string("Format ID, like portrait.")], required: ["format"]),
+            example: #"{"adoptFormat": {"format": "portrait"}}"#
+        ),
+        Entry(
             command: .addMotion,
             summary: "A slow zoom or pan over the whole of each clip (Ken Burns), for stills and photos. Starts from the clip's current placement, so apply the fill layout first in a short. amount is how much bigger the zoomed end is (default 1.12). Replaces the clip's position and scale animation.",
             arguments: S.object([

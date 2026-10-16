@@ -587,10 +587,12 @@ enum MCPTools {
         ),
         Tool(
             name: "short", title: "Lay out a 9:16 short",
-            description: "Adds the portrait output format and places every video clip in it the way Mike's shorts look: screen, B-roll and graphics in the top half, the camera in the bottom half with its background, full-frame camera moments filling the frame. The landscape edit is untouched. A dry run unless apply: true. Then export with the short preset.",
+            description: "Adds the portrait output format and places every video clip in it the way Mike's shorts look: screen, B-roll and graphics in the top half, the camera in the bottom half with its background, full-frame camera moments filling the frame. The landscape edit is untouched. With copy: true the short becomes its own 1080x1920 project instead, which the app shows portrait. A dry run unless apply: true. Then export with the short preset.",
             operation: .short,
             properties: [
                 "apply": S.boolean("Lay it out. Without it nothing changes."),
+                "copy": S.boolean("Make the short a 1080x1920 project of its own beside this one (\"<Name> Short.tandem\"), laid out and made portrait, so the app shows it portrait. This project isn't edited. What you usually want."),
+                "copyPath": S.string("The copy's file name or path, relative to the project's folder."),
                 "label": S.string("Undo label."), "author": S.string("Who made the edit."),
                 "expectedRevision": S.integer("Refuse unless the project is at this revision.")
             ],

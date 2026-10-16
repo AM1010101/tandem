@@ -13,12 +13,21 @@ public struct ShortRequest: ServiceCall {
     public static let operation = ServiceOperation.short
     /// Make the edit. Without it this is a dry run that returns the plan.
     public var apply: Bool?
+    /// Make the short a project of its own: a copy beside this one, laid
+    /// out and made 1080x1920 (`adoptFormat`), so the app shows it
+    /// portrait. This project isn't edited.
+    public var copy: Bool?
+    /// Where the copy goes, relative to the project's folder. Defaults to
+    /// "<Name> Short.tandem".
+    public var copyPath: String?
     public var label: String?
     public var author: String?
     public var expectedRevision: Int?
 
-    public init(apply: Bool? = nil, label: String? = nil, author: String? = nil, expectedRevision: Int? = nil) {
+    public init(apply: Bool? = nil, copy: Bool? = nil, copyPath: String? = nil, label: String? = nil, author: String? = nil, expectedRevision: Int? = nil) {
         self.apply = apply
+        self.copy = copy
+        self.copyPath = copyPath
         self.label = label
         self.author = author
         self.expectedRevision = expectedRevision
@@ -27,6 +36,8 @@ public struct ShortRequest: ServiceCall {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         apply = try c.decodeIfPresent(Bool.self, forKey: .apply)
+        copy = try c.decodeIfPresent(Bool.self, forKey: .copy)
+        copyPath = try c.decodeIfPresent(String.self, forKey: .copyPath)
         label = try c.decodeIfPresent(String.self, forKey: .label)
         author = try c.decodeIfPresent(String.self, forKey: .author)
         expectedRevision = try c.decodeIfPresent(Int.self, forKey: .expectedRevision)
@@ -44,6 +55,8 @@ public struct ShortResult: Codable, Sendable {
     public var placed: [String: Int]
     public var commands: [EditCommand]
     public var applied: ApplyResult?
+    /// The short's own project, when it was made as a copy.
+    public var copy: String?
     public var warnings: [String]
 }
 
@@ -61,6 +74,7 @@ extension TandemService {
             throw ServiceError(.invalid, "This project's canvas is already 9:16 (\(project.settings.width)x\(project.settings.height)), so it is the short and there's nothing to lay out. Export it with `tandem export --preset short`.")
         }
         let format = existing ?? .portrait
+        let copying = request.copy == true || request.copyPath != nil
         var commands: [EditCommand] = []
         if !project.settings.alternateFormats.contains(where: { $0.id == format.id }) {
             let formats = project.settings.alternateFormats + [format]
@@ -75,6 +89,9 @@ extension TandemService {
                     skippedLocked.insert(track.name)
                     continue
                 }
+                // A short already laid out keeps the placements Mike
+                // tweaked when it's made its own project.
+                if copying, clip.video?.formatOverrides[format.id] != nil { continue }
                 groups[Self.portraitSlot(for: clip, role: item.role), default: []].append(clip.id)
             }
         }
@@ -93,6 +110,9 @@ extension TandemService {
             placed: Dictionary(uniqueKeysWithValues: groups.map { ($0.key.rawValue, $0.value.count) }),
             commands: commands, applied: nil, warnings: warnings
         )
+        if copying {
+            return try shortCopy(request, project: project, revision: revision, format: format, result: result)
+        }
         guard !commands.isEmpty else { return result }
         let apply = ApplyRequest(
             label: request.label ?? "Lay out the 9:16 short",
@@ -102,6 +122,40 @@ extension TandemService {
         let applied = try self.apply(apply, context: context)
         result.warnings += applied.warnings
         if request.apply == true { result.applied = applied }
+        return result
+    }
+
+    /// The short as a project of its own: this project as saved, laid out,
+    /// with the portrait format made its canvas, written beside it. A dry
+    /// run checks the edit on a copy in memory and writes nothing.
+    func shortCopy(_ request: ShortRequest, project: Project, revision: Int, format: OutputFormat, result: ShortResult) throws -> ShortResult {
+        var result = result
+        let folder = session.fileURL.deletingLastPathComponent()
+        let name = request.copyPath ?? session.fileURL.deletingPathExtension().lastPathComponent + " Short.tandem"
+        var target = URL(fileURLWithPath: name, relativeTo: folder).standardizedFileURL
+        if target.pathExtension != ProjectFile.fileExtension { target.appendPathExtension(ProjectFile.fileExtension) }
+        if FileManager.default.fileExists(atPath: target.path) {
+            throw ServiceError(.invalid, "\(target.lastPathComponent) is already there, and the short never replaces a file. Open that one, or give the copy another name (`tandem short --copy -o \"<Name> Short v2.tandem\"`).")
+        }
+        let copy = ProjectCoordinator(project: project)
+        result.commands.append(.adoptFormat(format: format.id))
+        let batch = EditBatch(label: request.label ?? "Make the 9:16 short its own project", commands: result.commands)
+        let commit: ProjectCoordinator.CommitResult
+        do {
+            commit = try copy.apply(batch)
+        } catch {
+            throw ServiceError.wrap(error)
+        }
+        result.warnings += commit.warnings
+        guard request.apply == true else { return result }
+        try session.save()
+        var short = copy.project
+        short.id = IDs.make("prj")
+        short.name = target.deletingPathExtension().lastPathComponent
+        // The same folder, so its media paths and analysis cache already fit.
+        ProjectFile.forgetHistory(of: target)
+        try ProjectFile.save(short, revision: revision, to: target)
+        result.copy = target.path
         return result
     }
 
@@ -122,7 +176,7 @@ extension TandemService {
 extension ShortResult: ReadableResult {
     public var readableText: String {
         var lines: [String] = []
-        let mode = applied == nil ? "dry run" : "applied"
+        let mode = copy != nil ? "its own project" : applied == nil ? "dry run" : "applied"
         let counts = ["top", "bottom", "full"].compactMap { slot in placed[slot].map { "\($0) in the \(slot == "full" ? "full frame" : "\(slot) half")" } }
         if counts.isEmpty {
             lines.append("Nothing to place: no video clips from media.")
@@ -130,7 +184,11 @@ extension ShortResult: ReadableResult {
             lines.append("9:16 short \"\(format.name)\" (\(format.width)x\(format.height), \(mode), revision \(revision)): \(counts.joined(separator: ", ")).")
         }
         for warning in warnings { lines.append("Warning: \(warning)") }
-        if let applied {
+        if let copy {
+            lines.append("Made the short its own 1080x1920 project: \(copy). This project is unchanged. Open the short with `tandem app \"\(copy)\"` and cut it down there; `tandem export --preset short` renders it.")
+        } else if applied == nil, !counts.isEmpty, commands.contains(where: { if case .adoptFormat = $0 { return true } else { return false } }) {
+            lines.append("Nothing written yet. Run again with --apply to make the copy.")
+        } else if let applied {
             lines.append("Applied as revision \(applied.revision). Render it with `tandem export --preset short` or look with `tandem frame <time> --format portrait`.")
         } else if !counts.isEmpty {
             lines.append("Nothing changed yet. Run again with --apply (or apply: true) to lay it out.")

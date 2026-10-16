@@ -410,6 +410,39 @@ final class ServiceTests: XCTestCase {
         }
     }
 
+    func testShortCopyIsAPortraitProjectOfItsOwn() throws {
+        // "YouTube shorts are always portrait": the app shows a project's
+        // canvas, so the short gets a 1080x1920 project beside the long
+        // one, which stays as it was.
+        let h = try ServiceHarness()
+        defer { h.close() }
+        let before = h.service.coordinator.snapshot()
+        let dry = try h.service.short(ShortRequest(copy: true), context: h.context)
+        XCTAssertNil(dry.copy, "a dry run makes nothing")
+        let result = try h.service.short(ShortRequest(apply: true, copy: true), context: h.context)
+        let copy = URL(fileURLWithPath: try XCTUnwrap(result.copy))
+        XCTAssertEqual(copy.lastPathComponent, h.url.deletingPathExtension().lastPathComponent + " Short.tandem")
+        XCTAssertEqual(copy.deletingLastPathComponent().standardizedFileURL, h.url.deletingLastPathComponent().standardizedFileURL, "beside the long one")
+        let (short, _) = try ProjectFile.load(from: copy)
+        XCTAssertEqual(short.settings.width, 1080)
+        XCTAssertEqual(short.settings.height, 1920)
+        XCTAssertTrue(short.settings.alternateFormats.isEmpty)
+        XCTAssertNotEqual(short.id, before.project.id)
+        XCTAssertTrue(short.allTracks.flatMap(\.clips).allSatisfy { $0.video?.formatOverrides.isEmpty ?? true })
+        XCTAssertTrue(result.readableText.contains("Short.tandem"), result.readableText)
+
+        let (project, revision) = h.service.coordinator.snapshot()
+        XCTAssertEqual(revision, before.revision, "the long video isn't edited")
+        XCTAssertEqual(project.settings.width, 3840)
+        XCTAssertTrue(project.settings.alternateFormats.isEmpty)
+
+        XCTAssertThrowsError(try h.service.short(ShortRequest(apply: true, copy: true), context: h.context), "never replaces a file") { error in
+            XCTAssertTrue("\(error)".contains("already"), "\(error)")
+        }
+        let named = try h.service.short(ShortRequest(apply: true, copy: true, copyPath: "Short v2.tandem"), context: h.context)
+        XCTAssertEqual(named.copy.map { URL(fileURLWithPath: $0).lastPathComponent }, "Short v2.tandem")
+    }
+
     func testShortRefusesACanvasThatsAlreadyNineBySixteen() throws {
         var project = APIFixture.project()
         project.settings.width = 1080

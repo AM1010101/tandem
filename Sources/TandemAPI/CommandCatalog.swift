@@ -10,7 +10,7 @@ public enum CommandCase: String, CaseIterable, Codable, Sendable {
     case addMedia, updateMedia, removeMedia
     case placeMedia, insertClip, removeClips, rippleDeleteRange, closeGap, insertTime, insertTemplate, addSectionCards, fitSectionCards
     case blade, join, joinThroughEdits, trim, roll, slip, slide, setSpeed
-    case moveClips, updateClip, link, unlink, applyLayout, zoomToRegion, setFormatLayout, addMotion
+    case moveClips, updateClip, link, unlink, applyLayout, zoomToRegion, setFormatLayout, adoptFormat, addMotion
     case addTransition, updateTransition, removeTransition
     case addEffect, updateEffect, removeEffect, moveEffect, setKeyframes
     case normalizeSpeech
@@ -53,6 +53,7 @@ extension EditCommand {
         case .applyLayout: return .applyLayout
         case .zoomToRegion: return .zoomToRegion
         case .setFormatLayout: return .setFormatLayout
+        case .adoptFormat: return .adoptFormat
         case .addMotion: return .addMotion
         case .addTransition: return .addTransition
         case .updateTransition: return .updateTransition
@@ -113,6 +114,7 @@ public enum CommandText {
         case .applyLayout(_, let preset): return "Layout \(preset.name)"
         case .zoomToRegion(_, _, let at, _): return at.map { "Zoom at \($0)" } ?? "Zoom"
         case .setFormatLayout(let ids, let format, let slot, _): return "Place \(count(ids.count, "clip")) in the \(slot.rawValue) of \(format)"
+        case .adoptFormat(let format): return "Make \(format) the canvas"
         case .addMotion(let ids, let style, _): return "\(style.name) on \(count(ids.count, "clip"))"
         case .addTransition(_, let transition, let sound): return "Add \(transition.type.rawValue)" + (sound == nil ? "" : " with a sound")
         case .updateTransition: return "Update transition"

@@ -167,6 +167,12 @@ public enum EditCommand: Codable, Equatable, Sendable {
     /// `ProjectSettings.alternateFormats`), for example the top or bottom
     /// half of the 9:16 short. `cutout` turns the cutout on or off there.
     case setFormatLayout(clipIDs: [String], format: String, slot: PortraitSlot, cutout: Bool? = nil)
+    /// Makes an alternate output format the canvas: its size becomes the
+    /// project's, and each clip's placement there becomes its main one.
+    /// Scale-only keyframes (a sticker's pop) are scaled to match; a zoom
+    /// that also moves is dropped, as the format never showed it. A clip
+    /// hidden in the format is switched off. Makes a short its own project.
+    case adoptFormat(format: String)
     /// A slow zoom or pan over the whole of each clip (the Ken Burns
     /// effect), for stills and photos. Starts from the clip's current
     /// placement (apply the `fill` layout first for a short). `amount`

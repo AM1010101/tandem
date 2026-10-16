@@ -182,6 +182,15 @@ struct FakeRenderer: RenderBackend {
     var screenScanned: [FrameStats]?
     /// The ranges each scan was asked for, screen scans marked.
     let scans = ScanLog()
+    /// The times frames were asked for, and how big.
+    let frames = FrameLog()
+
+    final class FrameLog: @unchecked Sendable {
+        private let lock = NSLock()
+        private var entries: [(time: Time, maxSize: CGSize?)] = []
+        func add(_ time: Time, _ maxSize: CGSize?) { lock.withLock { entries.append((time, maxSize)) } }
+        var all: [(time: Time, maxSize: CGSize?)] { lock.withLock { entries } }
+    }
 
     final class ScanLog: @unchecked Sendable {
         private let lock = NSLock()
@@ -207,7 +216,8 @@ struct FakeRenderer: RenderBackend {
     }
 
     func frame(context: RenderContext, at time: Time, maxSize: CGSize?) async throws -> RenderedFrame {
-        RenderedFrame(png: Self.png, warnings: warnings)
+        frames.add(time, maxSize)
+        return RenderedFrame(png: Self.png, warnings: warnings)
     }
 
     func export(context: RenderContext, preset: ExportPreset, output: URL, progress: @escaping @Sendable (Double) -> Void) async throws -> RenderedExport {

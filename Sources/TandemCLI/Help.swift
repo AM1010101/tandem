@@ -74,6 +74,11 @@ enum Help {
                     Cards go on Graphics, hiding the frame from each marker on. --insert also makes room at each marker, so the card is a pause and its wipes show the shots either side (the whole take moves). It cuts the take in the pause before the section's first word: a marker on a word moves the cut into the pause beside it (up to 0.3 s), so the word isn't clipped, and the plan says so. The whooshes come from the asset library and go on SFX; --no-sounds leaves them out.
                     """),
         CommandHelp(name: "frame", usage: "tandem frame <time> [-o out.png] [--width <px>]", summary: "Render one frame of the timeline to a PNG.", options: ["output", "width", "height", "format"]),
+        CommandHelp(name: "frames", usage: "tandem frames <time>... [--every <seconds> [--from <time>] [--to <time>]] [-o sheet.png] [--width <px>] [--format <id>]", summary: "Render several frames onto one contact sheet PNG, each labelled with its time.", options: ["output", "width", "every", "from", "to", "format"],
+                    details: """
+                    Give times, or --every <seconds> through the timeline (--from and --to for part of it; --to is shown, the timeline's own end isn't), or both. The frames go in time order, each 480 px wide by default (--width, 64 to 1920), about four to a row for landscape and seven for portrait, with its time in the strip underneath so captions stay visible. At most 48 frames on a sheet.
+                    The default file is frames-<first>-<last>.png in this folder, with dots for the colons. --format renders an alternate format, like portrait.
+                    """),
         CommandHelp(name: "screenshot", usage: "tandem screenshot [-o out.png]", summary: "Save a picture of the app window (needs the app to have the project open).", options: ["output"]),
         CommandHelp(name: "clip", usage: "tandem clip <start> <end> [-o out.mp4] [--preset review]", summary: "Render part of the timeline to a review MP4.", options: ["output", "preset"]),
         CommandHelp(name: "export", usage: "tandem export [--preset <name>] [-o out.mp4] [--from <time>] [--to <time>] [--format <id>]", summary: "Export the video, loudness matched (presets: youtube4k, youtube1080, review, short).", options: ["output", "preset", "from", "to", "format"],
@@ -132,11 +137,25 @@ enum Help {
         CommandHelp(name: "serve", usage: "tandem serve [--port <n>]", summary: "Open the project and serve the API until stopped (for agents, with the app closed).", options: ["port"]),
         CommandHelp(name: "mcp", usage: "tandem mcp", summary: "Run the MCP server on stdin and stdout.", options: [],
                     details: "Add it to Claude Code with: claude mcp add tandem -- ~/Applications/Tandem.app/Contents/MacOS/tandem mcp"),
-        CommandHelp(name: "help", usage: "tandem help [<command>]", summary: "Show help.", options: [])
+        CommandHelp(name: "help", usage: "tandem help [<command> | <edit command>]", summary: "Show help, for a command or an edit command like addTransition.", options: [])
     ]
 
     static func command(_ name: String) -> CommandHelp? {
         commands.first { $0.name == name }
+    }
+
+    /// `tandem help <topic>`: a CLI command, an edit command from the
+    /// schema (in any case, as agents type addtransition too), or both for
+    /// a name that's each, like join.
+    static func topic(_ name: String) -> String? {
+        let edit = CommandCase(rawValue: name) ?? CommandCase.allCases.first { $0.rawValue.lowercased() == name.lowercased() }
+        let cli = command(name)
+        switch (cli, edit) {
+        case let (cli?, edit?): return detail(cli) + "\n\n" + CommandSchema.help(edit)
+        case let (cli?, nil): return detail(cli)
+        case let (nil, edit?): return CommandSchema.help(edit)
+        case (nil, nil): return nil
+        }
     }
 
     static var overview: String {
@@ -160,7 +179,7 @@ enum Help {
             "",
             "Times are seconds (83.5) or mm:ss.mmm (01:23.500).",
             "When the Tandem app has the project open, commands go through the app; otherwise they open the file.",
-            "Run `tandem help <command>` for more."
+            "Run `tandem help <command>` for more, and `tandem help <edit command>` (like addTransition) for an edit command's arguments and example."
         ]
         return lines.joined(separator: "\n")
     }

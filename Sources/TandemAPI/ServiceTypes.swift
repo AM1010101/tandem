@@ -639,6 +639,64 @@ public struct FrameRequest: ServiceCall {
     }
 }
 
+/// Several frames on one contact sheet, each labelled with its time.
+public struct FramesRequest: ServiceCall {
+    public static let operation = ServiceOperation.frames
+    public var times: [Time]?
+    /// A frame every this many seconds from `from` (default 0) to `to`
+    /// (default the end of the timeline), as well as any `times`.
+    public var every: Time?
+    public var from: Time?
+    public var to: Time?
+    /// Each tile's width in pixels. Default 480.
+    public var width: Int?
+    /// Write the PNG here (absolute, or relative to the project folder)
+    /// instead of returning it as base64.
+    public var output: String?
+    /// An alternate output format ID, like `portrait`.
+    public var format: String?
+
+    public init(times: [Time]? = nil, every: Time? = nil, from: Time? = nil, to: Time? = nil, width: Int? = nil, output: String? = nil, format: String? = nil) {
+        self.times = times
+        self.every = every
+        self.from = from
+        self.to = to
+        self.width = width
+        self.output = output
+        self.format = format
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if c.contains(.times), try !c.decodeNil(forKey: .times) {
+            var list = try c.nestedUnkeyedContainer(forKey: .times)
+            var times: [Time] = []
+            while !list.isAtEnd {
+                if let seconds = try? list.decode(Double.self) {
+                    times.append(Time(seconds: seconds))
+                    continue
+                }
+                let text = try list.decode(String.self)
+                guard let time = TimeText.parse(text) else {
+                    throw DecodingError.dataCorruptedError(in: list, debugDescription: "\"\(text)\" isn't a time. Use seconds (83.5) or mm:ss.mmm (01:23.500).")
+                }
+                times.append(time)
+            }
+            self.times = times
+        }
+        every = try c.decodeTime(.every)
+        from = try c.decodeTime(.from)
+        to = try c.decodeTime(.to)
+        width = try c.decodeIfPresent(Int.self, forKey: .width)
+        output = try c.decodeIfPresent(String.self, forKey: .output)
+        format = try c.decodeIfPresent(String.self, forKey: .format)
+    }
+
+    public func run(on service: TandemService, context: CallContext) async throws -> ImageResult {
+        try await service.withPresetFonts(try service.prepareFrames(self))()
+    }
+}
+
 public struct ScreenshotRequest: ServiceCall {
     public static let operation = ServiceOperation.screenshot
     public var output: String?
@@ -662,13 +720,16 @@ public struct ImageResult: Codable, Sendable {
     /// What the picture shows differently from the project, like a camera
     /// without its cutout because the matte isn't made yet.
     public var warnings: [String]
+    /// The frames on a contact sheet (`frames`), in order.
+    public var times: [Time]?
 
-    public init(time: Time?, path: String?, png: String?, bytes: Int, warnings: [String] = []) {
+    public init(time: Time?, path: String?, png: String?, bytes: Int, warnings: [String] = [], times: [Time]? = nil) {
         self.time = time
         self.path = path
         self.png = png
         self.bytes = bytes
         self.warnings = warnings
+        self.times = times
     }
 
     public init(from decoder: Decoder) throws {
@@ -678,6 +739,7 @@ public struct ImageResult: Codable, Sendable {
         png = try c.decodeIfPresent(String.self, forKey: .png)
         bytes = try c.decode(Int.self, forKey: .bytes)
         warnings = try c.decodeIfPresent([String].self, forKey: .warnings) ?? []
+        times = try c.decodeIfPresent([Time].self, forKey: .times)
     }
 }
 

@@ -29,6 +29,7 @@ public enum ServiceOperation: String, CaseIterable, Codable, Sendable {
     case history
     case validate
     case frame
+    case frames
     case screenshot
     case clip
     case export
@@ -61,6 +62,7 @@ public enum ServiceOperation: String, CaseIterable, Codable, Sendable {
         case .history: return HistoryRequest.self
         case .validate: return ValidateRequest.self
         case .frame: return FrameRequest.self
+        case .frames: return FramesRequest.self
         case .screenshot: return ScreenshotRequest.self
         case .clip: return ClipRequest.self
         case .export: return ExportRequest.self

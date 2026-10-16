@@ -43,8 +43,12 @@ struct CLI {
         ProjectClient.waitNotice = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }
         if name == "help" {
             if let topic = parsed.positionals.first {
-                guard let command = Help.command(topic) else { return usage("There's no `\(topic)` command.", command: nil) }
-                print(Help.detail(command))
+                guard let text = Help.topic(topic) else {
+                    let names = Help.commands.map(\.name) + CommandCase.allCases.map(\.rawValue)
+                    let hint = Arguments.closest(topic, in: names).map { " Did you mean `tandem help \($0)`?" } ?? ""
+                    return usage("There's no `\(topic)` command or edit command.\(hint)", command: nil)
+                }
+                print(text)
             } else {
                 print(Help.overview)
             }
@@ -229,6 +233,19 @@ struct CLI {
             let at = try parseTime(try args.positional(0, "a time, like tandem frame 01:23.500", command: name))
             let output = absolute(args.options["output"] ?? "frame-\(TimeText.fileSafe(at)).png")
             let request = FrameRequest(time: at, maxWidth: try args.integer("width"), maxHeight: try args.integer("height"), output: output, format: args.options["format"])
+            return show(try await client().call(request), json: json)
+        case "frames":
+            let times = try args.positionals.map(parseTime)
+            let every = try time(args, "every")
+            guard !times.isEmpty || every != nil else {
+                throw UsageError(message: "`tandem frames` needs times, like tandem frames 0:10 0:20 0:30, or --every <seconds>.")
+            }
+            let from = try time(args, "from"), to = try time(args, "to")
+            let output = absolute(args.options["output"] ?? Self.sheetName(times: times, every: every, from: from, to: to))
+            let request = FramesRequest(
+                times: times.isEmpty ? nil : times, every: every, from: from, to: to,
+                width: try args.integer("width"), output: output, format: args.options["format"]
+            )
             return show(try await client().call(request), json: json)
         case "screenshot":
             try args.expectPositionals(atMost: 0, command: name)
@@ -418,6 +435,23 @@ struct CLI {
         let expanded = NSString(string: path).expandingTildeInPath
         if expanded.hasPrefix("/") { return expanded }
         return directory.appendingPathComponent(expanded).standardizedFileURL.path
+    }
+
+    /// `tandem frames`'s default file: named for its times, with dots
+    /// where the times have colons, since ffmpeg and others read a colon
+    /// in a file name as a protocol.
+    static func sheetName(times: [Time], every: Time?, from: Time?, to: Time?) -> String {
+        var name = "frames"
+        if let every {
+            name += "-every-\(String(format: "%g", every.seconds))s"
+            if from != nil || to != nil {
+                name += "-\(TimeText.fileSafe(from ?? .zero))-\(to.map(TimeText.fileSafe) ?? "end")"
+            }
+        } else if let first = times.min(), let last = times.max() {
+            name += "-\(TimeText.fileSafe(first))"
+            if last != first { name += "-\(TimeText.fileSafe(last))" }
+        }
+        return name + ".png"
     }
 
     private func parseTime(_ text: String) throws -> Time {

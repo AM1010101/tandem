@@ -15,6 +15,12 @@ extension FrameRequest: DeferredServiceCall {
     }
 }
 
+extension FramesRequest: DeferredServiceCall {
+    public func prepare(on service: TandemService, context: CallContext) throws -> @Sendable () async throws -> ImageResult {
+        try service.withPresetFonts(try service.prepareFrames(self))
+    }
+}
+
 extension ClipRequest: DeferredServiceCall {
     public func prepare(on service: TandemService, context: CallContext) throws -> @Sendable () async throws -> ExportOutcome {
         try service.withPresetFonts(try service.prepareClip(self))

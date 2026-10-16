@@ -1,5 +1,6 @@
 import Foundation
 import TandemCore
+import TandemRender
 
 /// JSON Schema (2020-12) for `EditBatch` and every `EditCommand`, written by
 /// hand so each field has a useful description. MCP's `apply` tool uses it
@@ -330,9 +331,15 @@ extension CommandSchema {
         "fade, pop, slideUp or typewriter, played backwards as animationOut. none switches the preset's off."
     )
 
+    /// Every built-in title preset with what it's for, from TandemRender,
+    /// so a new preset shows up here without anyone remembering to add it.
+    static let titlePresetDescription = "A title preset: " + TitlePresets.builtIn.map { preset in
+        "\(preset.id) (\(preset.summary.hasSuffix(".") ? String(preset.summary.dropLast()) : preset.summary))"
+    }.joined(separator: "; ") + "."
+
     static let textContent = S.object([
         "text": S.string(),
-        "preset": S.string("A title preset, like callout, label or sectionHeader."),
+        "preset": S.string(titlePresetDescription),
         "style": S.ref("TextStyle"),
         "animationIn": textAnimation,
         "animationOut": textAnimation,

@@ -11,7 +11,8 @@ app, and the timeline shows him exactly what you changed. The full guide,
 with an example of every command and recipes for B-roll, titles, cards,
 shorts, captions and more, is `docs/AGENTS.md` in the Tandem repo
 (`~/dev/me/tandem/docs/AGENTS.md` on Mike's Mac). `tandem help <command>`
-gives a command's options. Read the parts you need before editing.
+gives a command's options, and `tandem help <edit command>` (like
+`tandem help addTransition`) an edit command's arguments and example. Read the parts you need before editing.
 
 ## Setup
 
@@ -60,6 +61,9 @@ rounds up.
    on pushes and music swells. Small edits are still quicker with
    `tandem apply`.
 3. **Look.** `tandem frame <time> -o frame.png` for a still,
+   `tandem frames <t1> <t2> ...` (or `--every 5 --from T --to T`) for
+   several on one labelled contact sheet, never `frame` in a loop stitched
+   with ffmpeg,
    `tandem clip <start> <end>` for a 720p review MP4. Look at what you
    changed instead of trusting the numbers.
 4. **Check.** `tandem check --changed` before you hand back. It renders

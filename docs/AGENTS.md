@@ -55,6 +55,7 @@ tandem apply <batch.json | - | '<json>'>   [--dry-run] [--expect N] [--label L] 
 tandem undo [--count N] [--expect N]    tandem redo [--count N]    tandem history    tandem validate
 tandem check [--changed | --from T --to T] [--quick]   what Mike would catch: black, flickers, keys, dead air, bare page changes
 tandem frame <time> [-o out.png]   tandem clip <start> <end> [-o out.mp4]
+tandem frames <time>... | --every S [--from T] [--to T]  [-o sheet.png] [--width 480]   one labelled contact sheet
 tandem export [--preset <name>] [-o out.mp4] [--from T] [--to T] [--format <id>]
 tandem loudness    tandem effects    tandem schema    tandem watch [--once]
 tandem archive [<project>] [--to <folder>] [--with-cache] [--dry-run]
@@ -73,7 +74,10 @@ tandem segments save "<name>" --clips <id,id> | --from T --to T [--field <clip>=
 tandem segments insert "<name>" --at T [--value key=text]... [--mode overwrite]
 ```
 
-`tandem help <command>` explains each one.
+`tandem help <command>` explains each one. `tandem help <edit command>`
+(like `tandem help addTransition`) prints an edit command's summary, every
+argument with its type and whether it's required (a model like
+`Transition` opened up one level), and its example, all from the schema.
 
 Imports write `<out>/<name>/<name>.tandem` with a report beside it
 (`<name>.import.txt` for people, `.import.json` for agents) listing anything
@@ -161,12 +165,12 @@ args = ["mcp"]
 
 The tools mirror the operations: `status`, `timeline`, `media`,
 `transcript`, `search`, `pauses`, `tighten`, `join`, `captions`, `short`, `cards`, `apply`, `undo`, `redo`,
-`history`, `validate`, `frame`, `screenshot`, `clip`, `export`, `archive`,
+`history`, `validate`, `frame`, `frames`, `screenshot`, `clip`, `export`, `archive`,
 `relink`, `loudness`, `watch` and `effects`, plus the asset library's `assets_search`,
 `assets_use`, `assets_credits`, `assets_generate` and `assets_providers`,
 and the saved segments' `segments_list`, `segments_save` and
 `segments_insert`.
-Tool results are readable text; pass `json: true` for the raw JSON. `frame` and `screenshot` return the picture as an image.
+Tool results are readable text; pass `json: true` for the raw JSON. `frame`, `frames` and `screenshot` return the picture as an image.
 The `apply` tool's input schema describes every edit command. The server
 speaks both MCP revisions in use: the `initialize` handshake (2025-11-25 and
 earlier) and the stateless 2026-07-28 revision.
@@ -451,8 +455,18 @@ clips in the range).
   transcript say which files don't have one yet.
 - `frame <time>` renders one frame (MCP returns the image, 1280 px wide by
   default). `clip <start> <end>` renders a 720p review MP4 you can watch.
-  Both, and `export`, list what the render shows differently from the
-  project, like `Warning: No cutout matte for ...-camera.mov yet, showing the
+- `frames <time>...` renders several frames the same way onto one contact
+  sheet PNG, in time order, each labelled with its time in a strip
+  underneath (so captions stay visible). `--every 5` takes one every 5 s
+  through the timeline, or from `--from` to `--to` (`--to` is shown; the
+  timeline's own end isn't); give times as well if you like. Each tile is
+  480 px wide (`--width`, 64 to 1920), and a sheet holds at most 48. The
+  default file is `frames-<first>-<last>.png`, with dots for the colons.
+  Use it instead of looping `frame` and stitching the PNGs with ffmpeg.
+  MCP's `frames` tool takes `times`, `every`, `from`, `to`, `width`,
+  `format` and `output`, and returns the sheet as an image.
+- `frame`, `frames`, `clip` and `export` list what the render shows
+  differently from the project, like `Warning: No cutout matte for ...-camera.mov yet, showing the
   full frame.` while the matte is still being made; only lines about what
   plays in the part rendered are shown.
 - `check` looks for what Mike would otherwise catch in review, so his
@@ -1566,6 +1580,11 @@ Change the words later with
 for the preset's, and set `animationDuration` (seconds) for how long each
 takes. Any other name is turned away, since it would draw nothing.
 
+The presets are `label` (a plain label like VS), `callout` (a punchy boxed
+callout like 14 TIPS), `sectionHeader` (a small accent line over a big
+title), `version` (a release video's version number) and `caption` (word
+by word captions); the schema's `preset` field lists them too.
+
 The preset gives the look. A clip's `style` holds only what it changes
 (`font`, `size`, `weight`, `color`, `strokeColor`, `strokeWidth`,
 `backgroundColor`, `alignment`, `uppercase`, `shadow`, `lineSpacing`), and
@@ -2045,6 +2064,7 @@ still when it's beside it. It's one undo step.
 | validate | `tandem validate` | `POST /v1/validate` | `validate` |
 | check | `tandem check [--changed]` | `POST /v1/check {"from", "to", "changed", "quick"}` | `check` |
 | frame | `tandem frame <time> -o out.png` | `POST /v1/frame {"time", "output"}` | `frame` (image) |
+| frames | `tandem frames <time>... [--every] [--from] [--to] -o sheet.png` | `POST /v1/frames {"times", "every", "from", "to", "width", "output"}` | `frames` (image) |
 | screenshot | | `POST /v1/screenshot` | `screenshot` (app only) |
 | clip | `tandem clip <start> <end> -o out.mp4` | `POST /v1/clip {"start", "end"}` | `clip` |
 | export | `tandem export [--preset] -o out.mp4` | `POST /v1/export {"preset", "output"}` | `export` |

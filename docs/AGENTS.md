@@ -658,6 +658,9 @@ linked clip, and the files of one take are placed in sync and linked.
 `sourceStart` is measured from the start of the take (or the file) and
 `duration` defaults to all the media that's left. `mode` is `place` (fails
 if the range is taken), `overwrite` or `insert` (pushes later clips right).
+A sound effect placed where SFX is taken goes on SFX 2 (or the next free
+SFX track, made when there's none) instead of failing, unless you name the
+track with `audioTrackID`.
 
 Sound gets Mike's levels: speech (a camera's sound, files with no clearer
 role such as a rendered intro, and anything placed on a take track like

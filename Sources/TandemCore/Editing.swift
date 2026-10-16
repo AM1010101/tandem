@@ -470,6 +470,11 @@ public enum Editing {
                     guard p[location].kind == kind else {
                         throw EditError.invalid("track \(explicitID) is a \(p[location].kind.rawValue) track")
                     }
+                } else if kind == .audio, mode == .place, trackName(for: item.role, kind: kind) == "SFX" {
+                    // A sound where SFX is taken goes on the next free SFX
+                    // track, as transition and card sounds do, rather than
+                    // failing on the overlap.
+                    location = TrackLocation(kind: .audio, index: freeSFXTrack(for: range, in: &p, &context))
                 } else {
                     location = try routeTrack(&p, role: item.role, kind: kind, range: range, requireFree: mode == .place, &context)
                 }

@@ -79,6 +79,23 @@ final class TransitionSoundTests: XCTestCase {
         XCTAssertNil(apart.window(on: camera), "clips that don't meet")
     }
 
+    /// Placing a sound effect where SFX is taken goes to the next free SFX
+    /// track too, rather than failing on the overlap. Naming the track
+    /// still means that track.
+    func testPlacingASoundWhereSFXIsTakenUsesTheNextSFXTrack() throws {
+        let (_, c, _, _) = try cutTake()
+        try c.run("Hit", .placeMedia(mediaIDs: ["med_whoosh"], at: t(29.5)))
+        let placed = try c.run("Keys", .placeMedia(mediaIDs: ["med_whoosh"], at: t(29.8)))
+        let keys = try XCTUnwrap(c.project.track(containingClip: try XCTUnwrap(placed.createdIDs.last)))
+        XCTAssertEqual(keys.name, "SFX 2")
+        XCTAssertEqual(keys.rippleMode, .follow)
+        let later = try c.run("Later", .placeMedia(mediaIDs: ["med_whoosh"], at: t(40)))
+        XCTAssertEqual(c.project.track(containingClip: try XCTUnwrap(later.createdIDs.last))?.name, "SFX", "free again by then")
+        let sfx = c.project.track(named: "SFX")!.id
+        XCTAssertThrowsError(try c.run("There", .placeMedia(mediaIDs: ["med_whoosh"], at: t(29.6), audioTrackID: sfx)))
+        assertValid(c.project)
+    }
+
     /// A sound already on SFX there leaves it be: the swoosh goes on a new
     /// SFX track, as the section cards' whooshes do.
     func testATakenSFXTrackGetsASecond() throws {

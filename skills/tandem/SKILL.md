@@ -31,7 +31,14 @@ rounds up.
 
 1. **Read.** `tandem status`, `tandem timeline --summary`, then
    `tandem timeline --from 1:20 --to 1:40` for detail. `tandem transcript`
-   and `tandem search "<phrase>"` find what's said where.
+   and `tandem search "<phrase>"` find what's said where. For media Tandem
+   doesn't transcribe (generated B-roll, sound effect or music takes), local
+   Whisper runs offline and prints what it hears with times:
+   `mlx_whisper --model mlx-community/whisper-large-v3-turbo --language en --word-timestamps True -o "$TMPDIR" <file>`
+   (one file per call: with two it wrote the second's result under the
+   first's name. On long recordings with silences add
+   `--condition-on-previous-text False`, or it loops one phrase through
+   the quiet.)
 2. **Edit in labelled batches.** `tandem apply '{"label": "B-roll over the
    config file", "commands": [...]}'` makes one undo step, which Mike reads
    by its label. Pass `--expect <revision>` from your last read so you never
@@ -99,15 +106,31 @@ and the music (Build Your Own Convex retro).
 - **No clips under 2 s,** where all it takes is putting back a pause of a
   second or less between sentences. Never bring back a thinking pause or a
   long silence to do it.
-- **The ending:** run on about 5 s after the sign-off, fade to black, and
-  fade the music out with it. Run on with the real footage: a freeze of
-  his last frame "looks weird" (What I Need video, 2026-10-09).
+- **The ending:** run on about 4 s after the sign-off, with a 3 s fade to
+  black that starts about a second after it, and fade the music out with
+  it. A 2 s fade at the end of a 5 s run-on "can probably start to fade
+  out a bit sooner" (Muse Wonder, 2026-10-13). Run on with the real
+  footage: a freeze of his last frame "looks weird" (What I Need video,
+  2026-10-09).
 - **Mid-sentence pauses:** close his thinking pauses, 0.5 s or longer,
   right up (to about 0.08 s), so a sentence sounds like one thought. Leave
   shorter ones (a breath, a natural pause) as he said them: closing every
   gap of 0.2 s or more made 818 cuts in a 38-minute video, one every 2.8 s,
   and the picture jumped around (Mike, 2026-10-05). The 0.4 s is for
   between sentences. Leave live demo reactions alone.
+- **Live demos: keep the playback.** When Mike plays the timeline back to
+  show the viewer ("let's have a look", "let's listen"), keep that stretch
+  even though he's silent: "When I'm explicitly telling the user I'm
+  playing something back, don't cut it out just because I'm silent"
+  (Tandem video, 2026-10-16; he flagged eight of them). The screen
+  recording's system audio track shows it: a cut stretch with Tandem's
+  sound in it was playback. Put that audio on its own track under him.
+- **Live demos: cut the mistakes, not the material.** Remove silences,
+  retakes, false starts and off-camera chat, but keep every point he makes,
+  asides and pontificating included, even if it runs long. He trims for
+  length himself: "you cut too much stuff out... If there's any section
+  that I think that we should cut out, maybe I'll cut it out myself"
+  (2026-10-16).
 - **Editor's notes:** Mike says them out loud in the take ("editor's note:
   cut that bit"). Read the transcript for them before cutting, and remove
   both the note and what it points at.
@@ -130,6 +153,19 @@ From his review comments on the Daytona and Build Your Own Convex videos
   doubles: undo old hand slips (Daytona's +0.09 s) before using it. Don't
   chase exact: the webcam only gives about 22.5 real frames a second (it
   repeats 3 of every 12), so sync wobbles by up to 30 ms whatever you pick.
+- **Open on his face.** The first thing on screen is Mike talking to camera,
+  and B-roll comes in after his first line. Build Your Own Convex opened on
+  24 s of kinetic text, a cartoon and a terminal before his face appeared,
+  and a viewer with a TV and stage background said he couldn't tell whether
+  the whole video would be voiceover. Mike: "next time ill make sure that I
+  show my face early and not launch immediately into broll stuff" (X,
+  2026-10-11). Through the first 30 seconds, when people decide whether to
+  stay, cut back to him between inserts rather than chaining B-roll.
+- **B-roll moves at his pace.** Whip transitions, quick cuts of his words
+  and a terminal typing "blazing fast" under his calm voice felt mismatched
+  on the same open. Typing in built B-roll goes at a speed you could read
+  along to, and transitions stay as calm as his delivery. (Demos where speed
+  is the point still play in real time, below.)
 - **B-roll starts and ends on sentence boundaries:** the take's cuts, or a
   real pause between words. Never 0.2 s off a cut or mid-word. If less than
   about 1.5 s of camera would show between two B-roll shots, join them. A
@@ -180,8 +216,16 @@ From his review comments on the Daytona and Build Your Own Convex videos
   over "what to do next, not how to do it" "doesn't align with what I
   actually say". A cliché he's sending up gets a gag: "one weird trick"
   went up word by word with WEIRD wobbling to a wobble sound, and "game
-  changer" flashed and shook to three air horns (What I Need video,
-  2026-10-09).
+  changer" flashed and shook to the meme DJ air horn (What I Need video,
+  2026-10-09). A stadium air horn there was "really annoying": he meant the
+  tongue-in-cheek hype horn. ElevenLabs only made that one when the prompt
+  named it ("reggae dancehall sound system DJ airhorn sample, the famous
+  MLG meme air horn") and spelled out its "ba-da-BAAAAH" rhythm and reverb
+  tail; check takes with an audio model before placing one.
+- **Typing gets a keyboard sound.** A message typed in an app mock-up gets
+  keyboard typing from the first character to the send ("I've done that in
+  the past on Filmora projects and it worked quite well"), about 13 LU
+  under his voice, near the typewriter callouts' level.
 - **Demos where speed is the point** play in real time, with no cuts, so
   viewers can see how fast it really is.
 - **Demo sound effects land on the picture.** Snap each sound to the first
@@ -216,9 +260,11 @@ From his review comments on the Daytona and Build Your Own Convex videos
   to focus on my face when I'm saying something like that").
 - **Break up long talking-head stretches.** A 10 s opening line in the cold
   open and a 14 s run mid-video both got "break up this big long talking
-  head section". A cartoon (`mike-cartoon-broll`) suits a feeling ("so
-  frustrated... so much text"); a screen that carries the example on suits
-  a point.
+  head section". Reach for a real screen that carries the example on first.
+  A cartoon (`mike-cartoon-broll`) only when it adds a joke or reaction the
+  words don't, like the paper avalanche on "so frustrated... so much text".
+  Viewers pushed back on generic AI people and on cartoons that just fill a
+  gap (October 2026); that skill has the details.
 - **Screen recordings fill the frame,** for people watching on a phone:
   one static `zoomToRegion` per page, fitted to the content with a small
   margin, at most 1.5x, and no zoom changes within a page.
@@ -227,6 +273,15 @@ From his review comments on the Daytona and Build Your Own Convex videos
   transcript said, and a drawn-out "Aaall... right" started 0.9 s early).
   Most of his "word gets cut off" comments were this. `tandem pauses` has
   the voice's real edges; listen with `tandem clip` when unsure.
+  Don't snap a cut to the "quietest point near the word end" either: inside
+  a word there are short quiet gaps (the closure before the "k" of "takes"
+  or the "t" of "parts"), and a final "s" hardly registers below 4 kHz, so
+  the snap lands mid-word and cuts "takes" to "ta" (three of these on the
+  Tandem video, October 2026). A real pause is quiet for 80 ms or more in
+  the full band and above 4 kHz alike. Words the transcript runs straight
+  into the next ("takes" ending exactly as "and" starts) are where it guesses,
+  so check those cuts first, and confirm a fix by running Whisper on the
+  `tandem clip` of the cut.
 - **Before uploading,** watch the start of the export, where sync problems
   show first. The limiter takes about 8 dB off his voice's peaks to reach
   -14 LUFS, and he hears that as artificial, so he asked for -16 after
@@ -278,14 +333,6 @@ YouTube.
   over a blurred copy of the page. Playwright captures one frame per scroll
   position and then composes the window at 4K; the recipe is in
   `~/dev/convex/convex-videos/lets-build-it-announcement/.work/screen-build/`.
-
-### Shorts cut from a conference talk: James's Abstract keynote
-
-Two 9:16 shorts from a filmmaker's 1080p multi-camera edit of James Cowling's
-talk (October 2026), for the team to see in Slack first. The project,
-scripts and the speaker tracker are in
-`~/dev/convex/convex-videos/abstract-clips/` (`.work/`).
-
 - **Music goes in before his big watch, on a personal video too.** Let's
   Build It went to export with none, and he noticed afterwards: "we
   haven't got any music in the background". Three ElevenLabs beds by
@@ -294,6 +341,14 @@ scripts and the speaker tracker are in
   brushed drums and warm bass at 95 to 100 BPM, with no bells, glockenspiel
   or marimba under the game's sounds, at -45 LUFS. He passed them first
   time: "musics good".
+
+### Shorts cut from a conference talk: James's Abstract keynote
+
+Two 9:16 shorts from a filmmaker's 1080p multi-camera edit of James Cowling's
+talk (October 2026), for the team to see in Slack first. The project,
+scripts and the speaker tracker are in
+`~/dev/convex/convex-videos/abstract-clips/` (`.work/`).
+
 - **Full-bleed, not framed.** Mike compared a framed layout (hook title
   above a square window of the talk over a blurred copy, captions below)
   with a 9:16 crop on the speaker, and picked full-bleed: "the full bleed is
@@ -324,8 +379,124 @@ scripts and the speaker tracker are in
   cover a line read as a freeze frame to Mike. Pick a span the clip fits,
   or slow it a touch (0.93x was invisible).
 
+### Shorts cut from his own long video: Muse Wonder (October 2026)
+
+Three 40 to 50 s Shorts of the spiciest moments, to push the long video
+while its topic was news. The project is `muse-wonder/Muse Wonder
+Shorts.tandem`; `muse-wonder/upload/shorts/` has the exports, the crop spec
+and the upload batch.
+
+- **Make them in a copy.** Copy the project to "<Name> Shorts.tandem" in the
+  same folder (what Save As does), then `tandem short --apply` there. The
+  long video's project never changes.
+- **A Short is portrait in Tandem too, not just in the export.** The app only
+  shows a project's canvas, so after `tandem short --apply` Mike opened the
+  Short and saw landscape: "YouTube shorts are always portrait" (Convex 1.47,
+  2026-10-16). Make the Short's project itself 1080x1920 before handing it
+  back: `updateSettings {"width": 1080, "height": 1920, "alternateFormats": []}`,
+  then move each clip's `formatOverrides.portrait` transform and crop into its
+  `video.transform` and `crop`. Scale keyframes (sticker pops) are absolute,
+  so multiply them by the clip's portrait scale or they shrink back to their
+  landscape size.
+- **A whole release video as a Short (Convex 1.47):** cut the copy to under
+  3:00 by dropping whole sections, not by trimming every item. Re-render each
+  screen shot for the phone window (`broll/short/`, 2160x1680, about 36 px
+  type, terminal lines wrapped at 47 columns), because a crop of a full-width
+  terminal or docs page can't be read. Where the take has a gap (a voice dub),
+  fill the camera behind it with a blurred, darkened copy of the shot so the
+  top of the frame isn't black.
+- **Pick moments that stand on their own:** a strong claim with its number,
+  a rant, a "this broke" moment. Start about 0.1 s before the first word and
+  end in the pause after a finished thought, checked with `tandem pauses`.
+- **Keep the caveats.** Cutting "S tier or Haiku tier" straight after
+  "Haiku costs like 40 times less" left out "it's kind of an unfair test"
+  and "we weren't running the full model". Mike asked for them back so the
+  clip stays fair to what it's knocking.
+- **It's watched on a phone held in a hand.** The first cut put each 16:9
+  shot whole in the top half and his chest below: "it's quite difficult to
+  see the very small text... think about the viewer holding the mobile
+  phone". What worked: his face full-frame on top (scripted takes are
+  full-frame camera in portrait), word captions just under his chin
+  (`tandem captions --y 0.505`), and each shot in a window below, cropped to
+  only what he's talking about at that moment. Use
+  `~/dev/convex/convex-videos/tools/shorts/portrait_crops.py`: give it each
+  clip's region of interest and it writes the portrait crops. Code is
+  re-rendered for the Short (a 1000 px window at 36 px, soft-wrapped,
+  cropped to the window), and a table keeps only the columns he names, cut
+  side by side. Look at every shot at about 540 px wide before showing him.
+- **Fix the captions' words.** They come from the transcript, so they carry
+  its mishearings: "comics" for Convex, "messages" for Meta's, "evils" for
+  evals, "roots" for routes, "sinking" for thinking, "news models" for Muse
+  models, "M dashes". Patch each caption's `text` and `words` before export.
+- **A hook title over the first 2 to 4 s,** in his words ("S tier or Haiku
+  tier?"), scaled to about 0.72 so it fits across, sitting over his chest or
+  under the window, never over his face.
+- **Export to `exports/`.** `tandem media --refresh` registers every file in
+  the folder as media, and Tandem won't overwrite a file that's project
+  media.
+- **Schedule them apart:** one public straight away, then one a day at the
+  long video's slot, each linking the full video in its description. Upload
+  with yt-channel-manager's Shorts batch (plan, preflight, his approval,
+  run). Pointing each Short's "Related video" at the long video is a Studio
+  step for Mike.
+
+### A model shoot-out with a live demo: Muse Wonder (October 2026)
+
+Scripted intro, test and grading, with a YOLO walkthrough of three
+agent-built apps in the middle (camera in the corner over his screen).
+His first review round, 16 comments, became these:
+
+- **Name it, show it.** When he names the contenders, a logo tile for each
+  appears as he says it ("one with Opus, one with Wonder..."). The same for
+  a model he brings in later ("can you put the logo... to show what Sol
+  is?"). Logos come from `tandem assets search "<name>" --online --kind logo`.
+- **"People are saying" needs more than one person.** Show two or three
+  different people's posts, not the same one again: "Don't just keep
+  relying on Theo so much. Not on the same tweet." Capture X posts with X's
+  own embed, logged out, like the other shots.
+- **Small text gets zoomed.** A leaderboard row he talks about is zoomed
+  into as its highlight appears (`zoomToRegion` with `at`), not left as a
+  full-page still.
+- **Stills move.** A 13 s still of a prompt "rather than just being so
+  static... scroll this a little bit": a gentle scale (1.1) and slow pan
+  down over the shot.
+- **Don't show the answer before he gets to it.** Two panes side by side
+  gave away Opus's `.take(200)` while he was still on Muse's `.collect()`:
+  show only what he's talking about, then cut to the full picture.
+- **Show what he means.** "What I'd have preferred is a 200 plus or
+  pagination": a mock-up on the real app's page, labelled as a mock-up.
+- **A clip that doesn't fill 16:9** (a 1.44:1 game capture) gets a backdrop
+  behind it: "you can see the sides of the video behind". Black was his
+  ask; iPad recordings keep the blurred copy.
+- **The real thing, labelled.** While he describes how the real product
+  should work, show the real product briefly with a small "The real Let's
+  Build It" label.
+- **A divider before the conclusion.** A section card ("The verdict")
+  before "so should I be using it day to day?", not just the music change.
+- **A slip he notices gets a light on-screen nod** rather than a re-record:
+  he said "Wonderful" for Muse Wonder and asked for a "(Wonder Full?)"
+  callout.
+- **A "Mike from the future" pickup** goes where its topic is on screen, as
+  full-screen camera (no corner) with a "Mike from the future" title in the
+  lower third, B-roll of each thing as he names it, and the demo's music
+  bed paused under it (a calmer bed plays, then the demo bed resumes where
+  it left off). Shots of the apps came from the running apps with made-up
+  test accounts, so no real email is on screen.
+- **Blur password-manager popups.** 1Password's "Save login?" showed other
+  people's saved logins in his screen recording. Find them by scanning the
+  recording's frames for the popup's region (mean brightness catches the
+  fade in and out; a dark-pixel count missed about 0.1 s each side) and put
+  a cropped, blurred copy of the screen on B-roll over each stretch.
+
 ## Rules
 
+- Insert at a cut's exact time, read from the clip (`start + duration`), not
+  a frame-rounded one. Mike's own cuts aren't always on a frame, and a
+  `placeMedia` insert 0.7 ms off one left a 1 ms sliver of the old clip on
+  every take track (Muse Wonder).
+- Build ffmpeg input lists explicitly. In zsh an unquoted `$LIST` isn't
+  split, so `-i $f` swallowed the whole list and ffmpeg took the other
+  names as outputs and overwrote five B-roll stills with `-y`.
 - Tandem's media times are the file's own timestamps, but `ffmpeg -ss`
   counts from the file's start. Add the stream's `start_time` (ffprobe)
   when you analyse a source with ffmpeg: Record It's camera files start at

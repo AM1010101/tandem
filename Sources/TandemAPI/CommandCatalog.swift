@@ -145,6 +145,7 @@ public enum CommandText {
             case .rippleDeleteRange: return "\(commands.count) ripple deletes"
             case .blade: return "\(commands.count) cuts"
             case .join: return "Join \(commands.count) through-edits"
+            case .updateClip: return "Update \(commands.count) clips"
             default: break
             }
         }
@@ -155,7 +156,8 @@ public enum CommandText {
 /// Reading edit commands sent by agents. Before decoding, commands are
 /// checked against the schema (so a misspelt field is an error instead of
 /// being silently ignored) and a few friendly forms are accepted:
-/// times as `mm:ss.mmm` strings and ranges as `{start, end}`.
+/// times as `mm:ss.mmm` strings, ranges as `{start, end}`, and `updateClip`
+/// with `clipIDs`, which becomes one `updateClip` per clip.
 public enum CommandJSON {
     /// Keys whose values are times.
     static let timeKeys: Set<String> = [
@@ -172,16 +174,49 @@ public enum CommandJSON {
 
     /// `path` names the command in error messages, like `commands[2]`.
     public static func decode(_ value: JSONValue, path: String = "") throws -> EditCommand {
+        let commands = try decodeAll(value, path: path)
+        guard commands.count == 1 else {
+            throw ServiceError(.badRequest, "\(path.isEmpty ? "" : "\(path): ")expected one command, but this is \(commands.count)")
+        }
+        return commands[0]
+    }
+
+    /// Like `decode`, for the forms that stand for several commands.
+    public static func decodeAll(_ value: JSONValue, path: String = "") throws -> [EditCommand] {
         let normalized = normalize(value)
         let problems = CommandSchema.validate(command: normalized, path: path)
         if !problems.isEmpty {
             throw ServiceError(.badRequest, problems.prefix(3).joined(separator: "; "))
         }
         do {
-            return try normalized.decode(as: EditCommand.self)
+            return try expand(normalized, path: path).map { try $0.decode(as: EditCommand.self) }
         } catch let error as DecodingError {
             let text = DecodingErrorText.describe(error)
             throw ServiceError(.badRequest, path.isEmpty ? text : "\(path).\(text)")
+        }
+    }
+
+    /// Batches used to repeat one patch on dozens of clips, so `updateClip`
+    /// takes `clipIDs` and is split here into one command per clip. The
+    /// command itself keeps a single `clipID`, which journals and the app
+    /// already use.
+    static func expand(_ value: JSONValue, path: String) throws -> [JSONValue] {
+        guard case .object(let command) = value, case .object(var arguments)? = command["updateClip"] else { return [value] }
+        let at = path.isEmpty ? "updateClip" : "\(path).updateClip"
+        guard let ids = arguments.removeValue(forKey: "clipIDs") else {
+            if arguments["clipID"] == nil { throw ServiceError(.badRequest, "\(at): missing \"clipID\" (or \"clipIDs\")") }
+            return [value]
+        }
+        guard arguments["clipID"] == nil else {
+            throw ServiceError(.badRequest, "\(at): give clipID or clipIDs, not both")
+        }
+        guard case .array(let items) = ids, !items.isEmpty else {
+            throw ServiceError(.badRequest, "\(at).clipIDs: list at least one clip")
+        }
+        return items.map { id in
+            var one = arguments
+            one["clipID"] = id
+            return .object(["updateClip": .object(one)])
         }
     }
 

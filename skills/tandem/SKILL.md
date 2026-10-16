@@ -43,7 +43,9 @@ rounds up.
    config file", "commands": [...]}'` makes one undo step, which Mike reads
    by its label. Pass `--expect <revision>` from your last read so you never
    edit over his changes. On a stale revision, read again. Try big batches
-   with `--dry-run` first.
+   with `--dry-run` first. Name tracks by name (`"trackID": "Music"`) rather
+   than looking up IDs, and give one `updateClip` patch to many clips with
+   `clipIDs`. The `--json` shapes are in docs/AGENTS.md ("JSON output").
    For a job that touches many things at once (every caption, every push,
    every pause), write a short script against the SDK in the Tandem repo's
    `sdk/` folder instead of hand-building JSON or throwaway Python:

@@ -620,3 +620,46 @@ final class RandomEditTests: XCTestCase {
         XCTAssertGreaterThan(Double(applied) / Double(attempted), 0.4, "\(applied) of \(attempted) random edits applied")
     }
 }
+
+/// Agents know tracks by name ("Music"), so commands take a name wherever
+/// they take a track ID.
+final class TrackNameTests: XCTestCase {
+    func testTrackNamesWorkWhereTrackIDsDo() throws {
+        let (f, c) = try Fixture.edited()
+        try c.run("Mute", .updateTrack(trackID: "music", patch: .object(["muted": .bool(true)])))
+        XCTAssertTrue(c.project.track(named: "Music")!.muted, "names match ignoring case")
+
+        let slug = Clip(id: "clip_slug", content: .solid(color: .black), start: t(40), duration: t(2))
+        try c.run("Insert", .insertClip(trackID: "B-roll", clip: slug))
+        XCTAssertEqual(c.clips("B-roll").map(\.id).last, "clip_slug")
+
+        try c.run("Move", .moveClips(clipIDs: ["clip_slug"], delta: t(5), toTrackID: "Graphics", includeLinked: false))
+        XCTAssertEqual(c.clips("Graphics").map(\.id), ["clip_slug"])
+
+        try c.run("Place", .placeMedia(mediaIDs: ["med_broll"], at: t(50), duration: t(2), videoTrackID: "Graphics", includeAudio: false))
+        XCTAssertEqual(c.clips("Graphics").count, 2)
+
+        try c.run("Room", .insertTime(at: t(10), duration: t(1), trackIDs: ["Music"]))
+        XCTAssertEqual(c.clips("Music").count, 2, "the named track is cut")
+        XCTAssertEqual(c.project.track(named: "Camera")!.clips.count, f.clips("Camera").count)
+        assertValid(c.project)
+    }
+
+    func testAnIDBeatsANameAndASharedNameIsAnError() throws {
+        let (f, c) = try Fixture.edited()
+        let music = f.track("Music").id
+        // A track named like another track's ID: the ID still wins.
+        try c.run("Odd", .addTrack(kind: .audio, name: music))
+        try c.run("Mute", .updateTrack(trackID: music, patch: .object(["muted": .bool(true)])))
+        XCTAssertTrue(c.project.track(music)!.muted)
+
+        let second = try c.run("Music 2", .addTrack(kind: .audio, name: "MUSIC")).createdIDs[0]
+        XCTAssertThrowsError(try c.run("Mute", .updateTrack(trackID: "Music", patch: .object(["solo": .bool(true)])))) { error in
+            let text = "\(error)"
+            XCTAssertTrue(text.contains(music) && text.contains(second), text)
+        }
+        XCTAssertThrowsError(try c.run("Mute", .updateTrack(trackID: "Nope", patch: .object(["muted": .bool(true)])))) { error in
+            XCTAssertEqual(error as? EditError, .notFound("track Nope"))
+        }
+    }
+}

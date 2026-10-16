@@ -134,6 +134,11 @@ final class MediaCatalogTests: XCTestCase {
         XCTAssertEqual(JobText.describe(JobStatus(id: "j3", kind: .waveform, mediaID: "m6", state: .running, progress: 0.5), in: project), "Waveform c3b · 50%")
     }
 
+    func testARecordItAudioTakeReadsAsVoice() {
+        let dub = MediaItem(id: "dub", path: "source/2026-10-16_101439-audio.m4a", kind: .audio, role: .camera, duration: Time(seconds: 30), hasAudio: true)
+        XCTAssertEqual(MediaCatalog.shortName(dub), "voice 10:14")
+    }
+
     func testFilesFromTheAssetLibraryReadByTheirName() {
         XCTAssertEqual(MediaCatalog.displayName(forPath: "assets/sticker/rocket-x3iqg3mw.mov"), "rocket")
         XCTAssertEqual(MediaCatalog.displayName(forPath: "assets/music/c3b-pv9cnei3.mp3"), "c3b")

@@ -87,7 +87,9 @@ levels, on Tandem's meter) with the clip's gain on top.
 
 `tandem new` adds every media file in the folder (as `tandem media
 --refresh` does later) and gives each a role from its name and folder:
-record-it's `-camera` and `-screen` files, then folders like `music/`,
+record-it's `-camera` and `-screen` files (and its audio-only `-audio`
+take, a camera take with no picture, so it lands on Voice and gets a
+transcript), then folders like `music/`,
 `sfx/`, `broll/`, `graphics/` and `stickers/`. A video nothing names, like a
 phone's `IMG_0151.MOV`, becomes the camera take when it's a recording with
 a voice and a face: shot by a phone or camera (its metadata names it) or

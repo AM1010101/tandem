@@ -128,6 +128,27 @@ final class CheckAPITests: XCTestCase {
         XCTAssertTrue(result.readableText.contains("Notes (not problems):"), result.readableText)
     }
 
+    func testClipsAndGapsShorterThanAFrameAreSliverNotes() async throws {
+        let h = try ServiceHarness()
+        defer { h.close() }
+        func solid(_ id: String, _ start: Double, _ duration: Double) -> EditCommand {
+            .insertClip(trackID: "trk_broll", clip: Clip(id: id, content: .solid(color: .black), start: t(start), duration: t(duration)))
+        }
+        try h.apply(solid("clip_a", 26, 1), solid("clip_b", 27.01, 1), solid("clip_tiny", 29, 0.02))
+        let result = try await CheckRequest(quick: true).run(on: h.service, context: h.context)
+        XCTAssertTrue(result.ok, "notes don't fail a check")
+        let slivers = result.notes.filter { $0.kind == .sliver }
+        XCTAssertEqual(slivers.map(\.start), [t(27), t(29)])
+        XCTAssertEqual(slivers.map(\.end), [t(27.01), t(29.02)])
+        XCTAssertEqual(slivers.map(\.clipIDs), [["clip_a", "clip_b"], ["clip_tiny"]])
+        let text = result.readableText
+        XCTAssertTrue(text.contains("00:27.000-00:27.010  Sliver: a 0.010 s gap between clips on \"B-roll\", under a frame at 30 fps."), text)
+        XCTAssertTrue(text.contains("00:29.000-00:29.020  Sliver: a 0.020 s clip on \"B-roll\", under a frame at 30 fps."), text)
+
+        let narrow = try await CheckRequest(from: t(0), to: t(28), quick: true).run(on: h.service, context: h.context)
+        XCTAssertEqual(narrow.notes.filter { $0.kind == .sliver }.map(\.start), [t(27)], "only what's in the checked stretch")
+    }
+
     func testRequestsThatDontMakeSenseAreRefused() async throws {
         let h = try ServiceHarness()
         defer { h.close() }

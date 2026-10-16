@@ -261,6 +261,14 @@ parameters also take `mm:ss.mmm` (`01:23.500`). Inside edit commands use
 numbers; strings like `"1:02.5"` are accepted but numbers are clearer.
 `sourceStart` and `slip` deltas are in media time (seconds into the file).
 
+**Overlaps.** Clips on one track can't overlap. An overlap under a
+millisecond counts as touching, so rounding in a batch doesn't fail it: the
+later clip's start moves to where the earlier one ends (its picture and
+sound stay where they were on the timeline, it just loses that sliver), and
+nothing overlapping is stored. That works for placing, inserting, moving,
+trimming and sliding. A clip inside another, however short, is still an
+overlap.
+
 **Validation.** Commands are checked against the schema before they run,
 so a misspelt field is an error (`unknown field "rippel" (did you mean
 "ripple"?)`) rather than silently ignored.
@@ -463,11 +471,15 @@ clips in the range).
       swoosh (`addTransition`); inside a clip, freeze 0.35 s either side of
       the flip (`freezeFrame` clips) and push between the freezes. A button
       that changes most of a page can show up too; leave those.
+    - slivers: an enabled clip shorter than a frame at the project's frame
+      rate, or a gap that short between two clips on a track, on any track.
+      They're usually rounding left by a batch: delete the clip, or trim a
+      neighbour to close the gap.
 
   Run `tandem check --changed` before handing an edit back: it checks only
   what agents changed that's waiting for Mike's review, half a second either
   side. It exits 1 when it finds a problem; notes never fail it. `--quick`
-  skips rendering, so it only finds gaps and soft pictures.
+  skips rendering, so it only finds gaps, soft pictures and slivers.
 
   ```
   Checked 05:40.000-06:11.000 (930 frames) in 0.9 s: 1 problem:

@@ -132,6 +132,21 @@ extension Track {
         clips.insert(clip, at: index)
     }
 
+    /// Where a clip starts less than `Time.overlapTolerance` before the
+    /// previous one ends, moves its head to that end so nothing overlaps.
+    /// Its content stays where it was on the timeline. Real overlaps are
+    /// left for the validator to reject.
+    mutating func closeSlivers() {
+        var previousEnd: Time?
+        for index in clips.indices {
+            let clip = clips[index]
+            if let end = previousEnd, clip.start < end, end - clip.start < Time.overlapTolerance, clip.end > end {
+                clips[index].moveHead(to: end)
+            }
+            previousEnd = max(previousEnd ?? clips[index].end, clips[index].end)
+        }
+    }
+
     /// Splits the clip under `time`. Returns the new right-hand clip's ID.
     @discardableResult
     mutating func split(at time: Time, context: inout EditContext) -> String? {

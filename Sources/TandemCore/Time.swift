@@ -27,6 +27,11 @@ public struct Time: Hashable, Comparable, Sendable {
 
     public static let zero = Time(flicks: 0)
 
+    /// Clips that overlap by less than this count as touching. Agents'
+    /// rounding leaves overlaps of a few microseconds, and nobody can see
+    /// or hear a millisecond.
+    public static let overlapTolerance = Time(flicks: flicksPerSecond / 1000)
+
     public var seconds: Double {
         Double(flicks) / Double(Time.flicksPerSecond)
     }
@@ -150,6 +155,16 @@ public struct TimeRange: Codable, Hashable, Sendable {
 
     public func overlaps(_ other: TimeRange) -> Bool {
         start < other.end && other.start < end
+    }
+
+    /// Overlaps by `Time.overlapTolerance` or more. Ranges that only stagger
+    /// by less than that are touching. One range inside another, or two
+    /// sharing an edge, always clash however short they are.
+    public func clashes(with other: TimeRange) -> Bool {
+        guard overlaps(other) else { return false }
+        let staggered = (start < other.start && end < other.end) || (other.start < start && other.end < end)
+        guard staggered else { return true }
+        return min(end, other.end) - max(start, other.start) >= Time.overlapTolerance
     }
 
     public func intersection(_ other: TimeRange) -> TimeRange? {

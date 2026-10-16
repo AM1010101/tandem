@@ -642,13 +642,13 @@ enum MCPTools {
         ),
         Tool(
             name: "check", title: "Check for problems",
-            description: "Looks for what Mike would otherwise catch in review: black frames and gaps, one-frame flickers, green screens that didn't key and white blocks that come and go. Notes, which don't fail it, are judgement calls: pictures zoomed past their own pixels; dead air (0.8 s or more of a still picture with nothing said and no sound effect or music swell: cut it, or keep it if the pause earns it); and page changes on the screen recording with no transition (push them if they're pages in an explainer or slides). Renders the frames small, so a minute takes seconds. Run it with changed: true on what you changed before handing back. ok is false when it finds a problem.",
+            description: "Looks for what Mike would otherwise catch in review: black frames and gaps, one-frame flickers, green screens that didn't key and white blocks that come and go. Notes, which don't fail it, are judgement calls: pictures zoomed past their own pixels; dead air (0.8 s or more of a still picture with nothing said and no sound effect or music swell: cut it, or keep it if the pause earns it); and page changes on the screen recording with no transition (push them if they're pages in an explainer or slides); and slivers, clips or gaps between clips on a track shorter than a frame. Renders the frames small, so a minute takes seconds. Run it with changed: true on what you changed before handing back. ok is false when it finds a problem.",
             operation: .check,
             properties: [
                 "from": time("Start. Default 0."),
                 "to": time("End. Default the end of the timeline."),
                 "changed": S.boolean("Only the stretches agents changed that are waiting for Mike's review."),
-                "quick": S.boolean("Only the checks that need no rendering: gaps and pictures zoomed past their own pixels. No dead air or page changes."),
+                "quick": S.boolean("Only the checks that need no rendering: gaps, slivers and pictures zoomed past their own pixels. No dead air or page changes."),
                 "width": S.integer("How wide frames are rendered for the scan. Default 384.")
             ],
             readOnly: true, idempotent: true

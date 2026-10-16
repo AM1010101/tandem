@@ -26,12 +26,15 @@ public struct CheckProblem: Codable, Equatable, Sendable {
         case deadAir
         /// The screen recording turns to a new page with no transition.
         case pageChange
+        /// A clip, or a gap between two clips on a track, shorter than a
+        /// frame: usually rounding in an agent's batch.
+        case sliver
 
         /// Worth knowing rather than wrong: Mike signed off softer zooms on
         /// cartoon B-roll than on screen recordings, a pause can let a point
         /// land, and not every big change on screen is a page that should
         /// push. So these don't fail a check.
-        public var isNote: Bool { self == .soft || self == .deadAir || self == .pageChange }
+        public var isNote: Bool { self == .soft || self == .deadAir || self == .pageChange || self == .sliver }
     }
 
     public var kind: Kind
@@ -141,7 +144,7 @@ public struct FrameStats: Equatable, Sendable {
     public var isBlack: Bool { luma < 0.02 && brightestTile < 0.05 }
 }
 
-/// The checks behind `tandem check`. The model checks (gaps, soft
+/// The checks behind `tandem check`. The model checks (gaps, slivers, soft
 /// pictures) read the project; the frame checks read `FrameStats` for each
 /// rendered frame.
 public enum QualityCheck {
@@ -167,7 +170,7 @@ public enum QualityCheck {
     /// own (`screenOnly`).
     public static func problems(in project: Project, ranges: [TimeRange], frames: [FrameStats]?, screenFrames: [FrameStats]? = nil, speech: Speech? = nil) -> [CheckProblem] {
         let gapProblems = gaps(in: project, ranges: ranges)
-        var found = gapProblems + softPictures(in: project, ranges: ranges)
+        var found = gapProblems + softPictures(in: project, ranges: ranges) + slivers(in: project, ranges: ranges)
         if let frames {
             found += frameProblems(frames, in: project, skipping: gapProblems.map { TimeRange(start: $0.start, end: $0.end) })
             if let speech {
@@ -240,6 +243,40 @@ public enum QualityCheck {
                     message: "Soft: \(name) is shown at \(String(format: "%.1f", upscale))x its own pixels (\(width)x\(height) at \(zoom)% on a \(Int(canvasWidth))x\(Int(canvasHeight)) frame).",
                     clipIDs: [clip.id]
                 ))
+            }
+        }
+        return found
+    }
+
+    /// Enabled clips shorter than a frame, and gaps shorter than a frame
+    /// between enabled clips on one track. Nobody sees them, but they are
+    /// a flash, a click or a cut that isn't there.
+    public static func slivers(in project: Project, ranges: [TimeRange]) -> [CheckProblem] {
+        let rate = project.settings.frameRate
+        let frame = rate.frameDuration
+        let fps = rate.denominator == 1 ? "\(rate.numerator)" : String(format: "%.2f", rate.framesPerSecond)
+        func wanted(_ range: TimeRange) -> Bool { ranges.contains { $0.overlaps(range) } }
+        func length(_ time: Time) -> String { String(format: "%.3f s", time.seconds) }
+        var found: [CheckProblem] = []
+        for track in project.allTracks {
+            var previous: Clip?
+            for clip in track.clips where clip.enabled {
+                if let previous, clip.start > previous.end, clip.start - previous.end < frame,
+                   wanted(TimeRange(start: previous.end, end: clip.start)) {
+                    found.append(CheckProblem(
+                        kind: .sliver, start: previous.end, end: clip.start,
+                        message: "Sliver: a \(length(clip.start - previous.end)) gap between clips on \"\(track.name)\", under a frame at \(fps) fps.",
+                        clipIDs: [previous.id, clip.id]
+                    ))
+                }
+                if clip.duration < frame, wanted(clip.range) {
+                    found.append(CheckProblem(
+                        kind: .sliver, start: clip.start, end: clip.end,
+                        message: "Sliver: a \(length(clip.duration)) clip on \"\(track.name)\", under a frame at \(fps) fps.",
+                        clipIDs: [clip.id]
+                    ))
+                }
+                if clip.end > previous?.end ?? .zero { previous = clip }
             }
         }
         return found

@@ -166,8 +166,10 @@ extension Track {
         clips.filter { $0.range.overlaps(range) }
     }
 
+    /// Whether `range` fits without clashing. An overlap under
+    /// `Time.overlapTolerance` fits, and `closeSlivers` tidies it afterwards.
     public func isFree(_ range: TimeRange, ignoring: Set<String> = []) -> Bool {
-        !clips.contains { !ignoring.contains($0.id) && $0.range.overlaps(range) }
+        !clips.contains { !ignoring.contains($0.id) && $0.range.clashes(with: range) }
     }
 
     /// The clip that ends exactly where `clip` starts.

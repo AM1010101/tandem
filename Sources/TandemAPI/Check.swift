@@ -10,7 +10,7 @@ public struct CheckRequest: ServiceCall {
     public var to: Time?
     /// Only the stretches agents changed that wait for Mike's review.
     public var changed: Bool?
-    /// Only the checks that need no rendering: gaps and soft pictures.
+    /// Only the checks that need no rendering: gaps, soft pictures and slivers.
     public var quick: Bool?
     /// How wide frames are rendered for the scan. Default 384.
     public var width: Int?
@@ -52,7 +52,8 @@ public struct CheckResult: Codable, Sendable {
     /// What's wrong: black frames, gaps, flickers, keys that didn't happen.
     public var problems: [CheckProblem]
     /// Worth knowing but not wrong: pictures zoomed past their own pixels,
-    /// dead air, and page changes with no transition.
+    /// clips and gaps shorter than a frame, dead air, and page changes with
+    /// no transition.
     public var notes: [CheckProblem]
     /// Names for the clips the problems mention.
     public var clipNames: [String: String]

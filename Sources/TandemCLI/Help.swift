@@ -35,9 +35,9 @@ enum Help {
         CommandHelp(name: "check", usage: "tandem check [--changed | --from <time> --to <time>] [--quick] [--width <pixels>]", summary: "Look for what Mike would catch in review: black frames, flickers, green screens that didn't key, white blocks and gaps (exit code 1 if it finds any), and notes on soft zooms, dead air and page changes with no transition.", options: ["from", "to", "changed", "quick", "width"],
                     details: """
                     Renders every frame of the stretch small (384 wide, from proxies where they're ready) and measures it, and the screen recordings again on their own.
-                    Notes don't fail it. Dead air is 0.8 s or more of a still picture with nothing said and no sound effect or music swell: cut it, or keep it if the pause earns it. A page change is the screen recording turning to a new page at once with no transition over it: push it if it's a page in an explainer or slides.
+                    Notes don't fail it. Dead air is 0.8 s or more of a still picture with nothing said and no sound effect or music swell: cut it, or keep it if the pause earns it. A page change is the screen recording turning to a new page at once with no transition over it: push it if it's a page in an explainer or slides. A sliver is a clip, or a gap between clips on a track, shorter than a frame.
                     --changed checks only what agents changed that's waiting for Mike's review, half a second either side: run it before handing back.
-                    --quick skips rendering: just the gaps and pictures zoomed past their own pixels.
+                    --quick skips rendering: just the gaps, slivers and pictures zoomed past their own pixels.
                     """),
         CommandHelp(name: "sync", usage: "tandem sync [<seconds> [--media <id>]... [--default]]", summary: "How late each file's picture is against its sound, so lips match the voice; give a delay to set it on the camera takes.", options: ["media", "default", "label", "expect"],
                     details: """

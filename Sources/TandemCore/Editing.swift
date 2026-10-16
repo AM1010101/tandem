@@ -117,6 +117,7 @@ public enum Editing {
         case .removeMarker(let markerID):
             try removeMarker(&project, markerID)
         }
+        for location in project.trackLocations { project[location].closeSlivers() }
         TransitionSounds.reconcile(&project, from: sounds, named: named, createdFrom: created, &context)
         context.placedSounds = []
         project.normalizeLinkGroups()
@@ -1001,6 +1002,8 @@ public enum Editing {
             p[location].transitions.append(transition)
         }
         for location in p.trackLocations {
+            // Before the repair, so clips a hair apart meet and keep their transition.
+            p[location].closeSlivers()
             p[location].repairTransitions(context: &context)
         }
     }

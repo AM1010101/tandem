@@ -52,6 +52,24 @@ final class TranscriptToolsTests: XCTestCase {
         assertServiceError(.notFound) { _ = try h.service.transcript(id: "clip_nope", from: nil, to: nil) }
     }
 
+    func testAMissingTranscriptSaysWhatMakesOne() throws {
+        func message(_ mode: TandemService.Mode) throws -> String {
+            let h = try ServiceHarness(mode: mode)
+            defer { h.close() }
+            do {
+                _ = try h.service.transcript(id: "med_music", from: nil, to: nil)
+                XCTFail("no transcript to give")
+                return ""
+            } catch let error as ServiceError {
+                return error.message
+            }
+        }
+        XCTAssertTrue(try message(.hosted).contains("made in the background"))
+        let headless = try message(.headless)
+        XCTAssertTrue(headless.contains("nothing is making one"), headless)
+        XCTAssertTrue(headless.contains("tandem serve"), headless)
+    }
+
     func testSearchMapsHitsToTheTimeline() throws {
         let h = try ServiceHarness()
         defer { h.close() }

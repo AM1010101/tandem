@@ -87,7 +87,9 @@ levels, on Tandem's meter) with the clip's gain on top.
 
 `tandem new` adds every media file in the folder (as `tandem media
 --refresh` does later) and gives each a role from its name and folder:
-record-it's `-camera` and `-screen` files, then folders like `music/`,
+record-it's `-camera` and `-screen` files (and its audio-only `-audio`
+take, a camera take with no picture, so it lands on Voice and gets a
+transcript), then folders like `music/`,
 `sfx/`, `broll/`, `graphics/` and `stickers/`. A video nothing names, like a
 phone's `IMG_0151.MOV`, becomes the camera take when it's a recording with
 a voice and a face: shot by a phone or camera (its metadata names it) or
@@ -656,6 +658,9 @@ linked clip, and the files of one take are placed in sync and linked.
 `sourceStart` is measured from the start of the take (or the file) and
 `duration` defaults to all the media that's left. `mode` is `place` (fails
 if the range is taken), `overwrite` or `insert` (pushes later clips right).
+A sound effect placed where SFX is taken goes on SFX 2 (or the next free
+SFX track, made when there's none) instead of failing, unless you name the
+track with `audioTrackID`.
 
 Sound gets Mike's levels: speech (a camera's sound, files with no clearer
 role such as a rendered intro, and anything placed on a take track like
@@ -1396,6 +1401,12 @@ and insert a text clip:
 
 Change the words later with
 `{"updateClip": {"clipID": "clip_...", "patch": {"content": {"text": {"text": "TIP 2"}}}}}`.
+
+`animationIn` and `animationOut` take `fade`, `pop`, `slideUp` or
+`typewriter`, and `animationOut` plays them backwards. `fadeIn`, `fadeOut`,
+`popIn` and `popOut` work too. `none` switches off the preset's. Leave them out
+for the preset's, and set `animationDuration` (seconds) for how long each
+takes. Any other name is turned away, since it would draw nothing.
 
 The preset gives the look. A clip's `style` holds only what it changes
 (`font`, `size`, `weight`, `color`, `strokeColor`, `strokeWidth`,

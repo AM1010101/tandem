@@ -313,12 +313,20 @@ extension CommandSchema {
 
     static let timedWord = S.object(["text": S.string(), "start": S.time(), "end": S.time()], required: ["text", "start", "end"])
 
+    /// The names `TextAnimation` draws (TandemRender's TitlePresets), plus
+    /// the In and Out spellings agents reach for. A name it doesn't know
+    /// draws nothing, so the schema turns it away instead.
+    static let textAnimation = S.enumeration(
+        ["none", "fade", "pop", "slideUp", "typewriter", "fadeIn", "fadeOut", "popIn", "popOut"],
+        "fade, pop, slideUp or typewriter, played backwards as animationOut. none switches the preset's off."
+    )
+
     static let textContent = S.object([
         "text": S.string(),
         "preset": S.string("A title preset, like callout, label or sectionHeader."),
         "style": S.ref("TextStyle"),
-        "animationIn": S.string("Like popIn or slideUp. none switches the preset's off."),
-        "animationOut": S.string(),
+        "animationIn": textAnimation,
+        "animationOut": textAnimation,
         "animationDuration": S.time("Seconds each animation takes. Leave it out for the preset's."),
         "words": S.array(S.ref("TimedWord"), "For word-by-word captions.")
     ])

@@ -295,6 +295,18 @@ public final class TandemService: @unchecked Sendable {
 
     // MARK: - transcripts
 
+    /// What to say when a file has no transcript yet. Transcripts are made
+    /// by whatever holds the project open (the app or `tandem serve`), so
+    /// opened headless for one call, nothing is making it.
+    func noTranscriptYet(_ path: String) -> String {
+        switch mode {
+        case .hosted:
+            return "\(path) has no transcript yet. Transcripts are made in the background; `tandem media` shows progress."
+        case .headless:
+            return "\(path) has no transcript yet, and nothing is making one: transcripts are made while the project is open in the app or `tandem serve`. Open it in the app (`tandem app`) or run `tandem serve`, then `tandem media` shows progress."
+        }
+    }
+
     public func transcript(id: String?, from: Time?, to: Time?) throws -> TranscriptResult {
         let (project, revision) = coordinator.snapshot()
         func keep(_ start: Time, _ end: Time) -> Bool {
@@ -311,7 +323,7 @@ public final class TandemService: @unchecked Sendable {
         }
         if let item = project.media(id) {
             guard let transcript = analysis.transcript(for: item) else {
-                throw ServiceError(.unavailable, "\(item.path) has no transcript yet. Transcripts are made in the background; `tandem media` shows progress.")
+                throw ServiceError(.unavailable, noTranscriptYet(item.path))
             }
             let words = transcript.words.filter { keep($0.start, $0.end) }.map {
                 WordTiming(text: $0.text, start: $0.start, end: $0.end, confidence: $0.confidence)
@@ -326,7 +338,7 @@ public final class TandemService: @unchecked Sendable {
                 throw ServiceError(.invalid, "Clip \(id) plays \(item.path), which has no sound.")
             }
             guard let transcript = analysis.transcript(for: item) else {
-                throw ServiceError(.unavailable, "\(item.path) has no transcript yet. Transcripts are made in the background; `tandem media` shows progress.")
+                throw ServiceError(.unavailable, noTranscriptYet(item.path))
             }
             guard let track = project.allTracks.first(where: { $0.clips.contains { $0.id == id } }) else {
                 throw ServiceError(.notFound, "No media or clip with ID \(id).")

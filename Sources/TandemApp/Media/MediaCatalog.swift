@@ -101,9 +101,16 @@ enum MediaCatalog {
     /// anything else its file name without the extension.
     static func shortName(_ item: MediaItem) -> String {
         if item.role == .camera || item.role == .screen, let time = timeOfDay(fromFileName: fileName(item)) {
-            return "\(item.role == .camera ? "camera" : "screen") \(time)"
+            return "\(takeWord(item).lowercased()) \(time)"
         }
         return baseName(item)
+    }
+
+    /// What a record-it file is: its camera, its screen, or the voice of
+    /// an audio-only take (a camera take with no picture).
+    static func takeWord(_ item: MediaItem) -> String {
+        if item.role == .screen { return "Screen" }
+        return item.kind == .audio ? "Voice" : "Camera"
     }
 
     /// The time of day a record-it file was made, from its name
@@ -182,7 +189,7 @@ enum MediaCatalog {
         var name = baseName(item)
         // An unpaired record-it file reads as "Camera · 10:54".
         if item.role == .camera || item.role == .screen, let time = timeOfDay(fromFileName: fileName(item)) {
-            name = "\(item.role == .camera ? "Camera" : "Screen") · \(time)"
+            name = "\(takeWord(item)) · \(time)"
         }
         let subtitle: String
         if let duration = item.duration, item.kind != .image {

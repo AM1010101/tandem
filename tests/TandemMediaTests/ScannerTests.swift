@@ -47,6 +47,18 @@ final class RoleTests: XCTestCase {
         XCTAssertEqual(MediaScanner.role(forPath: "edit/main-camera-cfr.mov"), .camera)
     }
 
+    func testARecordItAudioTakeIsSpeech() {
+        // Record It's audio-only take is Mike talking (a voice dub), so
+        // it's a take like the camera: it lands on Voice and gets a
+        // transcript before it's placed. It used to come in as music.
+        let path = "source/2026-10-16_101439-audio.m4a"
+        XCTAssertEqual(MediaScanner.role(forPath: path), .camera)
+        XCTAssertEqual(MediaScanner.role(forPath: path, kind: .audio, duration: Time(seconds: 4)), .camera, "even a short one")
+        XCTAssertEqual(MediaScanner.cameraReason(forPath: path), "named like a record-it audio take")
+        XCTAssertEqual(MediaScanner.role(forPath: "music/2026-10-16_101439-audio.m4a"), .camera, "the record-it name wins, like -camera")
+        XCTAssertEqual(MediaScanner.role(forPath: "source/talk-audio.mov"), .camera)
+    }
+
     func testFoldersBeatWordsInNames() {
         XCTAssertEqual(MediaScanner.role(forPath: "music/camera-shutter.mp3"), .music)
         XCTAssertEqual(MediaScanner.role(forPath: "sfx/screen-tap.wav"), .sfx)

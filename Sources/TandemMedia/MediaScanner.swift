@@ -176,7 +176,9 @@ public enum MediaScanner {
     /// Why a file's name makes it a camera take.
     static func cameraReason(forPath path: String) -> String {
         let stem = ((path as NSString).lastPathComponent as NSString).deletingPathExtension.lowercased()
-        return stem.hasSuffix("-camera") ? "named like a record-it camera file" : "its name says camera"
+        if stem.hasSuffix("-camera") { return "named like a record-it camera file" }
+        if stem.hasSuffix("-audio") { return "named like a record-it audio take" }
+        return "its name says camera"
     }
 
     /// Every media file under the folder, in path order.
@@ -235,7 +237,7 @@ public enum MediaScanner {
 
     /// Guesses what a file is for from its name and folder.
     ///
-    /// In order: record-it names (`-camera`, `-screen`), the nearest folder
+    /// In order: record-it names (`-camera`, `-screen`, `-audio`), the nearest folder
     /// that says what it holds (`music/`, `sfx/`, `broll/`, `graphics/`,
     /// `stickers/`), words in the file name, then the kind of file.
     public static func role(forPath path: String) -> MediaRole {
@@ -265,6 +267,9 @@ public enum MediaScanner {
         if isVideo || isAudio {
             if stem.hasSuffix("-camera") { return (.camera, true) }
             if stem.hasSuffix("-screen") { return (.screen, true) }
+            // An audio-only take is Mike talking, so it's treated like the
+            // camera: Voice track, transcript before it's placed.
+            if stem.hasSuffix("-audio") { return (.camera, true) }
         }
 
         // The nearest folder that names its contents wins.

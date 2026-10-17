@@ -135,6 +135,12 @@ public protocol RenderBackend: Sendable {
     /// Every frame of `ranges`, rendered `width` wide and measured, for
     /// `tandem check`; with `scanlines`, each frame's lines too.
     func scan(context: RenderContext, ranges: [TimeRange], width: Int, scanlines: Bool) async throws -> [FrameStats]
+    /// The mix's loudness over `range` every `step`, for `tandem loudness
+    /// --from --to`.
+    func loudness(context: RenderContext, range: TimeRange, step: Time) async throws -> MixLoudness
+    /// Whether each track's render follows its gain lane over `range`, for
+    /// `tandem loudness --gains`.
+    func checkGains(context: RenderContext, range: TimeRange, trackIDs: [String]) async throws -> [GainFollow]
 }
 
 public struct DefaultRenderBackend: RenderBackend {
@@ -142,6 +148,14 @@ public struct DefaultRenderBackend: RenderBackend {
 
     public func scan(context: RenderContext, ranges: [TimeRange], width: Int, scanlines: Bool) async throws -> [FrameStats] {
         try await FrameScanner.scan(context, ranges: ranges, width: width, scanlines: scanlines)
+    }
+
+    public func loudness(context: RenderContext, range: TimeRange, step: Time) async throws -> MixLoudness {
+        try await MixMeter.measure(context, range: range, step: step)
+    }
+
+    public func checkGains(context: RenderContext, range: TimeRange, trackIDs: [String]) async throws -> [GainFollow] {
+        try await MixMeter.checkGains(context, range: range, trackIDs: trackIDs)
     }
 
     public func frame(context: RenderContext, at time: Time, maxSize: CGSize?) async throws -> RenderedFrame {

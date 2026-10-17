@@ -56,10 +56,11 @@ tandem cards [--insert] [--no-sounds] [--apply]   a section card at every sectio
 tandem apply <batch.json | - | '<json>'>   [--dry-run] [--expect N] [--label L] [--key K]
 tandem undo [--count N] [--expect N]    tandem redo [--count N]    tandem history    tandem validate
 tandem check [--changed | --from T --to T] [--quick]   what Mike would catch: black, flickers, keys, dead air, bare page changes
-tandem frame <time> [-o out.png]   tandem clip <start> <end> [-o out.mp4]
+tandem frame <time> [-o out.png]   tandem clip <start> <end> [-o out.mp4] [--tracks Music,SFX] [--audio-only]
 tandem frames <time>... | --every S [--from T] [--to T]  [-o sheet.png] [--width 480]   one labelled contact sheet
 tandem export [--preset <name>] [-o out.mp4] [--from T] [--to T] [--format <id>]
-tandem loudness    tandem effects    tandem schema    tandem watch [--once]
+tandem loudness [--from T --to T [--step S] [--tracks Music] [--gains]]   files' levels, or the mix over time
+tandem effects    tandem schema    tandem watch [--once]
 tandem archive [<project>] [--to <folder>] [--with-cache] [--dry-run]
 tandem relink [--search <folder>]... [--dry-run]    find missing media
 tandem new <path.tandem>           tandem serve    tandem mcp
@@ -69,7 +70,7 @@ tandem import compare <a.tandem> <b.tandem>      how two cuts of one take differ
 tandem assets providers                          asset sources and what to fix
 tandem assets search "<text>" [--kind sfx] [--provider id] [--online] [--limit n]
 tandem assets use <id> [--at T] [--duration T] [--anchor A] [--pop]   copy into the project, add, place
-tandem assets fetch <id>    tandem assets credits [--optional]
+tandem assets fetch <id>    tandem assets show <id>    tandem assets credits [--optional]
 tandem assets generate sfx|music "<prompt>" [--duration s]    tandem assets install-starter
 tandem segments list                             saved segments in the shared library
 tandem segments save "<name>" --clips <id,id> | --from T --to T [--field <clip>=<label>]... [--replace]
@@ -221,7 +222,7 @@ The tools mirror the operations: `status`, `timeline`, `media`,
 `transcript`, `transcribe`, `search`, `pauses`, `tighten`, `join`, `captions`, `short`, `cards`, `apply`, `undo`, `redo`,
 `history`, `validate`, `frame`, `frames`, `screenshot`, `clip`, `export`, `archive`,
 `relink`, `loudness`, `watch`, `wait` and `effects`, plus the asset library's `assets_search`,
-`assets_use`, `assets_credits`, `assets_generate` and `assets_providers`,
+`assets_show`, `assets_use`, `assets_credits`, `assets_generate` and `assets_providers`,
 and the saved segments' `segments_list`, `segments_save` and
 `segments_insert`.
 Tool results are readable text; pass `json: true` for the raw JSON. `frame`, `frames` and `screenshot` return the picture as an image.
@@ -518,6 +519,14 @@ clips in the range).
   wouldn't transcribe by itself (see "Background work").
 - `frame <time>` renders one frame (MCP returns the image, 1280 px wide by
   default). `clip <start> <end>` renders a 720p review MP4 you can watch.
+  `--tracks Music,SFX` plays only those audio tracks (names or IDs), at
+  the timeline's own level rather than mastered, so a stem sounds as it
+  sits in the mix; the names go in the file name. `--audio-only` writes
+  the sound alone as a `.m4a`, and `-o stem.wav` as 24-bit PCM. MCP's
+  `clip` takes `tracks` and `audioOnly`.
+- `loudness --from 1:00 --to 1:30` renders the mix the way export does
+  and prints its loudness every step instead of the per-file report. See
+  [Check the sound](#check-the-sound).
 - `frames <time>...` renders several frames the same way onto one contact
   sheet PNG, in time order, each labelled with its time in a strip
   underneath (so captions stay visible). `--every 5` takes one every 5 s
@@ -747,6 +756,12 @@ changed files are read), so a file dropped in is found straight away.
   `fontsource:<name>` ID works without searching first, so the fix a
   missing-font warning gives can be run as it is.
 - `tandem assets fetch <id>` downloads and normalises without using it.
+- `tandem assets show <id>` (`assets_show`) prints what the library knows
+  about an asset without downloading anything: name, kind, provider and
+  model, the prompt a generated one was made from, duration, BPM and key,
+  loudness, licence, holder and credit line, and the file it plays from
+  (and the original). Use it instead of reading the `meta.json` files in
+  the library folder; `--json` has the whole record.
 - `tandem assets credits` (`assets_credits`) prints the credits block for
   the video description from what the project uses now, plus anything to
   sort out before publishing: assets with no licence on record, credits
@@ -1957,6 +1972,39 @@ of a 4K project is 1920x1080 and of a 9:16 one 1080x1920.
 and `export` to `exports/<name> r<revision>.mp4`. In MCP, `frame` returns
 the picture directly, so you can look at the result of an edit.
 
+### Check the sound
+
+Don't run ffmpeg on a review clip to hear how loud something is. Tandem
+measures the mix itself, through the same composition, gain taps and
+time-pitch as export:
+
+```bash
+tandem loudness --from 1:00 --to 1:30              # the mix, a row every 0.5 s
+tandem loudness --from 1:00 --to 1:30 --tracks Music --step 0.2
+tandem loudness --from 1:00 --to 1:30 --gains      # does the render follow the gain lanes?
+tandem clip 1:00 1:30 --tracks Music --audio-only  # listen to the music bed alone
+tandem assets show elevenlabs:music_2p839smz       # its prompt, licence, loudness and file
+```
+
+Each row has the momentary loudness (the 400 ms centred on its time), the
+short-term (3 s) and the highest sample, with the range's integrated
+loudness, true peak and a sparkline above. They're the levels the timeline
+plays at, before export's master gain, which moves the whole range by the
+same amount, so compare things with each other: a swell 6 dB over the bed
+around it, the bed about 25 LU under the voice, a sound effect's peak
+against the speech. `--tracks` measures only those audio tracks (names or
+IDs); `--json` gives every point.
+
+`--gains` checks the render against the gain lanes (the clips' levelling,
+gain, gain keyframes and fades). It renders each track (the `--tracks`
+ones, or every one that plays there) as it is and again with its gain
+flattened, and compares their difference with the lane 10 ms at a time.
+It says when a change lands late and by how much, and lists where the
+render plays more than 1 dB off the lane. If Mike says a gain change
+plays late, run it before arguing: it checks the render does what the
+lanes say (a lane set in the wrong place is a different problem, which
+`tandem timeline` shows).
+
 ### Put a swoosh on every push
 
 A swoosh belongs to its transition: give a push a `sound` and it goes
@@ -2200,11 +2248,11 @@ still when it's beside it. It's one undo step.
 | frame | `tandem frame <time> -o out.png` | `POST /v1/frame {"time", "output"}` | `frame` (image) |
 | frames | `tandem frames <time>... [--every] [--from] [--to] -o sheet.png` | `POST /v1/frames {"times", "every", "from", "to", "width", "output"}` | `frames` (image) |
 | screenshot | | `POST /v1/screenshot` | `screenshot` (app only) |
-| clip | `tandem clip <start> <end> -o out.mp4` | `POST /v1/clip {"start", "end"}` | `clip` |
+| clip | `tandem clip <start> <end> -o out.mp4 [--tracks] [--audio-only]` | `POST /v1/clip {"start", "end", "tracks", "audioOnly"}` | `clip` |
 | export | `tandem export [--preset] -o out.mp4` | `POST /v1/export {"preset", "output"}` | `export` |
 | archive | `tandem archive [<project>] [--to <folder>] [--with-cache] [--dry-run]` | `POST /v1/archive {"to", "withCache", "dryRun"}` | `archive` |
 | relink | `tandem relink [--search <folder>]... [--dry-run]` | `POST /v1/relink {"search": [...], "dryRun"}` | `relink` |
-| loudness | `tandem loudness` | `POST /v1/loudness` | `loudness` |
+| loudness | `tandem loudness [--from] [--to] [--step] [--tracks] [--gains]` | `POST /v1/loudness {"mediaID", "from", "to", "step", "tracks", "gains"}` | `loudness` |
 | watch | `tandem watch [--once]` | `GET /v1/watch` (events), `POST /v1/watch` (wait) | `watch` |
 | effects | `tandem effects` | `POST /v1/effects` | `effects` |
 
@@ -2221,6 +2269,7 @@ when it's open).
 | providers | `tandem assets providers` | `assets_providers` |
 | search | `tandem assets search "<text>" [--kind] [--provider] [--online]` | `assets_search` |
 | fetch | `tandem assets fetch <id>` | |
+| show | `tandem assets show <id>` | `assets_show` |
 | use | `tandem assets use <id> [--at] [--duration]` | `assets_use` |
 | credits | `tandem assets credits [--optional]` | `assets_credits` |
 | generate | `tandem assets generate sfx or music "<prompt>"` | `assets_generate` |

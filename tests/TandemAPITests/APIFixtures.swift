@@ -225,6 +225,41 @@ struct FakeRenderer: RenderBackend {
     let scans = ScanLog()
     /// The times frames were asked for, and how big.
     let frames = FrameLog()
+    /// What each loudness curve, gain check and export was asked for: the
+    /// range, and which audio tracks were muted in the project it got.
+    let measures = Log<(range: TimeRange, step: Time, muted: [Bool])>()
+    let gainRequests = Log<(range: TimeRange, trackIDs: [String])>()
+    let exports = Log<(preset: ExportPreset, output: URL, muted: [Bool])>()
+    /// What a gain check finds; nil follows every lane.
+    var gainChecks: [GainFollow]?
+
+    final class Log<Entry>: @unchecked Sendable {
+        private let lock = NSLock()
+        private var entries: [Entry] = []
+        func add(_ entry: Entry) { lock.withLock { entries.append(entry) } }
+        var all: [Entry] { lock.withLock { entries } }
+    }
+
+    /// -30 LUFS every step, silent at the end.
+    func loudness(context: RenderContext, range: TimeRange, step: Time) async throws -> MixLoudness {
+        measures.add((range, step, context.project.audioTracks.map(\.muted)))
+        var points: [LoudnessPoint] = []
+        var time = range.start
+        while time <= range.end {
+            let last = time + step > range.end
+            points.append(LoudnessPoint(time: time, momentaryLUFS: last ? nil : -30, shortTermLUFS: last ? nil : -31, peakDBFS: last ? nil : -12))
+            time += step
+        }
+        return MixLoudness(start: range.start, end: range.end, step: step, points: points, integratedLUFS: -30.5, truePeakDBTP: -11)
+    }
+
+    func checkGains(context: RenderContext, range: TimeRange, trackIDs: [String]) async throws -> [GainFollow] {
+        gainRequests.add((range, trackIDs))
+        if let gainChecks { return gainChecks }
+        return trackIDs.map { id in
+            GainFollow(trackID: id, track: context.project.audioTracks.first { $0.id == id }?.name ?? id, compared: range.duration.seconds, lateBy: nil, worstDB: 0.1, mismatches: [])
+        }
+    }
 
     final class FrameLog: @unchecked Sendable {
         private let lock = NSLock()
@@ -262,6 +297,7 @@ struct FakeRenderer: RenderBackend {
     }
 
     func export(context: RenderContext, preset: ExportPreset, output: URL, progress: @escaping @Sendable (Double) -> Void) async throws -> RenderedExport {
+        exports.add((preset, output, context.project.audioTracks.map(\.muted)))
         for step in 1...4 { progress(Double(step) / 4) }
         // What reached the renderer, for tests to read back.
         let size = preset.width.map { "\($0)x\(preset.height ?? 0)" } ?? "canvas"

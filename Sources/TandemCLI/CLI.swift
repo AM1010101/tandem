@@ -297,7 +297,10 @@ struct CLI {
             try args.expectPositionals(atMost: 2, command: name)
             let start = try parseTime(try args.positional(0, "a start and an end, like tandem clip 1:00 1:20", command: name))
             let end = try parseTime(try args.positional(1, "an end time too, like tandem clip 1:00 1:20", command: name))
-            let request = ClipRequest(start: start, end: end, output: args.options["output"].map(absolute), preset: args.options["preset"])
+            let request = ClipRequest(
+                start: start, end: end, output: args.options["output"].map(absolute), preset: args.options["preset"],
+                tracks: AssetNames.split(args.options["tracks"]).nilIfEmpty, audioOnly: args.has("audio-only") ? true : nil
+            )
             return show(try await client().call(request), json: json)
         case "export":
             try args.expectPositionals(atMost: 0, command: name)
@@ -308,7 +311,11 @@ struct CLI {
             return show(try await client().call(request), json: json)
         case "loudness":
             try args.expectPositionals(atMost: 1, command: name)
-            return show(try await client().call(LoudnessRequest(mediaID: args.positionals.first)), json: json)
+            let request = LoudnessRequest(
+                mediaID: args.positionals.first, from: try time(args, "from"), to: try time(args, "to"), step: try time(args, "step"),
+                tracks: AssetNames.split(args.options["tracks"]).nilIfEmpty, gains: args.has("gains") ? true : nil
+            )
+            return show(try await client().call(request), json: json)
         case "relink":
             try args.expectPositionals(atMost: 0, command: name)
             let search = args.values("search").map(absolute)
@@ -696,4 +703,9 @@ final class SignalOnce: @unchecked Sendable {
         }
         if first { body() }
     }
+}
+
+extension Array {
+    /// Nil for an empty list, so a missing option stays missing.
+    var nilIfEmpty: [Element]? { isEmpty ? nil : self }
 }

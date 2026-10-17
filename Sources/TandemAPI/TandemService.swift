@@ -831,9 +831,24 @@ public final class TandemService: @unchecked Sendable {
         guard request.start >= .zero else { throw ServiceError(.badRequest, "The clip can't start before 0.") }
         var preset = try preset(named: request.preset) ?? .review
         preset.range = TimeRange(start: request.start, end: request.end)
-        let output = request.output.map(outputURL)
-            ?? folder.exportsFolder.appendingPathComponent("review \(TimeText.fileSafe(request.start))-\(TimeText.fileSafe(request.end)).mp4")
-        return try prepareRender(plan: try exportPlan(preset, format: nil), output: output)
+        var project = coordinator.project
+        var soloed: [String]?
+        if let names = request.tracks, !names.isEmpty {
+            let tracks = try audioTracks(named: names, in: project)
+            project = AudioLevels.soloing(project, audioTrackIDs: Set(tracks.map(\.id)))
+            // Mastering a stem on its own would bring it up to the target
+            // and hide how it sits in the mix.
+            preset.loudnessTarget = nil
+            preset.truePeakCeiling = nil
+            soloed = tracks.map(\.name)
+        }
+        let given = request.output.map(outputURL)
+        if request.audioOnly == true, let given, !ExportOutcome.soundExtensions.contains(given.pathExtension.lowercased()) {
+            throw ServiceError(.badRequest, "Sound alone goes in a .m4a or .wav file, not \(given.lastPathComponent).")
+        }
+        let name = "review \(TimeText.fileSafe(request.start))-\(TimeText.fileSafe(request.end))" + (soloed.map { " " + $0.joined(separator: "+") } ?? "")
+        let output = given ?? folder.exportsFolder.appendingPathComponent(name + (request.audioOnly == true ? ".m4a" : ".mp4"))
+        return try prepareRender(plan: try exportPlan(preset, format: nil), output: output, project: project, tracks: soloed)
     }
 
     public func prepareExport(_ request: ExportRequest) throws -> @Sendable () async throws -> ExportOutcome {
@@ -889,10 +904,10 @@ public final class TandemService: @unchecked Sendable {
         return candidate
     }
 
-    private func prepareRender(plan: ExportPlan, output: URL) throws -> @Sendable () async throws -> ExportOutcome {
+    private func prepareRender(plan: ExportPlan, output: URL, project: Project? = nil, tracks: [String]? = nil) throws -> @Sendable () async throws -> ExportOutcome {
         // The exporter refuses these too; this says so before anything starts.
         try checkOutput(output, what: "export")
-        let project = coordinator.project
+        let project = project ?? coordinator.project
         let context = try renderContext(project, format: plan.format)
         let preset = plan.preset
         let renderer = self.renderer
@@ -913,10 +928,13 @@ public final class TandemService: @unchecked Sendable {
                     integratedLUFS: result.integratedLUFS, truePeakDBTP: result.truePeakDBTP, elapsed: result.elapsed,
                     warnings: RenderWarnings.relevant(plan.warnings + rendered.warnings, in: project, range: preset.range)
                 )
-                outcome.width = plan.width
-                outcome.height = plan.height
-                outcome.codec = plan.codec
-                outcome.videoBitrate = plan.videoBitrate
+                if !outcome.soundOnly {
+                    outcome.width = plan.width
+                    outcome.height = plan.height
+                    outcome.codec = plan.codec
+                    outcome.videoBitrate = plan.videoBitrate
+                }
+                outcome.tracks = tracks
                 outcome.audioBitrate = preset.audioBitrate
                 outcome.format = plan.format
                 outcome.loudnessTarget = preset.loudnessTarget

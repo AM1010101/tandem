@@ -77,8 +77,8 @@ final class ExportPipeline: @unchecked Sendable {
     /// (the snapshot beside `Video` would be `Video.tandem`, the project's
     /// own name) or a file the project uses as media.
     func checkOutput() throws {
-        guard ["mp4", "mov", "m4v"].contains(output.pathExtension.lowercased()) else {
-            throw RenderError.export("export to a .mp4, .mov or .m4v file, not \(output.lastPathComponent)")
+        guard ["mp4", "mov", "m4v"].contains(output.pathExtension.lowercased()) || audioOnly else {
+            throw RenderError.export("export to a .mp4, .mov or .m4v file (or sound alone to a .m4a or .wav), not \(output.lastPathComponent)")
         }
         if let reason = RenderOutputs.protectedReason(output, project: context.project, folder: context.folder) {
             throw RenderError.export("\(reason); export somewhere else")
@@ -92,6 +92,9 @@ final class ExportPipeline: @unchecked Sendable {
             throw RenderError.export("\(output.lastPathComponent) already exists and isn't a Tandem export; pick another name or move it first")
         }
     }
+
+    /// A .m4a or .wav output gets the sound alone, with no picture.
+    var audioOnly: Bool { ["m4a", "wav"].contains(output.pathExtension.lowercased()) }
 
     /// AAC can overshoot the limited mix by a few tenths of a dB, which put
     /// finished files over the ceiling when measured with ffmpeg, so the
@@ -146,6 +149,27 @@ final class ExportPipeline: @unchecked Sendable {
             }
         }
         if isCancelled { throw RenderError.cancelled }
+
+        if audioOnly {
+            let loudness: Loudness
+            do {
+                loudness = try await timed("encode") {
+                    try await encodeSound(built, audio: audioTracks, range: range, gainDB: gainDB, ceiling: ceiling)
+                }
+            } catch {
+                try? FileManager.default.removeItem(at: output)
+                throw isCancelled ? RenderError.cancelled : error
+            }
+            try writeSnapshot(range: range, loudness: loudness)
+            report(1, force: true)
+            return ExportResult(
+                path: output.path,
+                duration: range.duration,
+                integratedLUFS: loudness.integratedLUFS.isFinite ? loudness.integratedLUFS : nil,
+                truePeakDBTP: loudness.truePeakDBTP.isFinite ? loudness.truePeakDBTP : nil,
+                elapsed: Date().timeIntervalSince(started)
+            )
+        }
 
         await EncoderLock.shared.acquire(priority: .export)
         let loudness: Loudness
@@ -529,6 +553,86 @@ final class ExportPipeline: @unchecked Sendable {
         }
         if encoder.stalled { writer.cancelWriting(); throw RenderError.export("reading the timeline stalled") }
         if let failure = encoder.error { writer.cancelWriting(); throw failure }
+        if reader.status == .failed { writer.cancelWriting(); throw reader.error ?? RenderError.export("reading failed") }
+        writer.endSession(atSourceTime: range.end.cmTime)
+        await writer.finishWriting()
+        if writer.status != .completed { throw writer.error ?? RenderError.export("couldn't finish the file") }
+        return master.loudness
+    }
+
+    /// Writes the mastered mix alone: AAC in a .m4a, or 24-bit PCM in a
+    /// .wav (AVAssetWriter won't put float in a WAVE file, so a mix left
+    /// unmastered clips there if it goes over 0 dBFS).
+    private func encodeSound(
+        _ built: BuiltComposition,
+        audio audioTracks: [AVAssetTrack],
+        range: TimeRange,
+        gainDB: Double,
+        ceiling: Double?
+    ) async throws -> Loudness {
+        try? FileManager.default.removeItem(at: output)
+        try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try throwIfCancelled()
+        let reader = try AVAssetReader(asset: built.composition)
+        reader.timeRange = range.cmTimeRange
+        var mix: AVAssetReaderAudioMixOutput?
+        if !audioTracks.isEmpty {
+            let output = AVAssetReaderAudioMixOutput(audioTracks: audioTracks, audioSettings: AudioBuffers.readerSettings)
+            output.audioMix = built.audioMix
+            output.audioTimePitchAlgorithm = .spectral
+            output.alwaysCopiesSampleData = false
+            reader.add(output)
+            mix = output
+            guard reader.startReading() else { throw reader.error ?? RenderError.export("couldn't read the mix") }
+        }
+        let wav = output.pathExtension.lowercased() == "wav"
+        let writer = try AVAssetWriter(outputURL: output, fileType: wav ? .wav : .m4a)
+        let settings: [String: Any] = wav ? [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: AudioBuffers.sampleRate,
+            AVNumberOfChannelsKey: AudioBuffers.channels,
+            AVLinearPCMBitDepthKey: 24,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: false
+        ] : [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: AudioBuffers.sampleRate,
+            AVNumberOfChannelsKey: AudioBuffers.channels,
+            AVEncoderBitRateKey: preset.audioBitrate
+        ]
+        let input = AVAssetWriterInput(mediaType: .audio, outputSettings: settings)
+        input.expectsMediaDataInRealTime = false
+        writer.add(input)
+        guard writer.startWriting() else { throw writer.error ?? RenderError.export("couldn't start writing") }
+        writer.startSession(atSourceTime: range.start.cmTime)
+        let frames = Int((range.duration.seconds * Double(AudioBuffers.sampleRate)).rounded())
+        let master = try MasterAudio(mix: mix, start: range.start.cmTime, frames: frames, gainDB: gainDB, ceiling: ceiling)
+        let io = Unchecked((writer: writer, input: input))
+        let durationSeconds = range.duration.seconds
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            io.value.input.requestMediaDataWhenReady(on: DispatchQueue(label: "com.mikerosoft.tandem.export.sound")) { [weak self] in
+                let (writer, input) = io.value
+                while input.isReadyForMoreMediaData {
+                    guard !(self?.isCancelled ?? true), writer.status == .writing, let sample = master.next() else {
+                        input.markAsFinished()
+                        done.resume()
+                        return
+                    }
+                    input.append(sample)
+                    let t = CMSampleBufferGetPresentationTimeStamp(sample).seconds - range.start.seconds
+                    self?.report(0.1 + 0.9 * 0.99 * t / max(durationSeconds, 0.001))
+                }
+            }
+        }
+        // This thread was the only reader.
+        if reader.status == .reading { reader.cancelReading() }
+        if isCancelled || writer.status != .writing {
+            let failure = writer.error
+            writer.cancelWriting()
+            if isCancelled { throw RenderError.cancelled }
+            throw failure ?? RenderError.export("writing stopped")
+        }
         if reader.status == .failed { writer.cancelWriting(); throw reader.error ?? RenderError.export("reading failed") }
         writer.endSession(atSourceTime: range.end.cmTime)
         await writer.finishWriting()

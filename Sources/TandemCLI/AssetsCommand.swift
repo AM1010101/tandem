@@ -10,13 +10,14 @@ struct AssetsCommand {
     let directory: URL
     let environment: [String: String]
 
-    static let subcommands = ["providers", "search", "fetch", "use", "credits", "generate", "install-starter"]
+    static let subcommands = ["providers", "search", "fetch", "show", "use", "credits", "generate", "install-starter"]
 
     /// The options each subcommand takes.
     static let options: [String: Set<String>] = [
         "providers": [],
         "search": ["kind", "provider", "online", "limit"],
         "fetch": [],
+        "show": [],
         "use": ["at", "duration", "anchor", "pop", "label"],
         "credits": ["optional"],
         "generate": ["duration", "variations"],
@@ -51,6 +52,10 @@ struct AssetsCommand {
             try args.expectPositionals(atMost: 2, command: "assets fetch")
             let id = try args.positional(1, "an asset ID from a search, like tandem assets fetch noto:1f680", command: "assets fetch")
             return show(try await assets.fetch(AssetFetchRequest(id: id)), json: json)
+        case "show":
+            try args.expectPositionals(atMost: 2, command: "assets show")
+            let id = try args.positional(1, "an asset ID, like tandem assets show elevenlabs:music_2p839smz", command: "assets show")
+            return show(try await assets.show(AssetShowRequest(id: id)), json: json)
         case "use":
             try args.expectPositionals(atMost: 2, command: "assets use")
             let id = try args.positional(1, "an asset ID from a search, like tandem assets use noto:1f680 --at 1:23", command: "assets use")

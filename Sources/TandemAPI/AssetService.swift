@@ -105,6 +105,35 @@ public final class AssetService: @unchecked Sendable {
         return AssetFetchResult(asset: asset, file: library.playableURL(for: asset)?.path, licence: try? library.licence(for: asset.id))
     }
 
+    // MARK: - show
+
+    /// The library's record of an asset, without fetching it.
+    public func show(_ request: AssetShowRequest) async throws -> AssetShowResult {
+        if request.id.hasPrefix(SharedLibraryProvider.providerID + ":"), (try? library.asset(request.id)) == nil {
+            _ = try? await library.rescanSharedLibrary()
+        }
+        let found: Asset?
+        do {
+            found = try library.asset(request.id)
+        } catch {
+            throw ServiceError.wrap(error)
+        }
+        guard let asset = found else {
+            throw ServiceError(.notFound, "No asset \(request.id) in the library. Search for it first (tandem assets search \"...\" --online), then use the ID the search gives.")
+        }
+        func onDisk(_ url: URL?) -> String? {
+            url.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0.path : nil }
+        }
+        return AssetShowResult(
+            asset: asset,
+            file: onDisk(library.playableURL(for: asset)),
+            original: onDisk(library.url(for: asset, .original)),
+            licence: try? library.licence(for: asset.id),
+            prompt: asset.remote["prompt"],
+            model: asset.remote["model"]
+        )
+    }
+
     /// Fetches an asset, explaining an unknown ID.
     func fetched(_ id: String) async throws -> Asset {
         // A shared file dropped in since the last scan.

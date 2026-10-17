@@ -74,6 +74,16 @@ rounds up.
    with ffmpeg,
    `tandem clip <start> <end>` for a 720p review MP4. Look at what you
    changed instead of trusting the numbers.
+   For sound, measure with Tandem, not ffmpeg on a review clip:
+   `tandem loudness --from T --to T` prints the mix's momentary and
+   short-term loudness every step (`--tracks Music` for one track,
+   `--step 0.2` for finer rows), `tandem clip T T --tracks Music
+   --audio-only` renders a stem to listen to, and `tandem assets show
+   <id>` gives an asset's prompt, licence, loudness and file instead of
+   its `meta.json`. If Mike says a gain change plays late or not at all,
+   believe him and run `tandem loudness --from T --to T --gains`: it
+   checks the render against the gain lanes and says by how much a change
+   lands late.
 4. **Check.** `tandem check --changed` before you hand back. It renders
    what you changed and finds black frames, flickers, green screen that
    didn't key and white blocks. Fix every problem it reports. Its notes
@@ -240,7 +250,8 @@ From his review comments on the Daytona and Build Your Own Convex videos
   back 27 s short, fixed with a beat-matched 10-bar repeat and a 1 s
   dissolve. Level every bed to -45 LUFS, about 25 LU under his voice. Swell
   +6 dB only in pauses of 1.6 s or more with no demo sound effects, and
-  +8 dB after the sign-off. A chill lounge kit sat under demo sound effects
+  +8 dB after the sign-off. Check a swell landed with
+  `tandem loudness --from T --to T --tracks Music`. A chill lounge kit sat under demo sound effects
   without fighting them: Rhodes, soft pads, round bass and brushed drums at
   about 85 BPM, with no hi-hats, bells, glockenspiel or marimba.
 - **Linked sounds:** a card's whooshes are linked to it, so trim either with

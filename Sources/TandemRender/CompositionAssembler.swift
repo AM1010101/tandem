@@ -313,7 +313,9 @@ enum CompositionAssembler {
                 warnings.add("Couldn't place \(sound.file) for clip \(segment.clipID): \(error)")
             }
         }
-        let audioGains = placedSound.map { TrackGain($0, frameDuration: frameDuration) }
+        let audioGains = placedSound.map { segments in
+            TrackGain(context.flatAudioGain ? segments.map(\.flattened) : segments, frameDuration: frameDuration)
+        }
         var mixParameters: [AVMutableAudioMixInputParameters] = []
         for (track, gain) in zip(audioTracks, audioGains) {
             let parameters = AVMutableAudioMixInputParameters(track: track)

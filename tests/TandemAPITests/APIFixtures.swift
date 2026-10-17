@@ -131,11 +131,35 @@ enum APIFixture {
     }
 }
 
-/// Canned analysis results.
+/// Canned analysis results. Safe to change from another thread, as a
+/// test does to finish a job while a call waits for it.
 final class FakeAnalysis: AnalysisSource, @unchecked Sendable {
-    var transcripts: [String: Transcript] = ["med_camera": APIFixture.cameraTranscript]
-    var measured: [String: Loudness] = [:]
-    var jobList: [JobStatus] = []
+    private let lock = NSLock()
+    private var _transcripts: [String: Transcript] = ["med_camera": APIFixture.cameraTranscript]
+    private var _measured: [String: Loudness] = [:]
+    private var _jobList: [JobStatus] = []
+    private var _requests: [(kind: AnalysisKind, mediaID: String, priority: JobPriority)] = []
+    private var _neededRequests = 0
+    private var observers: [UUID: @Sendable ([JobStatus]) -> Void] = [:]
+    /// What asking for an analysis does, like finishing it a moment later.
+    var onRequest: (@Sendable (AnalysisKind, MediaItem) -> Void)?
+
+    var transcripts: [String: Transcript] {
+        get { lock.withLock { _transcripts } }
+        set { lock.withLock { _transcripts = newValue } }
+    }
+    var measured: [String: Loudness] {
+        get { lock.withLock { _measured } }
+        set { lock.withLock { _measured = newValue } }
+    }
+    var jobList: [JobStatus] {
+        get { lock.withLock { _jobList } }
+        set { lock.withLock { _jobList = newValue } }
+    }
+    /// Every single analysis asked for.
+    var requests: [(kind: AnalysisKind, mediaID: String, priority: JobPriority)] { lock.withLock { _requests } }
+    /// How many times the project's usual analysis was asked for.
+    var neededRequests: Int { lock.withLock { _neededRequests } }
 
     func transcript(for item: MediaItem) -> Transcript? { transcripts[item.id] }
     func loudness(for item: MediaItem) -> Loudness? { measured[item.id] }
@@ -149,22 +173,39 @@ final class FakeAnalysis: AnalysisSource, @unchecked Sendable {
     }
 
     var jobs: [JobStatus] { jobList }
-    private var observers: [UUID: @Sendable ([JobStatus]) -> Void] = [:]
 
     func observeJobs(_ handler: @escaping @Sendable ([JobStatus]) -> Void) -> UUID {
         let token = UUID()
-        observers[token] = handler
+        lock.withLock { observers[token] = handler }
         return token
     }
 
     func removeJobsObserver(_ token: UUID) {
-        observers.removeValue(forKey: token)
+        _ = lock.withLock { observers.removeValue(forKey: token) }
+    }
+
+    func request(_ kind: AnalysisKind, for item: MediaItem, priority: JobPriority) {
+        lock.withLock { _requests.append((kind, item.id, priority)) }
+        onRequest?(kind, item)
+    }
+
+    func requestNeeded(for project: Project) {
+        lock.withLock { _neededRequests += 1 }
     }
 
     /// Pretends the job scheduler moved on.
     func emit(_ jobs: [JobStatus]) {
-        jobList = jobs
-        for handler in observers.values { handler(jobs) }
+        let handlers = lock.withLock { () -> [@Sendable ([JobStatus]) -> Void] in
+            _jobList = jobs
+            return Array(observers.values)
+        }
+        for handler in handlers { handler(jobs) }
+    }
+
+    /// Pretends a transcript job ran and finished.
+    func finishTranscript(_ mediaID: String, _ transcript: Transcript) {
+        transcripts[mediaID] = transcript
+        emit([JobStatus(id: "transcript-\(mediaID)", kind: .transcript, mediaID: mediaID, state: .done, progress: 1)])
     }
 }
 

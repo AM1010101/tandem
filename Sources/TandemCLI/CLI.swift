@@ -181,7 +181,43 @@ struct CLI {
         case "transcript":
             try args.expectPositionals(atMost: 1, command: name)
             let request = TranscriptRequest(id: args.positionals.first, from: try time(args, "from"), to: try time(args, "to"))
-            return show(try await client().call(request), json: json)
+            let client = try client()
+            if args.has("make") {
+                guard let id = args.positionals.first else { throw UsageError(message: "--make needs a media or clip ID, like tandem transcript med_x --make.") }
+                let made = try await client.call(TranscribeRequest(media: [mediaReference(id)], wait: true, timeout: try args.number("timeout")), onEvent: progress(WaitRequest(what: .transcript, media: [id]), json: json))
+                guard made.ok else {
+                    _ = show(made, json: json)
+                    return 1
+                }
+            }
+            return show(try await client.call(request), json: json)
+        case "transcribe":
+            guard !args.positionals.isEmpty else {
+                throw UsageError(message: "`tandem transcribe` needs media, like tandem transcribe med_x or tandem transcribe source/generated/cartoon.mp4.")
+            }
+            if args.has("wait") && args.has("no-wait") { throw UsageError(message: "Pick one of --wait and --no-wait.") }
+            let client = try client()
+            let media = args.positionals.map(mediaReference)
+            // With the app closed nothing else would make it, so it waits.
+            let wait = args.has("wait") || (!args.has("no-wait") && client.route == .headless)
+            let request = TranscribeRequest(media: media, wait: wait, timeout: try args.number("timeout"), label: args.options["label"])
+            let result = try await client.call(request, onEvent: wait ? progress(WaitRequest(what: .transcript, media: media), json: json) : nil)
+            _ = show(result, json: json)
+            return result.ok ? 0 : 1
+        case "wait":
+            try args.expectPositionals(atMost: 1, command: name)
+            var what = WaitTarget.jobs
+            if let word = args.positionals.first {
+                guard let target = WaitTarget(rawValue: word) else {
+                    throw UsageError(message: "`tandem wait` waits for transcript, matte, proxy, jobs or export, not \"\(word)\".")
+                }
+                what = target
+            }
+            let media = args.values("media").map(mediaReference)
+            let request = WaitRequest(what: what, media: media.isEmpty ? nil : media, timeout: try args.number("timeout"))
+            let result = try await client().call(request, onEvent: progress(request, json: json))
+            _ = show(result, json: json)
+            return result.ok ? 0 : 1
         case "search":
             let phrase = args.positionals.joined(separator: " ")
             guard !phrase.isEmpty else { throw UsageError(message: "`tandem search` needs a phrase, like tandem search \"decision models\".") }
@@ -422,6 +458,27 @@ struct CLI {
     }
 
     // MARK: - Helpers
+
+    /// Prints a wait's progress as it goes (not with --json, whose output
+    /// is the one result).
+    private func progress(_ request: WaitRequest, json: Bool) -> (@Sendable (ServiceEvent) -> Void)? {
+        guard !json else { return nil }
+        let progress = WaitProgress(request)
+        return { event in
+            for line in progress.lines(for: event) { print(line) }
+            fflush(stdout)
+        }
+    }
+
+    /// A media ID, clip ID or path as given. A path to a file that exists
+    /// from here is made absolute, since the service reads relative paths
+    /// against the project folder.
+    private func mediaReference(_ text: String) -> String {
+        let expanded = NSString(string: text).expandingTildeInPath
+        guard !expanded.hasPrefix("/") else { return expanded }
+        let here = directory.appendingPathComponent(expanded).standardizedFileURL
+        return FileManager.default.fileExists(atPath: here.path) ? here.path : text
+    }
 
     private func project(_ args: Arguments) throws -> URL {
         try ProjectLocator.find(args.options["project"], in: directory, environment: environment)

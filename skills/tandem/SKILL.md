@@ -32,14 +32,22 @@ rounds up.
 
 1. **Read.** `tandem status`, `tandem timeline --summary`, then
    `tandem timeline --from 1:20 --to 1:40` for detail. `tandem transcript`
-   and `tandem search "<phrase>"` find what's said where. For media Tandem
-   doesn't transcribe (generated B-roll, sound effect or music takes), local
-   Whisper runs offline and prints what it hears with times:
+   and `tandem search "<phrase>"` find what's said where. Tandem
+   transcribes camera takes and the voice by itself; for anything else with
+   sound (generated B-roll checked for made-up speech, a sound effect or
+   music take), `tandem transcribe <id or path>` makes one on-device and,
+   with the app closed, waits and prints the word count ("no speech" is an
+   answer). Then `tandem transcript <id>`. Background work (transcripts,
+   mattes, proxies) is waited for with `tandem wait transcript` (or
+   `matte`, `proxy`, plain `tandem wait` for every job), which makes it
+   itself when the app is closed. Never start `tandem serve` just to get a
+   transcript, and never poll `tandem media` or `tandem status` in a sleep
+   loop. Only if SpeechAnalyzer can't do it (a language it doesn't
+   support), local Whisper runs offline:
    `mlx_whisper --model mlx-community/whisper-large-v3-turbo --language en --word-timestamps True -o "$TMPDIR" <file>`
-   (one file per call: with two it wrote the second's result under the
-   first's name. On long recordings with silences add
+   (one file per call; on long recordings with silences add
    `--condition-on-previous-text False`, or it loops one phrase through
-   the quiet.)
+   the quiet).
 2. **Edit in labelled batches.** `tandem apply '{"label": "B-roll over the
    config file", "commands": [...]}'` makes one undo step, which Mike reads
    by its label. Pass `--expect <revision>` from the read you based the

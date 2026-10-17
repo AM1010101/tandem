@@ -295,15 +295,17 @@ public final class TandemService: @unchecked Sendable {
 
     // MARK: - transcripts
 
-    /// What to say when a file has no transcript yet. Transcripts are made
-    /// by whatever holds the project open (the app or `tandem serve`), so
-    /// opened headless for one call, nothing is making it.
-    func noTranscriptYet(_ path: String) -> String {
+    /// What to say when a file has no transcript yet: whether anything is
+    /// making one, and the command that gets it made or waits for it.
+    func noTranscriptYet(_ item: MediaItem, in project: Project) -> String {
+        let wanted = analysis.needs(for: project).contains { $0.mediaID == item.id && $0.kind == .transcript }
         switch mode {
+        case .hosted where wanted:
+            return "\(item.path) has no transcript yet. It's being made in the background; `tandem wait transcript --media \(item.id)` waits for it."
         case .hosted:
-            return "\(path) has no transcript yet. Transcripts are made in the background; `tandem media` shows progress."
+            return "\(item.path) has no transcript: Tandem only makes them for camera takes, what's on a speech track and files someone asked for. `tandem transcribe \(item.id)` makes one and waits for it."
         case .headless:
-            return "\(path) has no transcript yet, and nothing is making one: transcripts are made while the project is open in the app or `tandem serve`. Open it in the app (`tandem app`) or run `tandem serve`, then `tandem media` shows progress."
+            return "\(item.path) has no transcript yet, and nothing is making one, since the project isn't open in the app. `tandem transcribe \(item.id)` makes it now and waits for it."
         }
     }
 
@@ -323,7 +325,7 @@ public final class TandemService: @unchecked Sendable {
         }
         if let item = project.media(id) {
             guard let transcript = analysis.transcript(for: item) else {
-                throw ServiceError(.unavailable, noTranscriptYet(item.path))
+                throw ServiceError(.unavailable, noTranscriptYet(item, in: project))
             }
             let words = transcript.words.filter { keep($0.start, $0.end) }.map {
                 WordTiming(text: $0.text, start: $0.start, end: $0.end, confidence: $0.confidence)
@@ -338,7 +340,7 @@ public final class TandemService: @unchecked Sendable {
                 throw ServiceError(.invalid, "Clip \(id) plays \(item.path), which has no sound.")
             }
             guard let transcript = analysis.transcript(for: item) else {
-                throw ServiceError(.unavailable, noTranscriptYet(item.path))
+                throw ServiceError(.unavailable, noTranscriptYet(item, in: project))
             }
             guard let track = project.allTracks.first(where: { $0.clips.contains { $0.id == id } }) else {
                 throw ServiceError(.notFound, "No media or clip with ID \(id).")
@@ -876,6 +878,11 @@ public final class TandemService: @unchecked Sendable {
         exports[job.id] = job
         stateLock.unlock()
         events.publish { ServiceEvent(seq: $0, kind: .export, export: job) }
+    }
+
+    /// Exports and review clips rendering through this service now.
+    var runningExports: [ExportJob] {
+        stateLock.withLock { exports.values.sorted { $0.id < $1.id } }
     }
 
     private func finish(_ job: ExportJob) {

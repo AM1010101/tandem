@@ -64,10 +64,12 @@ final class TranscriptToolsTests: XCTestCase {
                 return error.message
             }
         }
-        XCTAssertTrue(try message(.hosted).contains("made in the background"))
+        // Music isn't a take or on a speech track, so nothing makes one
+        // unless asked.
+        XCTAssertTrue(try message(.hosted).contains("tandem transcribe med_music"))
         let headless = try message(.headless)
         XCTAssertTrue(headless.contains("nothing is making one"), headless)
-        XCTAssertTrue(headless.contains("tandem serve"), headless)
+        XCTAssertTrue(headless.contains("tandem transcribe med_music"), headless)
     }
 
     func testSearchMapsHitsToTheTimeline() throws {

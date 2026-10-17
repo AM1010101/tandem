@@ -134,6 +134,10 @@ public final class TandemHTTPClient: @unchecked Sendable {
         switch operation {
         case .export, .clip, .archive: return 24 * 3600
         case .watch: return ((call as? WatchRequest)?.timeout ?? 30) + 30
+        case .wait: return ((call as? WaitRequest)?.timeout ?? WaitRequest.defaultTimeout) + 30
+        case .transcribe:
+            guard let transcribe = call as? TranscribeRequest, transcribe.wait == true else { return 600 }
+            return (transcribe.timeout ?? WaitRequest.defaultTimeout) + 30
         case .media, .relink, .check: return 1800
         default: return 600
         }

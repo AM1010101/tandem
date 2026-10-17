@@ -43,7 +43,9 @@ output's `error` key, since a pipe reports the last program's exit code.
 tandem status [--revision]         revision, length, who has it open, jobs, missing fonts, edits waiting for review
 tandem timeline [--summary] [--from T] [--to T] [--words] [--json]
 tandem media [--refresh]           files, clip counts, analysis status
-tandem transcript [<clip or media id>] [--from T] [--to T]
+tandem transcript [<clip or media id>] [--from T] [--to T] [--make]
+tandem transcribe <id or path>...  [--wait | --no-wait]   transcribe any file with sound
+tandem wait [transcript|matte|proxy|jobs|export] [--media <id>]... [--timeout S]   wait for background work
 tandem search "<phrase>"           where a phrase is said
 tandem pauses [--min 0.6]          silences between words
 tandem tighten [--min 0.6] [--keep 0.15] [--apply]
@@ -136,6 +138,58 @@ app closed, or to watch changes live. If Mike opens the project in the app
 meanwhile, the app asks `tandem serve` to save and quit, and your next
 command goes through the app instead.
 
+### Background work: transcripts, mattes, proxies
+
+Transcripts, cutout mattes, proxies, waveforms and loudness are made in the
+background by whatever holds the project: the app, or `tandem serve`. A
+command run with the app closed opens the file for a moment and makes
+nothing, except `tandem wait` and `tandem transcribe`, which make the work
+themselves for as long as they run. Don't start `tandem serve` just to get
+a transcript, and don't poll `tandem media` or `tandem status` in a sleep
+loop.
+
+`tandem wait` blocks until the work is done, printing progress lines, and
+then says what finished:
+
+```
+tandem wait                         every background job
+tandem wait transcript              the transcripts the project makes
+tandem wait transcript --media med_x   one file's
+tandem wait matte                   mattes for clips with their cutout on
+tandem wait proxy                   proxies for large video on the timeline
+tandem wait export                  exports running through the app or tandem serve
+```
+
+```
+transcript med_2atn285x running 40%
+transcript med_2atn285x done
+Done after 3.2 s:
+  source/take1-camera.mov: ready, 1843 words
+```
+
+With the app closed, the wait opens the project the way `tandem serve`
+does until it's done: other commands still work meanwhile (they go through
+it), and if Mike opens the project in the app, the wait hands it over and
+carries on waiting there. `--timeout` defaults to 600 seconds; when it
+passes the wait says what's still going, and running it again keeps
+waiting. A file nothing makes the thing for (a transcript of a music bed, a
+matte for a clip with no cutout) is an error that says how to get it made,
+not a wait that can only time out. Exit code 1 when anything failed or the
+wait timed out.
+
+Tandem transcribes camera takes and whatever is on a speech track (Voice)
+by itself. `tandem transcribe <media id, clip id or path>` makes a
+transcript of any other file with sound, with the same on-device
+SpeechAnalyzer: a generated clip you're checking for made-up speech, a
+sound effect, a music cue. It marks the file (`transcribe: true` on the
+media, one undo step) so the transcript is made wherever the project is
+open, and with the app closed it waits for it and prints each file's word
+count. An empty transcript (`ready, no speech`) is an answer too. With the
+app open it queues it and returns; add `--wait` to wait. Then read it with
+`tandem transcript <id>`, or do both at once with `tandem transcript <id>
+--make`. Only reach for Whisper if SpeechAnalyzer can't do it (another
+language it doesn't support, say).
+
 ### MCP
 
 `tandem mcp` is an MCP server on stdin and stdout. Add it to Claude Code:
@@ -164,9 +218,9 @@ args = ["mcp"]
 ```
 
 The tools mirror the operations: `status`, `timeline`, `media`,
-`transcript`, `search`, `pauses`, `tighten`, `join`, `captions`, `short`, `cards`, `apply`, `undo`, `redo`,
+`transcript`, `transcribe`, `search`, `pauses`, `tighten`, `join`, `captions`, `short`, `cards`, `apply`, `undo`, `redo`,
 `history`, `validate`, `frame`, `frames`, `screenshot`, `clip`, `export`, `archive`,
-`relink`, `loudness`, `watch` and `effects`, plus the asset library's `assets_search`,
+`relink`, `loudness`, `watch`, `wait` and `effects`, plus the asset library's `assets_search`,
 `assets_use`, `assets_credits`, `assets_generate` and `assets_providers`,
 and the saved segments' `segments_list`, `segments_save` and
 `segments_insert`.
@@ -453,7 +507,9 @@ clips in the range).
   is part of the pause, so `tighten` cuts it with the silence.
 - `media` shows each file's analysis state. Transcripts, loudness, proxies
   and cutout mattes are made in the background; tools that need a
-  transcript say which files don't have one yet.
+  transcript say which files don't have one yet. `tandem wait` waits for
+  them, and `tandem transcribe` makes a transcript of a file Tandem
+  wouldn't transcribe by itself (see "Background work").
 - `frame <time>` renders one frame (MCP returns the image, 1280 px wide by
   default). `clip <start> <end>` renders a 720p review MP4 you can watch.
 - `frames <time>...` renders several frames the same way onto one contact
@@ -598,6 +654,19 @@ Clip:  {"id", "start", "duration", "sourceStart", "speed", "enabled", "freezeFra
 
 `timelineTimes` is false for a media transcript, whose times are the
 file's own. `clipID` is set on timeline transcripts.
+
+`tandem wait --json` (and `waited` in `tandem transcribe --json`, which also
+has `revision`, `applied`, `files` and `headless`):
+
+```
+{"what": "transcript", "done": true, "timedOut": false, "elapsed": 3.2,
+ "finished": [{"kind", "mediaID"?, "path", "state", "progress"?, "message"?, "words"?, "mode"?}],
+ "pending": [...]}                             // what's still going after a timeout
+```
+
+`state` is `ready` (`done` for a job) or `failed` when finished, and
+`waiting`, `queued` or `running` when not. `words` is a ready transcript's
+word count, 0 when there's no speech.
 
 `tandem status --json`:
 
@@ -2051,7 +2120,9 @@ still when it's beside it. It's one undo step.
 | status | `tandem status [--revision]` | `POST /v1/status` | `status` |
 | media | `tandem media [--refresh]` | `POST /v1/media {"refresh": true}` | `media` |
 | timeline | `tandem timeline [--summary] [--from] [--to] [--words] [--json]` | `POST /v1/timeline {"summary", "from", "to", "words", "format"}` | `timeline` |
-| transcript | `tandem transcript [<id>]` | `POST /v1/transcript {"id"}` | `transcript` |
+| transcript | `tandem transcript [<id>] [--make]` | `POST /v1/transcript {"id"}` | `transcript` |
+| transcribe | `tandem transcribe <id or path>... [--wait \| --no-wait]` | `POST /v1/transcribe {"media": [...], "wait", "timeout"}` | `transcribe` |
+| wait | `tandem wait [transcript\|matte\|proxy\|jobs\|export] [--media <id>]... [--timeout]` | `POST /v1/wait {"what", "media": [...], "timeout"}` | `wait` |
 | search | `tandem search "<phrase>"` | `POST /v1/search {"phrase"}` | `search` |
 | pauses | `tandem pauses [--min]` | `POST /v1/pauses {"min"}` | `pauses` |
 | tighten | `tandem tighten [--min] [--keep] [--apply]` | `POST /v1/tighten {"min", "keep", "apply"}` | `tighten` |
@@ -2110,7 +2181,13 @@ when it's open).
   `tandem short --apply` lays one out; the landscape video exports with
   plain `tandem export`.
 - **No pauses or search results**: check `tandem media`; transcripts are
-  made in the background after files are added.
+  made in the background after files are added. `tandem wait transcript`
+  waits for them (and makes them, with the app closed).
+- **"has no transcript yet, and nothing is making one"** or **"Tandem only
+  makes them for camera takes..."**: run the `tandem transcribe <id>` it
+  gives.
+- **"Nothing makes a transcript of ..."** from `tandem wait`: the file isn't
+  a camera take or on a speech track. `tandem transcribe <id>` asks for one.
 - **"... isn't installed, so N text clips are drawn in SF Pro instead"**:
   run the `tandem assets use fontsource:...` it gives. The font goes into
   the project's `assets/font/`, and the app (if it has the project open)

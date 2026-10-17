@@ -269,7 +269,8 @@ public final class MCPServer: @unchecked Sendable {
     transition, soft zooms) are judgement calls. Mike's saved segments (his intro, outro and \
     calls to action) are in `segments_list` and go in with `segments_insert`. Mike leaves comments on the timeline for the next round \
     ("cut the umm here"): when he asks you to look at them, `comments` lists them; do each, then remove it with removeMarker in the same \
-    batch. A camera's picture lags its mic: `sync` sets how late (never slip clips by hand for it). Only change the project through \
+    batch. A camera's picture lags its mic: `sync` sets how late (never slip clips by hand for it). Transcripts, mattes and proxies are \
+    made in the background: `wait` waits for them (never poll in a loop), and `transcribe` makes a transcript of any file with sound. Only change the project through \
     these tools, and never quit \
     or restart the app. Times are seconds or mm:ss.mmm. Pass `project` (a .tandem path) when the server wasn't started in the video's folder.
     """
@@ -532,6 +533,18 @@ enum MCPTools {
             readOnly: true, idempotent: true
         ),
         Tool(
+            name: "transcribe", title: "Transcribe a file",
+            description: "Makes a transcript of any media with sound, whatever its role or track (a generated clip to check for made-up speech, a sound effect), with the same on-device SpeechAnalyzer as camera takes. Camera takes and what's on a speech track are transcribed anyway. Marks the file (transcribe: true, one undo step) so the transcript is made wherever the project is open. With wait: true it waits and returns each file's state and word count (0 words: no speech); then `transcript` reads it. Use this instead of Whisper or an online model.",
+            operation: .transcribe,
+            properties: [
+                "media": S.array(S.string("A media ID, clip ID or path."), "The files to transcribe."),
+                "wait": S.boolean("Wait for the transcripts. With the app closed nothing else makes them, so wait."),
+                "timeout": S.number("Seconds to wait. Default 600."),
+                "label": S.string("Undo label.")
+            ],
+            required: ["media"], readOnly: false, idempotent: true
+        ),
+        Tool(
             name: "search", title: "Find a phrase",
             description: "Finds where a phrase is said, as timeline ranges with the clips that play it (ignoring case and punctuation). Also lists matches in material that isn't on the timeline.",
             operation: .search,
@@ -767,6 +780,17 @@ enum MCPTools {
             description: "Waits until the project moves past a revision (default: now), for example to react when Mike edits in the app. Returns the changes, or changed: false after the timeout.",
             operation: .watch,
             properties: ["revision": S.integer("Wait for a revision after this one."), "timeout": S.number("Seconds to wait. Default 30, at most 600.")],
+            readOnly: true, idempotent: true
+        ),
+        Tool(
+            name: "wait", title: "Wait for background work",
+            description: "Waits until background work is done and says what finished: transcript, matte or proxy (the ones the project makes, or one file's with media), jobs (every analysis job, the default) or export (exports running through the app or tandem serve). With the app closed it makes the work itself while it waits. Use it instead of polling media or status. A file nothing makes a transcript for is an error pointing at `transcribe`. On timeout it returns what's still going; call it again to keep waiting.",
+            operation: .wait,
+            properties: [
+                "what": S.enumeration(WaitTarget.allCases.map(\.rawValue), "What to wait for. Default jobs."),
+                "media": S.array(S.string("A media ID, clip ID or path."), "Just these files."),
+                "timeout": S.number("Seconds to wait. Default 600; keep it shorter if your client times tool calls out, and call again.")
+            ],
             readOnly: true, idempotent: true
         ),
         Tool(

@@ -53,7 +53,8 @@ enum Help {
                     Mike adds comments in Tandem at the playhead (Add comment, Shift-C) while he reviews: notes like "cut the umm here" for the next round. Each shows its ID, time and words, what's said a few seconds either side (| marks the comment) and the clips playing there.
                     Do what each asks and label the edit with what you did. Then remove the comment: in the same apply batch with {"removeMarker": {"markerID": "<id>"}}, or afterwards with tandem comments resolve <id>. Comments move with ripple edits, so list them again after one.
                     """),
-        CommandHelp(name: "transcript", usage: "tandem transcript [<clip or media id>] [--from <time>] [--to <time>]", summary: "Word timings for a clip (timeline times), a file (file times) or the whole timeline.", options: ["from", "to"]),
+        CommandHelp(name: "transcript", usage: "tandem transcript [<clip or media id>] [--from <time>] [--to <time>] [--make]", summary: "Word timings for a clip (timeline times), a file (file times) or the whole timeline.", options: ["from", "to", "make", "timeout"],
+                    details: "--make makes the file's transcript first if it has none, as `tandem transcribe <id> --wait` does, so it works for any file with sound."),
         CommandHelp(name: "search", usage: "tandem search \"<phrase>\" [--limit <n>]", summary: "Find where a phrase is said, as timeline times and clip IDs.", options: ["limit"]),
         CommandHelp(name: "pauses", usage: "tandem pauses [--min 0.6] [--from <time>] [--to <time>]", summary: "Silences between words, in timeline time.", options: ["min", "from", "to"]),
         CommandHelp(name: "tighten", usage: "tandem tighten [--min 0.6] [--keep 0.15] [--from <time>] [--to <time>] [--apply]", summary: "Shorten pauses over --min down to --keep (a dry run without --apply).", options: ["min", "keep", "from", "to", "apply", "label", "expect"]),
@@ -102,6 +103,19 @@ enum Help {
                     """),
         CommandHelp(name: "relink", usage: "tandem relink [--search <folder>]... [--dry-run]", summary: "Find missing media files by name (and content) in the project folder, any --search folders and then the shared library, and point the project at them.", options: ["search", "dry-run", "label"]),
         CommandHelp(name: "loudness", usage: "tandem loudness [<media id>]", summary: "Measured loudness per file and the levelling each clip gets.", options: []),
+        CommandHelp(name: "transcribe", usage: "tandem transcribe <media id | clip id | path>... [--wait | --no-wait] [--timeout <seconds>]", summary: "Make a transcript of any file with sound, whatever its role or track (a generated clip, a sound effect), and wait for it.", options: ["wait", "no-wait", "timeout", "label"],
+                    details: """
+                    Tandem transcribes camera takes and what's on a speech track by itself. This asks for anything else with sound, with the same on-device SpeechAnalyzer, and marks the file (transcribe: true, one undo step) so the transcript is made wherever the project is open. An empty transcript means no speech.
+                    With the app closed it waits by default, making the transcript here and printing progress; with the app open it queues it and returns, unless --wait. --no-wait only queues it. --timeout defaults to 600 seconds.
+                    Then `tandem transcript <id>` reads it. Exit code 1 if a transcript failed or the wait timed out.
+                    """),
+        CommandHelp(name: "wait", usage: "tandem wait [transcript | matte | proxy | jobs | export] [--media <id or path>]... [--timeout <seconds>]", summary: "Wait for background work to finish (transcripts, mattes, proxies, every job, or exports), printing progress, then say what finished.", options: ["media", "timeout"],
+                    details: """
+                    Without a kind it waits for every background job. transcript, matte and proxy wait for the ones the project makes (camera takes' and the voice's transcripts, mattes for clips with their cutout on, proxies for large video on the timeline), or with --media just those files'. A file nothing makes one for is an error that says how to get it made.
+                    With the app closed, the wait makes the work itself for as long as it runs, the way `tandem serve` does: other commands still work meanwhile, and Mike opening the project hands it to the app, where the wait carries on.
+                    export waits for exports and review clips rendering through the app or `tandem serve`.
+                    --timeout defaults to 600 seconds; when it passes, the wait says what's still going. Exit code 1 if anything failed or it timed out.
+                    """),
         CommandHelp(name: "watch", usage: "tandem watch [--once] [--timeout <seconds>]", summary: "Print changes as they happen (or wait for the next one with --once).", options: ["once", "timeout"]),
         CommandHelp(name: "effects", usage: "tandem effects [<type>]", summary: "Effects with their parameters, transitions, layouts and animatable parameters.", options: []),
         CommandHelp(name: "schema", usage: "tandem schema", summary: "Print the JSON schema for edit batches.", options: []),

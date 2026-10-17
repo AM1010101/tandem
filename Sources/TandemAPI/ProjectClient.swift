@@ -219,11 +219,16 @@ public final class ProjectClient: @unchecked Sendable {
         return .headless
     }
 
-    public func call<C: ServiceCall>(_ call: C) async throws -> C.Result {
+    /// Runs `call` wherever the project is. `onEvent` gets the owner's
+    /// events (job progress, exports) while it runs, for a caller printing
+    /// progress.
+    public func call<C: ServiceCall>(_ call: C, onEvent: (@Sendable (ServiceEvent) -> Void)? = nil) async throws -> C.Result {
         if let watch = call as? WatchRequest {
             return try await self.watch(watch) as! C.Result
         }
-        let started = Date()
+        var call = call
+        let begun = Date()
+        var started = begun
         var noticed = false
         var delay: UInt64 = 20_000_000
         while true {
@@ -232,7 +237,7 @@ public final class ProjectClient: @unchecked Sendable {
             if let lock {
                 if let port = lock.port, let token = lock.token {
                     do {
-                        return try await TandemHTTPClient(port: port, token: token, author: author).call(call)
+                        return try await remote(call, port: port, token: token, onEvent: onEvent)
                     } catch let error as ServiceError where Self.mayRetry(call, after: error) && Date() < deadline {
                         // The owner may have just quit; look again.
                     }
@@ -244,7 +249,13 @@ public final class ProjectClient: @unchecked Sendable {
                 }
             } else {
                 do {
-                    return try await runHeadless(call)
+                    guard call.needsAnalysis else { return try await runHeadless(call) }
+                    if let result = try await runHosting(call, onEvent: onEvent) { return result }
+                    // The app asked for the project: wait there for what's
+                    // left, giving it time to open the project first.
+                    call = Self.remaining(call, since: begun)
+                    started = Date()
+                    continue
                 } catch let error as EditError {
                     guard case .locked = error, Date() < deadline else { throw ServiceError.wrap(error) }
                     // Someone opened it between our look and our open.
@@ -253,6 +264,73 @@ public final class ProjectClient: @unchecked Sendable {
             try await Task.sleep(nanoseconds: delay)
             delay = min(delay * 2, 250_000_000)
         }
+    }
+
+    private func remote<C: ServiceCall>(_ call: C, port: Int, token: String, onEvent: (@Sendable (ServiceEvent) -> Void)?) async throws -> C.Result {
+        let client = TandemHTTPClient(port: port, token: token, author: author)
+        guard let onEvent else { return try await client.call(call) }
+        let follower = Task {
+            for try await event in client.events() { onEvent(event) }
+        }
+        defer { follower.cancel() }
+        return try await client.call(call)
+    }
+
+    /// With nothing holding the project, a call that waits on background
+    /// work opens it the way `tandem serve` does, for as long as the call
+    /// runs: the analysis runs in this process, other commands reach the
+    /// project through its API meanwhile, and the app opening the project
+    /// asks it to let go. Returns nil when it let go before the call
+    /// finished.
+    private func runHosting<C: ServiceCall>(_ call: C, onEvent: (@Sendable (ServiceEvent) -> Void)?) async throws -> C.Result? {
+        let session = try ProjectSession.open(projectURL, owner: .cli)
+        let host: TandemAPIHost
+        do {
+            host = try await TandemAPIHost.start(session: session, analysis: analysis, renderer: renderer, fontInstaller: fontInstaller)
+        } catch {
+            session.close()
+            throw error
+        }
+        // Other calls this process makes meanwhile (an MCP client's) use it
+        // rather than failing to open it again.
+        HeadlessPool.shared.share(projectURL, session: session, service: host.service)
+        Self.waitNotice?("Nothing has \(projectURL.lastPathComponent) open, so this command makes its background analysis itself, serving the project until it's done.")
+        let follower = onEvent.map { onEvent in
+            let stream = host.service.events.subscribe()
+            return Task { for await event in stream { onEvent(event) } }
+        }
+        let service = host.service
+        let context = CallContext(author: author)
+        let work = Task { try await call.run(on: service, context: context) }
+        let released = Flag()
+        host.server.onRelease = {
+            released.set()
+            work.cancel()
+        }
+        defer {
+            follower?.cancel()
+            host.stop()
+            HeadlessPool.shared.release(projectURL)
+        }
+        do {
+            return try await work.value
+        } catch where released.isSet {
+            return nil
+        }
+    }
+
+    /// The call again with the time it has left to wait.
+    static func remaining<C: ServiceCall>(_ call: C, since start: Date) -> C {
+        let used = Date().timeIntervalSince(start)
+        if var wait = call as? WaitRequest {
+            wait.timeout = max(0, (wait.timeout ?? WaitRequest.defaultTimeout) - used)
+            return wait as! C
+        }
+        if var transcribe = call as? TranscribeRequest {
+            transcribe.timeout = max(0, (transcribe.timeout ?? WaitRequest.defaultTimeout) - used)
+            return transcribe as! C
+        }
+        return call
     }
 
     /// Whether a call the owner's API failed can be sent again: always when
@@ -375,7 +453,26 @@ public final class ProjectClient: @unchecked Sendable {
     }
 }
 
+/// A flag set from any thread.
+final class Flag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+
+    func set() { lock.withLock { value = true } }
+    var isSet: Bool { lock.withLock { value } }
+}
+
 extension ServiceCall {
+    /// True for calls that wait on background analysis, which needs the
+    /// project held open while they run.
+    var needsAnalysis: Bool {
+        switch self {
+        case is WaitRequest: return true
+        case let transcribe as TranscribeRequest: return transcribe.wait == true
+        default: return false
+        }
+    }
+
     /// True when running the call twice could change the project twice: an
     /// edit, an undo or redo, or a tool asked to apply its cuts.
     var changesProject: Bool {
@@ -420,6 +517,12 @@ final class HeadlessPool: @unchecked Sendable {
         service.fontInstaller = fontInstaller
         entries[url] = Entry(session: session, service: service, users: 1)
         return service
+    }
+
+    /// Lets calls in this process use a project another part of it has
+    /// open (a wait hosting it) until `release`.
+    func share(_ url: URL, session: ProjectSession, service: TandemService) {
+        lock.withLock { entries[url] = Entry(session: session, service: service, users: 1) }
     }
 
     func release(_ url: URL) {

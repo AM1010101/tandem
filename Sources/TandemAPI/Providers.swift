@@ -17,6 +17,33 @@ public protocol AnalysisSource: AnyObject, Sendable {
     /// `removeJobsObserver`.
     func observeJobs(_ handler: @escaping @Sendable ([JobStatus]) -> Void) -> UUID
     func removeJobsObserver(_ token: UUID)
+    /// Queues one analysis. Cheap when it's made or queued already.
+    func request(_ kind: AnalysisKind, for item: MediaItem, priority: JobPriority)
+    /// Queues what the project needs (`AnalysisNeeds`).
+    func requestNeeded(for project: Project)
+    /// What the project needs, with this analysis's settings.
+    func needs(for project: Project) -> [AnalysisNeeds.Need]
+    /// Where one needed analysis stands.
+    func state(of need: AnalysisNeeds.Need, for item: MediaItem) -> MediaAnalysis.ResultState
+}
+
+extension AnalysisSource {
+    public func needs(for project: Project) -> [AnalysisNeeds.Need] {
+        AnalysisNeeds.needs(for: project)
+    }
+
+    /// From `isReady` and the job list, for sources that can't say more.
+    public func state(of need: AnalysisNeeds.Need, for item: MediaItem) -> MediaAnalysis.ResultState {
+        guard need.kind.applies(to: item) else { return .notApplicable }
+        if isReady(need.kind, for: item) { return .ready }
+        guard let job = jobs.last(where: { $0.mediaID == item.id && $0.kind == need.kind }) else { return .missing }
+        switch job.state {
+        case .queued: return .queued
+        case .running: return .running(progress: job.progress)
+        case .failed: return .failed(job.message ?? "failed")
+        case .done, .cancelled: return .missing
+        }
+    }
 }
 
 /// The real analysis, through `MediaAnalysis`'s documented methods. An
@@ -44,6 +71,29 @@ public final class MediaAnalysisSource: AnalysisSource, @unchecked Sendable {
 
     public func removeJobsObserver(_ token: UUID) {
         analysis.removeObserver(token)
+    }
+
+    public func request(_ kind: AnalysisKind, for item: MediaItem, priority: JobPriority) {
+        analysis.request(kind, for: item, priority: priority)
+    }
+
+    public func requestNeeded(for project: Project) {
+        analysis.requestNeeded(for: project)
+    }
+
+    public func needs(for project: Project) -> [AnalysisNeeds.Need] {
+        AnalysisNeeds.needs(for: project, settings: analysis.settings)
+    }
+
+    public func state(of need: AnalysisNeeds.Need, for item: MediaItem) -> MediaAnalysis.ResultState {
+        // A matte in another cutout mode than the default is its own result.
+        var settings: AnalysisSettings?
+        if let mode = need.matteMode, mode != analysis.settings.matteMode {
+            var custom = analysis.settings
+            custom.matteMode = mode
+            settings = custom
+        }
+        return analysis.state(need.kind, for: item, settings: settings)
     }
 }
 

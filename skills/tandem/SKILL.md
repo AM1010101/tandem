@@ -7,12 +7,14 @@ description: Edit Mike's videos in Tandem, his Mac video editor, through the `ta
 
 Tandem is Mike's video editor, built for working in turns with an agent:
 you edit the project through the `tandem` command, Mike reviews in the
-app, and the timeline shows him exactly what you changed. The full guide,
-with an example of every command and recipes for B-roll, titles, cards,
-shorts, captions and more, is `docs/AGENTS.md` in the Tandem repo
-(`~/dev/me/tandem/docs/AGENTS.md` on Mike's Mac). `tandem help <command>`
-gives a command's options, and `tandem help <edit command>` (like
-`tandem help addTransition`) an edit command's arguments and example. Read the parts you need before editing.
+app, and the timeline shows him exactly what you changed. The guide's
+entry point is `docs/AGENTS.md` in the Tandem repo
+(`~/dev/me/tandem/docs/AGENTS.md` on Mike's Mac): how editing works, the
+command index, and a table of recipes and topics in `docs/agents/` (B-roll,
+titles, cards, shorts, captions, sound, review and more). `tandem help
+<command>` gives a command's options, and `tandem help <edit command>`
+(like `tandem help addTransition`) an edit command's arguments and example.
+Read the parts you need before editing.
 
 ## Setup
 
@@ -59,7 +61,7 @@ rounds up.
    again. Try big batches with `--dry-run` first. Name tracks by name
    (`"trackID": "Music"`) rather than looking up IDs, and give one
    `updateClip` patch to many clips with `clipIDs`. The `--json` shapes are
-   in docs/AGENTS.md ("JSON output").
+   in docs/agents/json-output.md.
    For a job that touches many things at once (every caption, every push),
    write a short script against the SDK in the Tandem repo's
    `sdk/` folder instead of hand-building JSON or throwaway Python:

@@ -163,6 +163,8 @@ export type MediaItem = {
   takeID?: string;
   /** Seconds. */
   takeOffset?: number;
+  /** Make this file's transcript whatever its role or track. Set by `tandem transcribe`. */
+  transcribe?: boolean;
   /** Set by scanning: the codec macOS can't decode ("rle " or "png "). Tandem plays a converted copy. */
   undecodableCodec?: string;
   variableFrameRate?: boolean;
@@ -423,6 +425,14 @@ export type RemoveClipsArgs = {
 /** Removes a stretch of time and closes it up: every cut track (screen, camera, voice) loses it and follow tracks (B-roll, music, titles) move with it. This is how pauses get tightened. */
 export type RippleDeleteRangeArgs = {
   range: TimeRange;
+  /** Track IDs or names, like ["Camera", "Voice"]. Only cut these tracks (and ripple from them). Default: every cut track. */
+  trackIDs?: Array<string>;
+};
+
+/** Ripple deletes several ranges at once, every one in the timeline's times before this command (as you read them), in any order. Tandem cuts them latest first so no cut moves another, and cuts overlapping or touching ranges once. Use it instead of sorting rippleDeleteRange commands latest first yourself. */
+export type CutRangesArgs = {
+  /** The stretches to cut: start plus duration, or start and end. */
+  ranges: Array<TimeRange>;
   /** Track IDs or names, like ["Camera", "Voice"]. Only cut these tracks (and ripple from them). Default: every cut track. */
   trackIDs?: Array<string>;
 };
@@ -742,6 +752,7 @@ export interface CommandArgs {
   insertClip: InsertClipArgs;
   removeClips: RemoveClipsArgs;
   rippleDeleteRange: RippleDeleteRangeArgs;
+  cutRanges: CutRangesArgs;
   closeGap: CloseGapArgs;
   insertTime: InsertTimeArgs;
   insertTemplate: InsertTemplateArgs;
@@ -782,4 +793,4 @@ export type CommandName = keyof CommandArgs;
 /** One edit command: an object with exactly one key, the command's name. */
 export type Command = { [K in CommandName]: { [P in K]: CommandArgs[P] } }[CommandName];
 
-export const commandNames = ["updateProject","updateSettings","addTrack","removeTrack","moveTrack","updateTrack","addMedia","updateMedia","removeMedia","placeMedia","insertClip","removeClips","rippleDeleteRange","closeGap","insertTime","insertTemplate","addSectionCards","fitSectionCards","blade","join","joinThroughEdits","trim","roll","slip","slide","setSpeed","moveClips","updateClip","link","unlink","applyLayout","zoomToRegion","setFormatLayout","adoptFormat","addMotion","addTransition","updateTransition","removeTransition","addEffect","updateEffect","removeEffect","moveEffect","setKeyframes","normalizeSpeech","addMarker","updateMarker","removeMarker"] as const;
+export const commandNames = ["updateProject","updateSettings","addTrack","removeTrack","moveTrack","updateTrack","addMedia","updateMedia","removeMedia","placeMedia","insertClip","removeClips","rippleDeleteRange","cutRanges","closeGap","insertTime","insertTemplate","addSectionCards","fitSectionCards","blade","join","joinThroughEdits","trim","roll","slip","slide","setSpeed","moveClips","updateClip","link","unlink","applyLayout","zoomToRegion","setFormatLayout","adoptFormat","addMotion","addTransition","updateTransition","removeTransition","addEffect","updateEffect","removeEffect","moveEffect","setKeyframes","normalizeSpeech","addMarker","updateMarker","removeMarker"] as const;

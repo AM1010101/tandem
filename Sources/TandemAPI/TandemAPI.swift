@@ -43,6 +43,9 @@ public enum ServiceOperation: String, CaseIterable, Codable, Sendable {
     case sync
     case wait
     case transcribe
+    case diff
+    case restore
+    case clips
 
     /// The request type that carries this operation's parameters.
     public var callType: any ServiceCall.Type {
@@ -78,13 +81,16 @@ public enum ServiceOperation: String, CaseIterable, Codable, Sendable {
         case .sync: return SyncRequest.self
         case .wait: return WaitRequest.self
         case .transcribe: return TranscribeRequest.self
+        case .diff: return DiffRequest.self
+        case .restore: return RestoreRequest.self
+        case .clips: return ClipsRequest.self
         }
     }
 
     /// True for operations that change the project.
     public var edits: Bool {
         switch self {
-        case .apply, .undo, .redo, .tighten, .join, .captions, .short, .cards, .media, .archive, .relink, .sync, .transcribe: return true
+        case .apply, .undo, .redo, .tighten, .join, .captions, .short, .cards, .media, .archive, .relink, .sync, .transcribe, .restore: return true
         default: return false
         }
     }

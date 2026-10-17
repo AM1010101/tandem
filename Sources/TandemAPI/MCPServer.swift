@@ -659,8 +659,46 @@ enum MCPTools {
         ),
         Tool(
             name: "history", title: "Edit history",
-            description: "What undo would undo (newest first, with who made each edit) and recent changes.",
+            description: "What undo would undo (newest first, with who made each edit), and the edit history, which lasts across restarts: each edit's revision, who made it, and where it was (times and tracks).",
             operation: .history, properties: ["limit": S.integer("How many entries. Default 20.")], readOnly: true, idempotent: true
+        ),
+        Tool(
+            name: "diff", title: "What changed since",
+            description: "What changed on the timeline since a revision, a backup or an export, clip by clip: added, removed, moved, trimmed, and changed settings (transform, gain, keyframes, effects...), with timeline times and track names. Since a revision, it's grouped by edit with who made it (the edit history lasts across restarts). An export is read from the .mp4.tandem snapshot beside it. Use it to find what Mike changed since you last looked, instead of diffing timeline JSON yourself. Pass json: true for each clip before and after.",
+            operation: .diff,
+            properties: [
+                "since": S.string("A revision (95), a .tandem file (a backup in .tandem/backups or an export's .mp4.tandem snapshot), or an export (exports/v3.mp4). Paths are absolute or relative to the project folder.")
+            ],
+            required: ["since"], readOnly: true, idempotent: true
+        ),
+        Tool(
+            name: "restore", title: "Restore clips",
+            description: "Puts clips back as they were in a revision, a backup or an export's snapshot: their place, trims, settings and keyframes. Name the clips, or give fromTime and toTime (and track) for every clip that was in that stretch; clips that weren't there come out. One undo step through the usual edit path. A dry run that returns the plan and the commands unless apply: true. Transitions, media and markers aren't restored.",
+            operation: .restore,
+            properties: [
+                "from": S.string("A revision (95), a .tandem file, or an export (exports/v3.mp4)."),
+                "clips": S.ids("Clip IDs to restore."),
+                "fromTime": time("With toTime: every clip there in this stretch (in that timeline's times)."),
+                "toTime": time("End of the stretch."),
+                "track": S.string("Keep the stretch to one track: an ID, a name or a label like V3."),
+                "apply": S.boolean("Restore them. Without it nothing changes."),
+                "label": S.string("Undo label."), "author": S.string("Who made the edit."),
+                "expectedRevision": S.integer("Refuse unless the project is at this revision.")
+            ],
+            required: ["from"], readOnly: false
+        ),
+        Tool(
+            name: "clips", title: "Find clips",
+            description: "Lists clips with their ID, track, start, end and what they play, filtered by track, time and media, so you can find IDs without reading the whole timeline.",
+            operation: .clips,
+            properties: [
+                "track": S.string("A track ID, name (Camera) or label (V2)."),
+                "from": time("Clips that end after this time."),
+                "to": time("Clips that start before this time."),
+                "media": S.string("A media ID, path or file name."),
+                "ids": S.boolean("Just the IDs, one a line.")
+            ],
+            readOnly: true, idempotent: true
         ),
         Tool(
             name: "validate", title: "Check the project",

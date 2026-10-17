@@ -660,6 +660,47 @@ public struct HistoryRequest: ServiceCall {
 public struct HistoryEntry: Codable, Equatable, Sendable {
     public var label: String
     public var author: String
+    /// Where the edit was on the timeline, and on which tracks ("V2 Camera").
+    public var start: Time?
+    public var end: Time?
+    public var tracks: [String]?
+
+    public init(label: String, author: String, place: EditPlace? = nil) {
+        self.label = label
+        self.author = author
+        start = place?.start
+        end = place?.end
+        tracks = place?.tracks
+    }
+}
+
+/// One change from the edit history (`.tandem/<name>.history.jsonl`),
+/// which lasts across restarts and from one CLI command to the next.
+public struct HistoryEdit: Codable, Equatable, Sendable {
+    public var revision: Int
+    /// `edit`, `undo`, `redo`, `reload`, or `opened` where the history
+    /// starts again (the project was changed by something that kept none).
+    public var kind: HistoryRecord.Kind
+    public var label: String
+    public var author: String
+    public var date: Date
+    public var start: Time?
+    public var end: Time?
+    public var tracks: [String]?
+    /// Counts, like "1 changed, 14 moved", and anything else it changed.
+    public var summary: String?
+
+    public init(_ record: HistoryRecord) {
+        revision = record.revision
+        kind = record.kind
+        label = record.label
+        author = record.author
+        date = record.date
+        start = record.place?.start
+        end = record.place?.end
+        tracks = record.place?.tracks
+        summary = record.summary
+    }
 }
 
 public struct HistoryResult: Codable, Sendable {
@@ -669,6 +710,8 @@ public struct HistoryResult: Codable, Sendable {
     public var redo: String?
     /// Recent changes seen by this server, oldest first.
     public var events: [ServiceEvent]
+    /// The edit history, newest first.
+    public var edits: [HistoryEdit]?
 }
 
 public struct ValidateRequest: ServiceCall {

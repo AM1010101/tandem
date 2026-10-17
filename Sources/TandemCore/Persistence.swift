@@ -64,7 +64,13 @@ public enum ProjectFile {
         supportFolder(for: projectURL).appendingPathComponent("\(projectURL.deletingPathExtension().lastPathComponent).review.json")
     }
 
-    /// Clears the journal, undo history and review log an earlier file of
+    /// `.tandem/<name>.history.jsonl`: every change to the project, with
+    /// who made it and where (see `EditHistoryLog`).
+    public static func historyURL(for projectURL: URL) -> URL {
+        supportFolder(for: projectURL).appendingPathComponent("\(projectURL.deletingPathExtension().lastPathComponent).history.jsonl")
+    }
+
+    /// Clears the journal, undo history, edit history and review log an earlier file of
     /// this name left behind, for a file that takes its place (a new
     /// project, a version saved over another, a fresh import). They
     /// describe the old file's timeline: replayed or undone onto the new
@@ -73,6 +79,7 @@ public enum ProjectFile {
         ProjectJournal.forProject(at: projectURL).truncate()
         try? FileManager.default.removeItem(at: undoHistoryURL(for: projectURL))
         try? FileManager.default.removeItem(at: reviewURL(for: projectURL))
+        try? FileManager.default.removeItem(at: historyURL(for: projectURL))
     }
 
     private static func backup(_ url: URL, keep: Int?, now: Date = Date()) throws {

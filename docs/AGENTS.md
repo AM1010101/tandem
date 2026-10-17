@@ -55,6 +55,9 @@ tandem short [--apply]             lay out a 9:16 short from the same edit
 tandem cards [--insert] [--no-sounds] [--apply]   a section card at every section marker
 tandem apply <batch.json | - | '<json>'>   [--dry-run] [--expect N] [--label L] [--key K]
 tandem undo [--count N] [--expect N]    tandem redo [--count N]    tandem history    tandem validate
+tandem clips [--track T] [--from T] [--to T] [--media M] [--ids]   find clips and their IDs
+tandem diff --since <revision | file.tandem | export.mp4>          what changed, clip by clip, by edit and who made it
+tandem restore --from <revision | file | export> (--clips <id,id> | --from-time T --to-time T [--track T]) [--apply]
 tandem check [--changed | --from T --to T] [--quick]   what Mike would catch: black, flickers, keys, dead air, bare page changes
 tandem frame <time> [-o out.png]   tandem clip <start> <end> [-o out.mp4] [--tracks Music,SFX] [--audio-only]
 tandem frames <time>... | --every S [--from T] [--to T]  [-o sheet.png] [--width 480]   one labelled contact sheet
@@ -220,7 +223,7 @@ args = ["mcp"]
 
 The tools mirror the operations: `status`, `timeline`, `media`,
 `transcript`, `transcribe`, `search`, `pauses`, `tighten`, `join`, `captions`, `short`, `cards`, `apply`, `undo`, `redo`,
-`history`, `validate`, `frame`, `frames`, `screenshot`, `clip`, `export`, `archive`,
+`history`, `diff`, `restore`, `clips`, `validate`, `frame`, `frames`, `screenshot`, `clip`, `export`, `archive`,
 `relink`, `loudness`, `watch`, `wait` and `effects`, plus the asset library's `assets_search`,
 `assets_show`, `assets_use`, `assets_credits`, `assets_generate` and `assets_providers`,
 and the saved segments' `segments_list`, `segments_save` and
@@ -322,6 +325,17 @@ the app closed, undo history for CLI and MCP edits is kept in
 `.tandem/<name>.undo.json`, so `tandem undo` works across commands. It's
 dropped as soon as the project is edited somewhere that doesn't keep it
 (the app has its own undo).
+
+**History.** Separately from undo, every change (an edit, an undo, a
+redo, Tandem finding new media) is appended to
+`.tandem/<name>.history.jsonl` by whoever has the project open: the app,
+`tandem serve` or a CLI command. It lasts across restarts, says who made
+each change and where on the timeline it was, and keeps enough to take
+the clips back to any revision since. `tandem history` lists it, and
+`tandem diff` and `tandem restore` use it (see [What changed, and putting
+it back](#what-changed-and-putting-it-back)). It starts when this version
+of Tandem first opens a project; edits made before that, or by an older
+Tandem, aren't in it.
 
 **IDs** are short strings with a prefix: `clip_`, `trk_`, `med_`, `tr_`,
 `fx_`, `mk_`, `lnk_`. They never change. When a clip is split the left part
@@ -512,6 +526,18 @@ clips in the range).
   clip still waiting for its transcript is never reported as a pause. A
   breath, click or "um" between two words (SpeechAnalyzer leaves ums out)
   is part of the pause, so `tighten` cuts it with the silence.
+- `clips` lists clips with their ID, track, start, end and what they
+  play, filtered by `--track` (an ID, a name like `Camera`, or a label
+  like `V2`), `--from`/`--to` (clips overlapping that stretch) and
+  `--media` (a media ID, path or file name). `--ids` prints just the IDs,
+  one a line. Use it to find clip IDs instead of reading the whole
+  timeline JSON:
+
+  ```
+  $ tandem clips --track B-roll --from 0:15 --to 0:30
+  1 clip (revision 7):
+    clip_brl1  V3 B-roll  00:20.000-00:25.000  servers.mp4 [00:01.000-00:06.000]
+  ```
 - `media` shows each file's analysis state. Transcripts, loudness, proxies
   and cutout mattes are made in the background; tools that need a
   transcript say which files don't have one yet. `tandem wait` waits for
@@ -607,6 +633,87 @@ clips in the range).
   installed, so 42 text clips are drawn in SF Pro instead. Install it with:
   tandem assets use fontsource:tilt-warp`.
 
+### What changed, and putting it back
+
+`tandem diff --since <revision>` (MCP `diff`) says what changed on the
+timeline since then, clip by clip, grouped by edit with who made it and
+where it was. Use it to find what Mike changed since your last round
+(the revision you handed back at, or the one `status` gave you then)
+instead of diffing `timeline --json` yourself:
+
+```
+$ tandem diff --since 95
+Since revision 95 (now revision 98): 1 added, 1 removed, 2 changed, 14 moved.
+r96  Trim  by user  00:12.000-00:12.500 on V2 Camera, A1 Voice
+    changed  clip_cam4  V2 Camera  00:12.000-00:20.000  take1-camera.mov: start trimmed +0.500s, rippled
+    changed  clip_voc4  A1 Voice  00:12.000-00:20.000  take1-camera.mov: start trimmed +0.500s, rippled
+    moved  14 clips by -0.500s on V3 B-roll, V2 Camera, V1 Screen, A1 Voice (from 00:20.500)
+r97  Swap the server shot  by user  00:40.000-00:44.000 on V3 B-roll
+    removed  clip_brl3  V3 B-roll  00:40.000-00:44.000  servers.mp4
+    added  clip_k2m9x8qa  V3 B-roll  00:40.000-00:43.000  racks.mp4
+r98  Quieter music  by user  00:00.000-05:00.000 on A2 Music
+    changed  clip_mus1  A2 Music  00:00.000-05:00.000  bed.m4a: gain -31 -> -35 dB
+```
+
+Each clip says what changed: added, removed, `moved`, a trimmed `start`
+or `end` (and `start trimmed ..., rippled` where a ripple trim took it
+off the start), `slipped`, a cut (`cut at ..., the rest is clip_...`),
+and settings like `scale`, `position`, `opacity`, `crop`, `layout`,
+`gain`, `fade in`, `level`, effects and keyframes. Clips that moved
+together by the same amount, riding a ripple, are one line. Edits that
+changed no clips (Tandem finding new media) are one line too. Media,
+markers, transitions and settings aren't compared. `--json` has each
+clip as it was and is (`before`, `after`).
+
+`--since` takes:
+
+- a revision. The edit history is walked back to it, so the changes come
+  grouped by edit. Past the start of the history, a backup in
+  `.tandem/backups` saved at that revision is used instead; otherwise it
+  says where the history starts and what to use.
+- a `.tandem` file: a backup, another version, or the snapshot every
+  export writes beside itself (`exports/v3.mp4.tandem`). A backup of this
+  project that the history reaches comes grouped by edit as well.
+- an export (`exports/v3.mp4`), read from the snapshot beside it.
+
+Paths are absolute or relative to the project folder (the CLI makes them
+absolute from where you run it).
+
+`tandem history` says where each edit was, so you can tell Mike's trims
+apart without diffing anything:
+
+```
+$ tandem history
+Revision 98.
+Undo, newest first:
+  Quieter music  (user)  00:00.000-05:00.000 on A2 Music
+  ...
+Edits, newest first (kept across restarts; tandem diff --since <revision> shows what each did to the clips):
+  r98  10:42:01  Quieter music  (user)  00:00.000-05:00.000 on A2 Music  1 changed
+  r97  10:41:30  Swap the server shot  (user)  00:40.000-00:44.000 on V3 B-roll  1 added, 1 removed
+  r56-r95  09:58:02-10:30:12  Found new media x40  (system)
+```
+
+`tandem restore --from <revision, file or export>` (MCP `restore`) puts
+clips back as they were there: where they were, their trims, settings and
+keyframes. Name them with `--clips clip_a,clip_b`, or take every clip that
+was between `--from-time` and `--to-time` (in that timeline's times), on
+`--track` if given. A clip that's gone is put back on its track, one
+that's changed is changed back, and one that wasn't there comes out. It's
+a dry run until `--apply`, and then one undo step, made through the same
+edit path as any batch (so it's checked, journaled and highlighted for
+Mike). Transitions, media and markers aren't restored. If something now
+sits where a clip goes back, the dry run says it wouldn't apply: restore
+that clip too, or move it first. To rebuild a round Mike rejected:
+
+```
+$ tandem restore --from "exports/v3.mp4" --from-time 2:00 --to-time 3:30 --track B-roll
+Restore 4 clips as they were in the export snapshot exports/v3.mp4.tandem (dry run, revision 120):
+  put back  clip_b7  V3 B-roll  02:04.000-02:09.500  config.mp4
+  ...
+Nothing changed yet. Run again with --apply (or apply: true) to restore them. Transitions, media and markers aren't restored.
+```
+
 ### JSON output
 
 A `--json` result is an object, and the project's `revision` is in it.
@@ -696,9 +803,40 @@ word count, 0 when there's no speech.
 `tandem history --json`:
 
 ```
-{"revision": 4, "undo": [{"label", "author"}],  // newest first
- "redo"?: "label", "events": [{"seq", "kind", "date", "revision"?, "label"?, "author"?}]}
+{"revision": 4, "undo": [{"label", "author", "start"?, "end"?, "tracks"?}],  // newest first
+ "redo"?: "label", "events": [{"seq", "kind", "date", "revision"?, "label"?, "author"?}],
+ "edits"?: [{"revision", "kind", "label", "author", "date", "start"?, "end"?, "tracks"?, "summary"?}]}  // newest first
 ```
+
+`events` are the changes this server saw; `edits` is the edit history,
+which lasts across restarts. `kind` is `edit`, `undo`, `redo`, `reload`
+or `opened` (where the history starts again). `tracks` are labels like
+`"V2 Camera"`.
+
+`tandem diff --json`:
+
+```
+{"revision": 98, "since": "revision 95", "sinceRevision"?: 95,
+ "changes": [Change],                            // every clip that's different now
+ "edits"?: [{"revision", "kind", "label", "author", "date", "start"?, "end"?, "tracks"?, "changes": [Change]}]}
+
+Change: {"id", "kind": "added" | "removed" | "changed", "track", "trackID", "start", "end", "content",
+         "details": ["start +0.500s", ...], "wasTrack"?, "wasStart"?, "wasEnd"?, "shift"?, "before"?: Clip, "after"?: Clip}
+```
+
+`edits` is there when the history reaches `since`. `shift` is set on a
+clip that only moved along its track.
+
+`tandem clips --json`:
+
+```
+{"revision": 7, "clips": [{"id", "track", "trackID", "start", "end", "duration", "content", "mediaID"?, "name"?, "enabled"}]}
+```
+
+`tandem restore --json` gives `{"revision", "from", "items": [{"id",
+"action": "putBack" | "changeBack" | "remove" | "unchanged", "track",
+"start", "end", "content", "details"}], "commands", "applied"?,
+"problem"?}`.
 
 `tandem apply --json` gives `{"revision", "label", "author", "createdIDs",
 "added", "changed", "removed", "duration", "warnings", "dryRun",
@@ -2204,6 +2342,9 @@ still when it's beside it. It's one undo step.
 
 - Read before you write: take the revision from `timeline` or `status` and
   pass it as `expectedRevision`. On `staleRevision`, read again.
+- Note the revision you hand back at. Next round, `tandem diff --since
+  <it>` says what Mike changed in between, edit by edit, and `tandem
+  restore` brings back anything he took out that he wants again.
 - Try a big batch with `dryRun` first.
 - Give retried batches an `idempotencyKey`.
 - Undo with `expectedRevision` so you only undo your own edit, and with
@@ -2243,6 +2384,9 @@ still when it's beside it. It's one undo step.
 | apply | `tandem apply <file, - or '<json>'>` | `POST /v1/apply <batch>` | `apply` |
 | undo, redo | `tandem undo [--count N]`, `tandem redo [--count N]` | `POST /v1/undo`, `/v1/redo` `{"count", "expectedRevision"}` | `undo`, `redo` |
 | history | `tandem history` | `POST /v1/history` | `history` |
+| diff | `tandem diff --since <revision, file or export>` | `POST /v1/diff {"since"}` | `diff` |
+| restore | `tandem restore --from <ref> (--clips <ids> \| --from-time --to-time [--track]) [--apply]` | `POST /v1/restore {"from", "clips", "fromTime", "toTime", "track", "apply"}` | `restore` |
+| clips | `tandem clips [--track] [--from] [--to] [--media] [--ids]` | `POST /v1/clips {"track", "from", "to", "media", "ids"}` | `clips` |
 | validate | `tandem validate` | `POST /v1/validate` | `validate` |
 | check | `tandem check [--changed]` | `POST /v1/check {"from", "to", "changed", "quick"}` | `check` |
 | frame | `tandem frame <time> -o out.png` | `POST /v1/frame {"time", "output"}` | `frame` (image) |
@@ -2313,6 +2457,11 @@ when it's open).
   HEVC with ffmpeg (frames and exports wait for it; `tandem media` shows
   `converted`). If the warning says ffmpeg is missing, Mike installs it with
   `brew install ffmpeg`.
+- **"Revision N is older than the edit history"**: the history starts
+  when this version of Tandem first opened the project (or where it was
+  last edited by something that kept none), and there's no backup saved
+  at that revision. Diff against a backup file in `.tandem/backups` or an
+  export (`--since "exports/<name>.mp4"`) instead.
 - **"Nothing to undo" after editing with the app closed**: headless undo
   history only lasts while nobody else edits the project. `tandem history`
   shows what can be undone.

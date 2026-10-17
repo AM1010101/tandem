@@ -32,7 +32,9 @@ rounds up.
 
 1. **Read.** `tandem status`, `tandem timeline --summary`, then
    `tandem timeline --from 1:20 --to 1:40` for detail. `tandem transcript`
-   and `tandem search "<phrase>"` find what's said where. Tandem
+   and `tandem search "<phrase>"` find what's said where. `tandem clips
+   --track B-roll --from 1:20 --to 1:40` (or `--media <file>`, `--ids`)
+   gives clip IDs; don't dump `timeline --json` to look them up. Tandem
    transcribes camera takes and the voice by itself; for anything else with
    sound (generated B-roll checked for made-up speech, a sound effect or
    music take), `tandem transcribe <id or path>` makes one on-device and,
@@ -118,6 +120,23 @@ Plan the rounds so his watches count: get the B-roll, sound effects and
 music in before his big watch. Then he watches the whole video about twice,
 instead of three comment rounds plus separate listens for the sound effects
 and the music (Build Your Own Convex retro).
+
+## What Mike changed
+
+Note the revision you hand back at (`tandem status --revision`). Next
+round, `tandem diff --since <that revision>` lists what changed since,
+clip by clip, grouped by edit with who made it (Mike's edits are by
+`user`) and the times and tracks of each. `tandem history` says where
+each edit was too, and both last across app restarts. `--since` also
+takes an export (`exports/v3.mp4`, read from the `.mp4.tandem` snapshot
+beside it) or a backup in `.tandem/backups`. Never diff `timeline --json`
+against snapshots in Python.
+
+To bring back clips Mike took out or an earlier round he wants again,
+`tandem restore --from <revision or export> --clips <ids>` (or
+`--from-time 2:00 --to-time 3:30 --track B-roll`). It's a dry run until
+`--apply`, then one labelled undo step. It restores clips only, not
+transitions, media or markers.
 
 ## How Mike likes a take cut
 

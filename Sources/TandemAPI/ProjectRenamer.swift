@@ -31,7 +31,7 @@ public enum ProjectRenamer {
 
         if target.path != url.path {
             try move(url, to: target)
-            let companions: [(URL) -> URL] = [ProjectFile.journalURL(for:), ProjectFile.undoHistoryURL(for:), ProjectFile.reviewURL(for:), iconURL(for:)]
+            let companions: [(URL) -> URL] = [ProjectFile.journalURL(for:), ProjectFile.undoHistoryURL(for:), ProjectFile.reviewURL(for:), ProjectFile.historyURL(for:), iconURL(for:)]
             for companion in companions {
                 let from = companion(url)
                 let to = companion(target)

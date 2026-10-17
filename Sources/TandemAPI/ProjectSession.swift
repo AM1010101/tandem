@@ -39,6 +39,9 @@ public final class ProjectSession: @unchecked Sendable {
     /// Agent edits Mike hasn't reviewed yet, kept as edits commit here
     /// whoever has the project open, so the app finds the CLI's too.
     public let review: ReviewRecorder
+    /// Every change, with who made it and where, kept in
+    /// `.tandem/<name>.history.jsonl` across restarts.
+    public let history: HistoryRecorder
     public let owner: Owner
     public private(set) var savedRevision: Int
     /// Set when the journal had edits the last save didn't include.
@@ -59,7 +62,10 @@ public final class ProjectSession: @unchecked Sendable {
     /// full disk, a folder back where it was) is enough.
     public var autosaveRetryDelay: TimeInterval = 5
 
-    private init(fileURL: URL, project: Project, revision: Int, owner: Owner, recovered: Bool, journal: ProjectJournal, lock: LockHandle) {
+    private init(
+        fileURL: URL, project: Project, revision: Int, owner: Owner, recovered: Bool, journal: ProjectJournal, lock: LockHandle,
+        replays: [(entry: ProjectJournal.Entry, before: Project, after: Project)]
+    ) {
         self.projectFolder = FolderAnchor(fileURL.deletingLastPathComponent())
         self.fileName = fileURL.lastPathComponent
         self.folder = ProjectFolder(projectFile: fileURL)
@@ -67,6 +73,7 @@ public final class ProjectSession: @unchecked Sendable {
         self.lockHandle = lock
         self.coordinator = ProjectCoordinator(project: project, revision: revision, journal: journal)
         self.review = ReviewRecorder(coordinator: coordinator, url: ProjectFile.reviewURL(for: fileURL))
+        self.history = HistoryRecorder(coordinator: coordinator, url: ProjectFile.historyURL(for: fileURL), replayed: replays)
         self.analysis = MediaAnalysis(folder: folder)
         self.owner = owner
         self.savedRevision = recovered ? -1 : revision
@@ -93,7 +100,7 @@ public final class ProjectSession: @unchecked Sendable {
                 start = replayed
                 recovered = true
             }
-            let session = ProjectSession(fileURL: url, project: start.0, revision: start.1, owner: owner, recovered: recovered, journal: journal, lock: lock)
+            let session = ProjectSession(fileURL: url, project: start.0, revision: start.1, owner: owner, recovered: recovered, journal: journal, lock: lock, replays: replays)
             // An agent's edits a crash left in the journal still want review.
             session.review.catchUp(replays)
             session.startAutosave()
@@ -184,6 +191,7 @@ public final class ProjectSession: @unchecked Sendable {
             failure = error
         }
         review.close()
+        history.close()
         analysis.cancelAll()
         lockHandle.release()
         return failure

@@ -20,6 +20,8 @@ final class HeadlessHistory: @unchecked Sendable {
         var date: Date
         /// The project to go back to.
         var project: Project
+        /// Where the edit was.
+        var place: EditPlace?
     }
 
     struct Idempotent: Codable {
@@ -81,9 +83,9 @@ final class HeadlessHistory: @unchecked Sendable {
     }
 
     /// Records a committed headless edit.
-    func recordEdit(label: String, author: String, before: Project, beforeRevision: Int, afterRevision: Int) {
+    func recordEdit(label: String, author: String, before: Project, after: Project? = nil, beforeRevision: Int, afterRevision: Int) {
         var state = current(at: beforeRevision)
-        state.undo.append(Entry(label: label, author: author, date: Date(), project: before))
+        state.undo.append(Entry(label: label, author: author, date: Date(), project: before, place: after.flatMap { EditPlace.between(before, $0) }))
         if state.undo.count > maxEntries { state.undo.removeFirst(state.undo.count - maxEntries) }
         state.redo.removeAll()
         state.revision = afterRevision
@@ -109,7 +111,7 @@ final class HeadlessHistory: @unchecked Sendable {
     func didUndo(at revision: Int, replaced: Project, newRevision: Int) {
         var state = current(at: revision)
         guard let entry = state.undo.popLast() else { return }
-        state.redo.append(Entry(label: entry.label, author: entry.author, date: Date(), project: replaced))
+        state.redo.append(Entry(label: entry.label, author: entry.author, date: Date(), project: replaced, place: entry.place))
         state.revision = newRevision
         save(state)
     }
@@ -117,7 +119,7 @@ final class HeadlessHistory: @unchecked Sendable {
     func didRedo(at revision: Int, replaced: Project, newRevision: Int) {
         var state = current(at: revision)
         guard let entry = state.redo.popLast() else { return }
-        state.undo.append(Entry(label: entry.label, author: entry.author, date: Date(), project: replaced))
+        state.undo.append(Entry(label: entry.label, author: entry.author, date: Date(), project: replaced, place: entry.place))
         state.revision = newRevision
         save(state)
     }

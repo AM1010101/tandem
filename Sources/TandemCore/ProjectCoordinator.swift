@@ -167,8 +167,10 @@ public final class ProjectCoordinator: @unchecked Sendable {
     }
 
     /// Replaces the whole project, for example after the file changed on
-    /// disk while the app was closed. Clears undo history.
-    public func reload(_ project: Project) {
+    /// disk while the app was closed. Clears undo history. `label` and
+    /// `author` say what it was for the edit history, when it's really an
+    /// undo or redo of a headless edit.
+    public func reload(_ project: Project, label: String = "Reload", author: String = EditAuthor.system) {
         queue.sync {
             let replaced = _project
             _project = project
@@ -178,8 +180,14 @@ public final class ProjectCoordinator: @unchecked Sendable {
             // Journaled like an undo: edits after this are relative to the
             // new project, so a replay after a crash has to start from it.
             journal?.appendSnapshot(project: project, revision: _revision, reason: "reload")
-            notify(ChangeEvent(kind: .reload, revision: _revision, label: "Reload", author: "system", before: replaced, after: project))
+            notify(ChangeEvent(kind: .reload, revision: _revision, label: label, author: author, before: replaced, after: project))
         }
+    }
+
+    /// What undo would undo, newest first, with the project either side of
+    /// each step, so `history` can say where each edit was.
+    public func undoSteps(limit: Int = 50) -> [(label: String, author: String, before: Project, after: Project)] {
+        queue.sync { undoStack.suffix(limit).reversed().map { ($0.label, $0.author, $0.before, $0.after) } }
     }
 
     /// Recent undo labels, newest first, for the activity feed.

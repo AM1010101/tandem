@@ -257,10 +257,13 @@ extension HistoryResult: ReadableResult {
             lines.append("Nothing to undo.")
         } else {
             lines.append("Undo, newest first:")
-            for entry in undo { lines.append("  \(entry.label)  (\(entry.author))") }
+            for entry in undo { lines.append("  \(entry.label)  (\(entry.author))\(Self.place(entry.start, entry.end, entry.tracks))") }
         }
         if let redo { lines.append("Redo: \(redo)") }
-        if !events.isEmpty {
+        if let edits, !edits.isEmpty {
+            lines.append("Edits, newest first (kept across restarts; tandem diff --since <revision> shows what each did to the clips):")
+            lines += Self.editLines(edits)
+        } else if !events.isEmpty {
             lines.append("Recent changes:")
             let formatter = DateFormatter()
             formatter.dateFormat = "HH:mm:ss"
@@ -269,6 +272,56 @@ extension HistoryResult: ReadableResult {
             }
         }
         return lines.joined(separator: "\n")
+    }
+
+    static func place(_ start: Time?, _ end: Time?, _ tracks: [String]?) -> String {
+        guard let start, let end else { return "" }
+        return "  " + EditPlace(start: start, end: end, tracks: tracks ?? []).description
+    }
+
+    /// One line per edit, with a run of Tandem finding new media (which
+    /// can be dozens) on one line.
+    static func editLines(_ edits: [HistoryEdit]) -> [String] {
+        let time = DateFormatter()
+        time.dateFormat = "HH:mm:ss"
+        let day = DateFormatter()
+        day.dateFormat = "yyyy-MM-dd HH:mm"
+        func when(_ date: Date) -> String {
+            Calendar.current.isDateInToday(date) ? time.string(from: date) : day.string(from: date)
+        }
+        var lines: [String] = []
+        var index = 0
+        while index < edits.count {
+            let edit = edits[index]
+            if edit.kind == .opened {
+                let before = edit.revision > 0 ? " (edits before it weren't recorded, or were made somewhere that kept no history)" : ""
+                lines.append("  r\(edit.revision)  \(when(edit.date))  the history starts here\(before)")
+                index += 1
+                continue
+            }
+            var run = index + 1
+            while run < edits.count, edits[run].label == edit.label, edits[run].author == edit.author, edits[run].kind == edit.kind,
+                  edit.label == EditBatch.mediaScanLabel {
+                run += 1
+            }
+            if run - index > 1 {
+                let oldest = edits[run - 1]
+                lines.append("  r\(oldest.revision)-r\(edit.revision)  \(when(oldest.date))-\(when(edit.date))  \(edit.label) x\(run - index)  (\(edit.author))")
+                index = run
+                continue
+            }
+            var line = "  r\(edit.revision)  \(when(edit.date))  "
+            switch edit.kind {
+            case .undo: line += "Undo \(edit.label)"
+            case .redo: line += "Redo \(edit.label)"
+            default: line += edit.label
+            }
+            line += "  (\(edit.author))" + place(edit.start, edit.end, edit.tracks)
+            if let summary = edit.summary { line += "  " + summary }
+            lines.append(line)
+            index += 1
+        }
+        return lines
     }
 }
 

@@ -197,7 +197,7 @@ final class CLITests: XCTestCase {
         XCTAssertTrue(dry.stdout.contains("it would work"), dry.stdout)
 
         let history = try tandem("history", in: folder.url)
-        XCTAssertTrue(history.stdout.contains("Cut at 00:10.000  (claude)\n  Place the take  (cli)"), history.stdout)
+        XCTAssertTrue(history.stdout.contains("Cut at 00:10.000  (claude)  at 00:10.000 on V2 Camera, V1 Screen, A1 Voice\n  Place the take  (cli)"), history.stdout)
 
         let undo = try tandem("undo", "--expect", "2", in: folder.url)
         XCTAssertEqual(undo.status, 0, undo.stderr)
@@ -378,6 +378,40 @@ final class CLITests: XCTestCase {
         let stopped = await exited.value(timeout: 20)
         XCTAssertTrue(stopped, "exits when stdin closes")
         XCTAssertEqual(mcp.terminationStatus, 0)
+    }
+
+    /// Finding what changed, putting it back, and finding clip IDs, the
+    /// way agents do between Mike's rounds.
+    func testDiffRestoreHistoryAndClips() throws {
+        let folder = TempFolder()
+        _ = try APIFixture.write(to: folder.url)
+        let lift = try tandem("apply", #"{"removeClips": {"clipIDs": ["clip_brl1"]}}"#, "--label", "Lift the B-roll", in: folder.url)
+        XCTAssertEqual(lift.status, 0, lift.stderr)
+
+        let history = try tandem("history", in: folder.url)
+        XCTAssertTrue(history.stdout.contains("Lift the B-roll  (cli)  00:20.000-00:25.000 on V3 B-roll"), history.stdout)
+
+        let diff = try tandem("diff", "--since", "1", in: folder.url)
+        XCTAssertEqual(diff.status, 0, diff.stderr)
+        XCTAssertTrue(diff.stdout.contains("r2  Lift the B-roll  by cli"), diff.stdout)
+        XCTAssertTrue(diff.stdout.contains("removed  clip_brl1  V3 B-roll  00:20.000-00:25.000  servers.mp4"), diff.stdout)
+        let json = try tandem("diff", "--since", "1", "--json", in: folder.url)
+        let decoded = try ServiceJSON.decoder().decode(DiffResult.self, from: Data(json.stdout.utf8))
+        XCTAssertEqual(decoded.changes.first?.before?.id, "clip_brl1")
+
+        let dry = try tandem("restore", "--from", "1", "--clips", "clip_brl1", in: folder.url)
+        XCTAssertEqual(dry.status, 0, dry.stderr)
+        XCTAssertTrue(dry.stdout.contains("put back  clip_brl1"), dry.stdout)
+        let applied = try tandem("restore", "--from", "1", "--clips", "clip_brl1", "--apply", in: folder.url)
+        XCTAssertTrue(applied.stdout.contains("Applied as revision 3"), applied.stdout)
+
+        let ids = try tandem("clips", "--track", "B-roll", "--ids", in: folder.url)
+        XCTAssertEqual(ids.stdout, "clip_brl1\n")
+        let listed = try tandem("clips", "--media", "bed.m4a", in: folder.url)
+        XCTAssertTrue(listed.stdout.contains("clip_mus1"), listed.stdout)
+
+        XCTAssertEqual(try tandem("diff", in: folder.url).status, 2)
+        XCTAssertEqual(try tandem("restore", "--clips", "clip_brl1", in: folder.url).status, 2)
     }
 }
 

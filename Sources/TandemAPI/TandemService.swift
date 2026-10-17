@@ -469,7 +469,7 @@ public final class TandemService: @unchecked Sendable {
         )
         if !repeated {
             if mode == .headless {
-                history.recordEdit(label: batch.label, author: batch.author, before: before, beforeRevision: beforeRevision, afterRevision: commit.revision)
+                history.recordEdit(label: batch.label, author: batch.author, before: before, after: after, beforeRevision: beforeRevision, afterRevision: commit.revision)
             }
             if let key = batch.idempotencyKey { history.remember(key: key, result: result) }
         }
@@ -568,7 +568,7 @@ public final class TandemService: @unchecked Sendable {
         stateLock.lock()
         pendingRestore = (kind, entry.label, entry.author)
         stateLock.unlock()
-        coordinator.reload(entry.project)
+        coordinator.reload(entry.project, label: "\(kind == .undo ? "Undo" : "Redo") \(entry.label)", author: entry.author)
         let newRevision = coordinator.revision
         if kind == .undo {
             history.didUndo(at: revision, replaced: current, newRevision: newRevision)
@@ -583,14 +583,15 @@ public final class TandemService: @unchecked Sendable {
 
     public func history(limit: Int) -> HistoryResult {
         let revision = coordinator.revision
-        var undo = coordinator.history(limit: limit).map { HistoryEntry(label: $0.label, author: $0.author) }
+        var undo = coordinator.undoSteps(limit: limit).map { HistoryEntry(label: $0.label, author: $0.author, place: EditPlace.between($0.before, $0.after)) }
         var redo = coordinator.redoLabel
         if undo.isEmpty && redo == nil {
-            undo = history.undoEntries(at: revision).prefix(limit).map { HistoryEntry(label: $0.label, author: $0.author) }
+            undo = history.undoEntries(at: revision).prefix(limit).map { HistoryEntry(label: $0.label, author: $0.author, place: $0.place) }
             redo = history.peekRedo(at: revision)?.label
         }
         let changes = events.recentChanges().suffix(limit)
-        return HistoryResult(revision: revision, undo: undo, redo: redo, events: Array(changes))
+        let edits = session.history.records().suffix(limit).reversed().map(HistoryEdit.init)
+        return HistoryResult(revision: revision, undo: undo, redo: redo, events: Array(changes), edits: edits.isEmpty ? nil : edits)
     }
 
     public func validate() -> ValidateResult {

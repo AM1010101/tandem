@@ -148,6 +148,31 @@ struct CLI {
         case "history":
             try args.expectPositionals(atMost: 0, command: name)
             return show(try await client().call(HistoryRequest(limit: try args.integer("limit"))), json: json)
+        case "diff":
+            try args.expectPositionals(atMost: 1, command: name)
+            guard let since = args.options["since"] ?? args.positionals.first else {
+                throw UsageError(message: "`tandem diff` needs --since: a revision, a .tandem file or an export, like tandem diff --since 95.")
+            }
+            return show(try await client().call(DiffRequest(since: reference(since))), json: json)
+        case "restore":
+            try args.expectPositionals(atMost: 0, command: name)
+            guard let from = args.options["from"] else {
+                throw UsageError(message: "`tandem restore` needs --from: a revision, a .tandem file or an export, like tandem restore --from 95 --clips clip_a,clip_b.")
+            }
+            let clips = args.values("clips").flatMap { $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }.filter { !$0.isEmpty }
+            let request = RestoreRequest(
+                from: reference(from), clips: clips.isEmpty ? nil : clips,
+                fromTime: try time(args, "from-time"), toTime: try time(args, "to-time"), track: args.options["track"],
+                apply: args.has("apply") ? true : nil, label: args.options["label"], expectedRevision: try args.integer("expect")
+            )
+            return show(try await client().call(request), json: json)
+        case "clips":
+            try args.expectPositionals(atMost: 0, command: name)
+            let request = ClipsRequest(
+                track: args.options["track"], from: try time(args, "from"), to: try time(args, "to"),
+                media: args.options["media"], ids: args.has("ids") ? true : nil
+            )
+            return show(try await client().call(request), json: json)
         case "validate":
             try args.expectPositionals(atMost: 0, command: name)
             let result = try await client().call(ValidateRequest())
@@ -429,6 +454,12 @@ struct CLI {
 
     private func author(_ args: Arguments) -> String {
         args.options["author"] ?? environment["TANDEM_AUTHOR"] ?? "cli"
+    }
+
+    /// A revision stays as it is; a path is made absolute from here.
+    private func reference(_ text: String) -> String {
+        let digits = text.hasPrefix("r") ? String(text.dropFirst()) : text
+        return Int(digits) != nil ? text : absolute(text)
     }
 
     private func absolute(_ path: String) -> String {

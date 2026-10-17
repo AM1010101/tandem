@@ -713,12 +713,14 @@ enum MCPTools {
         ),
         Tool(
             name: "clip", title: "Render a review clip",
-            description: "Renders part of the timeline to an MP4 (720p review preset by default) so the edit can be watched. Returns the file path.",
+            description: "Renders part of the timeline to an MP4 (720p review preset by default) so the edit can be watched. tracks plays only those audio tracks (solo or stems), at the timeline's own level rather than mastered; audioOnly (or an output ending .m4a or .wav) writes the sound alone. Returns the file path.",
             operation: .clip,
             properties: [
                 "start": time("Timeline start."), "end": time("Timeline end."),
-                "output": S.string("Where to write the MP4. Default: exports/review <start>-<end>.mp4."),
-                "preset": S.string("Export preset: review (default), youtube1080, youtube4k, short.")
+                "output": S.string("Where to write it. Default: exports/review <start>-<end>.mp4 (with the track names, and .m4a for audioOnly)."),
+                "preset": S.string("Export preset: review (default), youtube1080, youtube4k, short."),
+                "tracks": S.array(S.string(), "Only these audio tracks play, by name or ID, like [\"Music\"]."),
+                "audioOnly": S.boolean("Write the sound alone, as a .m4a.")
             ],
             required: ["start", "end"], readOnly: false
         ),
@@ -759,8 +761,17 @@ enum MCPTools {
         ),
         Tool(
             name: "loudness", title: "Loudness",
-            description: "Measured loudness of each file with sound, the project's speech level (-20 LUFS unless changed) and master target (-14 LUFS), the gain each levelled clip gets, and how many speech clips aren't at the speech level (apply normalizeSpeech to level them).",
-            operation: .loudness, properties: ["mediaID": S.string("Just this file.")], readOnly: true, idempotent: true
+            description: "Measured loudness of each file with sound, the project's speech level (-20 LUFS unless changed) and master target (-14 LUFS), the gain each levelled clip gets, and how many speech clips aren't at the speech level (apply normalizeSpeech to level them). With from, to, step or tracks it renders the mix instead and gives its loudness over time (momentary and short-term LUFS and peak at each step, as the timeline plays it, before export's master gain): use it for music swells, fades and sound effects against the voice. gains also checks each track's render against its gain lane and says where a gain change lands late or not at all.",
+            operation: .loudness,
+            properties: [
+                "mediaID": S.string("Just this file."),
+                "from": time("Measure the mix from here. Default 0."),
+                "to": time("...to here. Default: the end."),
+                "step": time("A row every this many seconds (at least 0.1). Default: about 50 rows."),
+                "tracks": S.array(S.string(), "Only these audio tracks play, by name or ID, like [\"Music\", \"SFX\"]."),
+                "gains": S.boolean("Also check each track's render follows its gain lane (the tracks given, or every one that plays).")
+            ],
+            readOnly: true, idempotent: true
         ),
         Tool(
             name: "watch", title: "Wait for a change",
@@ -797,6 +808,13 @@ enum MCPTools {
                 "label": S.string("Undo label.")
             ],
             required: ["id"], readOnly: false, openWorld: true
+        ),
+        Tool(
+            name: "assets_show", title: "Show an asset",
+            description: "What the library knows about one asset, without downloading anything: its name, kind, provider (and model), the prompt a generated one was made from, duration, loudness, licence and credit, and the file it plays from. Use it instead of reading meta.json.",
+            asset: .show,
+            properties: ["id": S.string("An asset ID, like elevenlabs:music_2p839smz.")],
+            required: ["id"], readOnly: true, idempotent: true
         ),
         Tool(
             name: "assets_credits", title: "Description credits",

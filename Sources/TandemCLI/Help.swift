@@ -80,7 +80,13 @@ enum Help {
                     The default file is frames-<first>-<last>.png in this folder, with dots for the colons. --format renders an alternate format, like portrait.
                     """),
         CommandHelp(name: "screenshot", usage: "tandem screenshot [-o out.png]", summary: "Save a picture of the app window (needs the app to have the project open).", options: ["output"]),
-        CommandHelp(name: "clip", usage: "tandem clip <start> <end> [-o out.mp4] [--preset review]", summary: "Render part of the timeline to a review MP4.", options: ["output", "preset"]),
+        CommandHelp(name: "clip", usage: "tandem clip <start> <end> [-o out.mp4] [--preset review] [--tracks <name,...>] [--audio-only]", summary: "Render part of the timeline to a review MP4, or only some audio tracks, or the sound alone.", options: ["output", "preset", "tracks", "audio-only"],
+                    details: """
+                    The default file is exports/review <start>-<end>.mp4 in the project folder. The mix is mastered to the project's loudness target over the clip, as an export is.
+                    --tracks Music,SFX plays only those audio tracks (names or IDs), at the timeline's own level rather than mastered, so a stem sounds as it sits in the mix. Video still renders; the track names go in the file name.
+                    --audio-only writes the sound alone as a .m4a; -o something.wav writes 24-bit PCM instead (a stem over 0 dBFS clips there).
+                    To measure rather than listen, `tandem loudness --from <t> --to <t>` takes the same --tracks.
+                    """),
         CommandHelp(name: "export", usage: "tandem export [--preset <name>] [-o out.mp4] [--from <time>] [--to <time>] [--format <id>]", summary: "Export the video, loudness matched (presets: youtube4k, youtube1080, review, short).", options: ["output", "preset", "from", "to", "format"],
                     details: """
                     A preset sets the quality: codec, bitrate and resolution (pixels on the frame's short side). The frame keeps the canvas's shape, so youtube1080 is 1920x1080 for a landscape project, 1080x1920 for a 9:16 one and 1080x1080 for a square.
@@ -101,7 +107,12 @@ enum Help {
                     --dry-run lists what would be copied and the sizes.
                     """),
         CommandHelp(name: "relink", usage: "tandem relink [--search <folder>]... [--dry-run]", summary: "Find missing media files by name (and content) in the project folder, any --search folders and then the shared library, and point the project at them.", options: ["search", "dry-run", "label"]),
-        CommandHelp(name: "loudness", usage: "tandem loudness [<media id>]", summary: "Measured loudness per file and the levelling each clip gets.", options: []),
+        CommandHelp(name: "loudness", usage: "tandem loudness [<media id>] | --from <time> --to <time> [--step <s>] [--tracks <name,...>] [--gains]", summary: "Measured loudness per file and the levelling each clip gets, or the rendered mix's loudness over time.", options: ["from", "to", "step", "tracks", "gains"],
+                    details: """
+                    Without options it lists each file's measured loudness and how each track's clips are levelled.
+                    With --from, --to, --step or --tracks it renders the mix the way export does and prints its loudness every step (about 50 rows unless --step says, at least 0.1 s): momentary (the 400 ms centred on the time), short-term (the 3 s) and the highest sample, plus the range's integrated loudness and true peak and a sparkline. Levels are as the timeline plays them, before export's master gain, which moves everything by the same amount. Use it for music swells and fades, a sound effect against the voice, or a bed under speech, instead of ffmpeg on a review clip. --tracks Music,SFX measures only those audio tracks; --json gives every point.
+                    --gains also renders each track (the --tracks ones, or every one that plays there) as it is and with its gain flattened, and compares the difference with its gain lane 10 ms at a time: the clip's levelling, gain, gain keyframes and fades. It says if a change lands late (and by how much) or not at all. It checks the render does what the lanes say, not that the lanes are right.
+                    """),
         CommandHelp(name: "watch", usage: "tandem watch [--once] [--timeout <seconds>]", summary: "Print changes as they happen (or wait for the next one with --once).", options: ["once", "timeout"]),
         CommandHelp(name: "effects", usage: "tandem effects [<type>]", summary: "Effects with their parameters, transitions, layouts and animatable parameters.", options: []),
         CommandHelp(name: "schema", usage: "tandem schema", summary: "Print the JSON schema for edit batches.", options: []),
@@ -112,13 +123,14 @@ enum Help {
                     Speech (the camera's sound, the Voice tracks) is normalised to the project's speech level, -20 LUFS, with no gain. --keep-levels keeps Filmora's own levels instead: Auto Normalization becomes normalise to -24 LUFS plus the clip's gain.
                     Built-in EDL recipes: decision-models. Exit code 1 if anything failed to import.
                     """),
-        CommandHelp(name: "assets", usage: "tandem assets providers | search \"<text>\" [--kind sfx|music|sticker|...] [--provider <id>] [--online] [--limit <n>] | fetch <id> | use <id> [--at <time>] [--duration <time>] [--anchor bottom|bottomLeft|bottomRight|top|topLeft|topRight|centre|lowerThird] [--pop] | credits [--optional] | generate sfx|music \"<prompt>\" [--duration <s>] [--variations <n>] | install-starter",
+        CommandHelp(name: "assets", usage: "tandem assets providers | search \"<text>\" [--kind sfx|music|sticker|...] [--provider <id>] [--online] [--limit <n>] | fetch <id> | show <id> | use <id> [--at <time>] [--duration <time>] [--anchor bottom|bottomLeft|bottomRight|top|topLeft|topRight|centre|lowerThird] [--pop] | credits [--optional] | generate sfx|music \"<prompt>\" [--duration <s>] [--variations <n>] | install-starter",
                     summary: "The asset library: find, fetch, generate and use music, sound effects, stickers, icons and logos, and build the description credits.",
                     options: ["kind", "provider", "online", "limit", "at", "duration", "anchor", "pop", "label", "optional", "variations"],
                     details: """
                     providers        which sources work now, and what to fix (a key, a permission)
                     search           the library's catalogue; --online asks the providers too
                     fetch <id>       download and normalise an asset
+                    show <id>        what the library knows about it: prompt and model, provider, duration, loudness, licence and credit, and its file (instead of reading meta.json)
                     use <id>         copy it into the project and add it to the media; --at places it on its track. Shared library assets (shared:...) are used where they are, not copied. Stickers sit at the bottom of the frame (at most 40% of its width, 30% of its height); --anchor puts a picture at another edge or corner, and --pop pops it in and out
                     credits          the credits block for the video description, and anything to sort out first
                     generate         make a sound effect or music cue with ElevenLabs (paid, one request per take)

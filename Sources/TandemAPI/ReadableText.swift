@@ -299,7 +299,9 @@ extension ImageResult: ReadableResult {
 extension ExportOutcome: ReadableResult {
     public var readableText: String {
         var used = preset
-        if let width, let height, let codec, let videoBitrate {
+        if soundOnly {
+            used += ", sound only"
+        } else if let width, let height, let codec, let videoBitrate {
             used += ": \(width)x\(height) \(codec.displayName) at \(ExportPlan.megabits(videoBitrate))"
             if let format { used += ", \(format) format" }
         }
@@ -314,12 +316,20 @@ extension ExportOutcome: ReadableResult {
             }
             text += "."
         }
+        if let tracks {
+            text += " Only \(SoundText.list(tracks)) \(tracks.count == 1 ? "plays" : "play"), at the timeline's own level (not mastered)."
+        }
         return ([text] + warnings.map { "Warning: \($0)" }).joined(separator: "\n")
     }
 }
 
 extension LoudnessResult: ReadableResult {
     public var readableText: String {
+        if let curve {
+            var lines = SoundText.curve(curve, tracks: tracks)
+            if let gains { lines += SoundText.gains(gains, start: curve.start, end: curve.end) }
+            return lines.joined(separator: "\n")
+        }
         var lines = [String(
             format: "Speech is levelled to %.1f LUFS; export brings the mix to %.1f LUFS with true peaks under %.1f dBTP.",
             speechLoudness, target, truePeakCeiling

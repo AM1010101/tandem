@@ -13,6 +13,7 @@ public enum AssetOperation: String, CaseIterable, Codable, Sendable {
     case providers
     case search
     case fetch
+    case show
     case use
     case credits
     case generate
@@ -28,6 +29,7 @@ public enum AssetOperation: String, CaseIterable, Codable, Sendable {
         case .providers: return AssetProvidersRequest.self
         case .search: return AssetSearchRequest.self
         case .fetch: return AssetFetchRequest.self
+        case .show: return AssetShowRequest.self
         case .use: return AssetUseRequest.self
         case .credits: return AssetCreditsRequest.self
         case .generate: return AssetGenerateRequest.self
@@ -190,6 +192,33 @@ public struct AssetFetchResult: Codable, Sendable {
     /// The file the editor plays, in the library.
     public var file: String?
     public var licence: AssetLicence?
+}
+
+// MARK: - show
+
+public struct AssetShowRequest: AssetCall {
+    public static let operation = AssetOperation.show
+    public var id: String
+
+    public init(id: String) {
+        self.id = id
+    }
+
+    public func run(on assets: AssetService, project: ProjectClient?) async throws -> AssetShowResult {
+        try await assets.show(self)
+    }
+}
+
+public struct AssetShowResult: Codable, Sendable {
+    public var asset: Asset
+    /// The file the editor plays, when it's on disk.
+    public var file: String?
+    /// The file as downloaded or imported, when it's on disk.
+    public var original: String?
+    public var licence: AssetLicence?
+    /// What a generated asset was asked for, and the model that made it.
+    public var prompt: String?
+    public var model: String?
 }
 
 // MARK: - use

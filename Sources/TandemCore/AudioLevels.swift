@@ -117,6 +117,22 @@ public enum AudioLevels {
         return audio.normalizeTo == level && audio.gainDB == 0
     }
 
+    // MARK: - Soloing
+
+    /// A copy of `project` where only these audio tracks play, for hearing
+    /// or measuring them on their own: they're unmuted (asking for a muted
+    /// track means you want to hear it) and every other audio track is
+    /// muted. Solo flags are cleared, so the render's own solo rule doesn't
+    /// bring anything else back. Muted clips stay muted.
+    public static func soloing(_ project: Project, audioTrackIDs ids: Set<String>) -> Project {
+        var copy = project
+        for i in copy.audioTracks.indices {
+            copy.audioTracks[i].muted = !ids.contains(copy.audioTracks[i].id)
+            copy.audioTracks[i].solo = false
+        }
+        return copy
+    }
+
     // MARK: - New clips
 
     /// The sound a clip placed on `track` starts with. Speech is normalised

@@ -116,6 +116,45 @@ extension AssetFetchResult: ReadableResult {
     }
 }
 
+extension AssetShowResult: ReadableResult {
+    public var readableText: String {
+        var parts = [asset.kind.rawValue]
+        if let duration = asset.duration { parts.append(String(format: "%.2f s", duration)) }
+        parts.append(AssetText.state(asset.state))
+        var lines = ["\(asset.id)  \(parts.joined(separator: ", "))", "Name: \(asset.name)"]
+        lines.append("Provider: \(asset.provider)" + (model.map { " (model \($0))" } ?? ""))
+        if let prompt {
+            lines.append("Prompt: \(prompt)")
+        } else if let summary = asset.summary, !summary.isEmpty {
+            lines.append("About: \(summary)")
+        }
+        var details: [String] = []
+        if let bpm = asset.bpm { details.append("\(CommandText.number(bpm)) BPM") }
+        if let key = asset.musicalKey { details.append(key) }
+        if let width = asset.width, let height = asset.height { details.append("\(width)x\(height)" + (asset.hasAlpha ? " with alpha" : "")) }
+        if !details.isEmpty { lines.append("Details: " + details.joined(separator: ", ")) }
+        if let loudness = asset.loudness, loudness.integratedLUFS.isFinite {
+            lines.append(String(format: "Loudness: %.1f LUFS, true peak %.1f dBTP, range %.1f LU", loudness.integratedLUFS, loudness.truePeakDBTP, loudness.loudnessRange))
+        } else if asset.kind.isAudio {
+            lines.append("Loudness: not measured yet (it is once the asset is fetched)")
+        }
+        if let licence {
+            var line = "Licence: \(licence.name) (\(AssetText.licence(licence.licenceClass)))"
+            if let holder = licence.holder { line += ". Holder: \(holder)" }
+            if let credit = licence.creditLine ?? asset.creditLine { line += ". Credit: \(credit)" }
+            if let url = licence.url { line += ". Terms: \(url.absoluteString)" }
+            lines.append(line)
+        } else {
+            lines.append("Licence: \(AssetText.licence(asset.licenceClass))" + (asset.creditLine.map { ". Credit: \($0)" } ?? ""))
+        }
+        lines.append("File: " + (file ?? "not downloaded yet (assets fetch \(asset.id))"))
+        if let original, original != file { lines.append("Original: \(original)") }
+        if let page = asset.pageURL { lines.append("Page: \(page.absoluteString)") }
+        if !asset.tags.isEmpty { lines.append("Tags: \(asset.tags.joined(separator: ", "))") }
+        return lines.joined(separator: "\n")
+    }
+}
+
 extension AssetUseResult: ReadableResult {
     public var readableText: String {
         var lines: [String] = []

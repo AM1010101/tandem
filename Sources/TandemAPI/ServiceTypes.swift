@@ -750,12 +750,19 @@ public struct ClipRequest: ServiceCall {
     public var output: String?
     /// Defaults to the 720p review preset.
     public var preset: String?
+    /// Only these audio tracks play (names or IDs), at the timeline's own
+    /// level: a stem isn't mastered.
+    public var tracks: [String]?
+    /// Sound alone, as a .m4a (or a .wav when `output` says so).
+    public var audioOnly: Bool?
 
-    public init(start: Time, end: Time, output: String? = nil, preset: String? = nil) {
+    public init(start: Time, end: Time, output: String? = nil, preset: String? = nil, tracks: [String]? = nil, audioOnly: Bool? = nil) {
         self.start = start
         self.end = end
         self.output = output
         self.preset = preset
+        self.tracks = tracks
+        self.audioOnly = audioOnly
     }
 
     public init(from decoder: Decoder) throws {
@@ -770,6 +777,8 @@ public struct ClipRequest: ServiceCall {
         self.end = end
         output = try c.decodeIfPresent(String.self, forKey: .output)
         preset = try c.decodeIfPresent(String.self, forKey: .preset)
+        tracks = try c.decodeList(.tracks)
+        audioOnly = try c.decodeIfPresent(Bool.self, forKey: .audioOnly)
     }
 
     public func run(on service: TandemService, context: CallContext) async throws -> ExportOutcome {
@@ -835,6 +844,9 @@ public struct ExportOutcome: Codable, Sendable {
     /// What the render shows or plays differently from the project, and
     /// anything about the preset worth knowing, like an upscale.
     public var warnings: [String]
+    /// The only audio tracks that played (`clip --tracks`), or nil for the
+    /// whole mix.
+    public var tracks: [String]?
 
     public init(path: String, preset: String, duration: Time, integratedLUFS: Double?, truePeakDBTP: Double?, elapsed: Double, warnings: [String] = []) {
         self.path = path
@@ -863,7 +875,13 @@ public struct ExportOutcome: Codable, Sendable {
         truePeakDBTP = try c.decodeIfPresent(Double.self, forKey: .truePeakDBTP)
         elapsed = try c.decode(Double.self, forKey: .elapsed)
         warnings = try c.decodeIfPresent([String].self, forKey: .warnings) ?? []
+        tracks = try c.decodeIfPresent([String].self, forKey: .tracks)
     }
+
+    /// True when it wrote sound alone (a .m4a or .wav).
+    var soundOnly: Bool { ExportOutcome.soundExtensions.contains(URL(fileURLWithPath: path).pathExtension.lowercased()) }
+
+    static let soundExtensions: Set<String> = ["m4a", "wav"]
 }
 
 // MARK: - loudness, watch, effects
@@ -871,13 +889,43 @@ public struct ExportOutcome: Codable, Sendable {
 public struct LoudnessRequest: ServiceCall {
     public static let operation = ServiceOperation.loudness
     public var mediaID: String?
+    /// With any of these it measures the rendered mix over time instead of
+    /// reporting each file: from `from` (0) to `to` (the end) every `step`
+    /// (picked to give about 50 rows), playing only `tracks` (names or
+    /// IDs) when given. `gains` also checks each track's render against
+    /// its gain lane.
+    public var from: Time?
+    public var to: Time?
+    public var step: Time?
+    public var tracks: [String]?
+    public var gains: Bool?
 
-    public init(mediaID: String? = nil) {
+    public init(mediaID: String? = nil, from: Time? = nil, to: Time? = nil, step: Time? = nil, tracks: [String]? = nil, gains: Bool? = nil) {
         self.mediaID = mediaID
+        self.from = from
+        self.to = to
+        self.step = step
+        self.tracks = tracks
+        self.gains = gains
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        mediaID = try c.decodeIfPresent(String.self, forKey: .mediaID)
+        from = try c.decodeTime(.from)
+        to = try c.decodeTime(.to)
+        step = try c.decodeTime(.step)
+        tracks = try c.decodeList(.tracks)
+        gains = try c.decodeIfPresent(Bool.self, forKey: .gains)
+    }
+
+    /// True when this asks about the rendered mix rather than the files.
+    var overTime: Bool {
+        from != nil || to != nil || step != nil || !(tracks ?? []).isEmpty || gains == true
     }
 
     public func run(on service: TandemService, context: CallContext) async throws -> LoudnessResult {
-        try service.loudness(mediaID: mediaID)
+        try await service.loudness(self)
     }
 }
 
@@ -915,6 +963,13 @@ public struct LoudnessResult: Codable, Sendable {
     public var speechLoudness: Double
     public var media: [MediaLoudness]
     public var clips: [ClipLevel]
+    /// The rendered mix over time, when a range, step or tracks were asked
+    /// for.
+    public var curve: MixLoudness?
+    /// The audio tracks that played for `curve`, or nil for the whole mix.
+    public var tracks: [String]?
+    /// Each track's render against its gain lane, when asked.
+    public var gains: [GainFollow]?
 }
 
 public struct WatchRequest: ServiceCall {

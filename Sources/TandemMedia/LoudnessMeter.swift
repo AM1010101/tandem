@@ -188,6 +188,11 @@ public struct LoudnessMeter: Sendable {
         peak > 0 ? 20 * log10(peak) : -.infinity
     }
 
+    /// The K-weighted mean square of each whole 100 ms block so far,
+    /// summed over channels: what momentary (4 blocks) and short-term (30
+    /// blocks) loudness average over.
+    public var blockEnergies: [Double] { subBlocks }
+
     /// Loudness of the last 3 s, for live meters.
     public var shortTerm: Double {
         guard subBlocks.count >= 30 else { return subBlocks.isEmpty ? -.infinity : Self.lufs(mean(Array(subBlocks))) }
@@ -211,7 +216,7 @@ public struct LoudnessMeter: Sendable {
         values.reduce(0, +) / Double(values.count)
     }
 
-    static func lufs(_ meanSquare: Double) -> Double {
+    public static func lufs(_ meanSquare: Double) -> Double {
         meanSquare > 0 ? -0.691 + 10 * log10(meanSquare) : -.infinity
     }
 }

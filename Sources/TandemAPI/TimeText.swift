@@ -77,4 +77,23 @@ extension KeyedDecodingContainer {
     func decodeSeconds(_ key: Key) throws -> Double? {
         try decodeTime(key)?.seconds
     }
+
+    /// A list of times, each seconds or `mm:ss.mmm`.
+    func decodeTimes(_ key: Key) throws -> [Time]? {
+        guard contains(key), try !decodeNil(forKey: key) else { return nil }
+        var list = try nestedUnkeyedContainer(forKey: key)
+        var times: [Time] = []
+        while !list.isAtEnd {
+            if let seconds = try? list.decode(Double.self) {
+                times.append(Time(seconds: seconds))
+                continue
+            }
+            let text = try list.decode(String.self)
+            guard let time = TimeText.parse(text) else {
+                throw DecodingError.dataCorruptedError(in: list, debugDescription: "\"\(text)\" isn't a time. Use seconds (83.5) or mm:ss.mmm (01:23.500).")
+            }
+            times.append(time)
+        }
+        return times
+    }
 }

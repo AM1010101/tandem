@@ -58,8 +58,8 @@ rounds up.
    (`"trackID": "Music"`) rather than looking up IDs, and give one
    `updateClip` patch to many clips with `clipIDs`. The `--json` shapes are
    in docs/AGENTS.md ("JSON output").
-   For a job that touches many things at once (every caption, every push,
-   every pause), write a short script against the SDK in the Tandem repo's
+   For a job that touches many things at once (every caption, every push),
+   write a short script against the SDK in the Tandem repo's
    `sdk/` folder instead of hand-building JSON or throwaway Python:
    `~/.bun/bin/bun ~/dev/me/tandem/sdk/run.ts "<name>.tandem" script.ts`
    (or `-e '<code>'`). `t.project()` finds clips, transitions and captions,
@@ -111,8 +111,16 @@ and the music (Build Your Own Convex retro).
 
 ## How Mike likes a take cut
 
-- **Pauses between sentences: 0.4 s.** Tighten with
-  `tandem tighten --min 0.5 --keep 0.4`. It's the feel of his old Filmora
+- **Tighten with `tandem tighten --mike`,** not a script of your own. It
+  does the rules below by what each pause follows (0.4 s after a sentence,
+  0.12 s after a comma, 0.08 s for a thinking pause mid-sentence, only
+  pauses of 0.5 s or more). Keep his deliberate beats with
+  `--protect <time,...>`, and add `--widen` to open joins a cut left too
+  tight back out from the take's own silence (listen to those). Dry run
+  first, then `--apply`. For a rough cut or a list of stumbles, put every
+  range as you read it in one `cutRanges` command instead of sorting ripple
+  deletes latest first.
+- **Pauses between sentences: 0.4 s.** It's the feel of his old Filmora
   silence detection (0.4 s softening buffer, 0.5 s minimum, 25% volume
   threshold). 0.2 s sounds rushed, as if the sentences are jammed together.
   A cut that removes a retake or a stumble should leave about 0.4 s of real
@@ -140,7 +148,8 @@ and the music (Build Your Own Convex retro).
   footage: a freeze of his last frame "looks weird" (What I Need video,
   2026-10-09).
 - **Mid-sentence pauses:** close his thinking pauses, 0.5 s or longer,
-  right up (to about 0.08 s), so a sentence sounds like one thought. Leave
+  right up (to about 0.08 s, `--mid 0.08 --mid-min 0.5`, part of `--mike`),
+  so a sentence sounds like one thought. Leave
   shorter ones (a breath, a natural pause) as he said them: closing every
   gap of 0.2 s or more made 818 cuts in a 38-minute video, one every 2.8 s,
   and the picture jumped around (Mike, 2026-10-05). The 0.4 s is for

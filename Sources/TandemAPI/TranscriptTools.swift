@@ -172,26 +172,231 @@ public enum TranscriptTools {
 
     // MARK: - Tightening
 
+    /// What `tighten` keeps when given Mike's rules (`--mike`): 0.4 s
+    /// between sentences, the feel of his old Filmora silence detection;
+    /// 0.12 s after a comma and 0.08 s mid-sentence, so a sentence sounds
+    /// like one thought; only pauses of 0.5 s or more change, so breaths and
+    /// natural pauses stay as he said them (skills/tandem/SKILL.md).
+    public static let mikeRules = PauseRules(sentence: t(0.4), comma: t(0.12), mid: t(0.08), minimum: t(0.5), midMinimum: t(0.5))
+    /// The shortest sentence pause that changes, and the shortest comma or
+    /// mid-sentence one, when tightening by what a pause follows.
+    public static let defaultSentenceMinimum = 0.5
+    public static let defaultMidMinimum = 0.5
+    /// Silence widening leaves before the next word in the take, since a
+    /// voice can start a hair before the edge the transcript has for it.
+    static let widenGuard = t(0.04)
+
+    private static func t(_ seconds: Double) -> Time { Time(seconds: seconds) }
+
+    /// How much of each kind of pause to keep, and how long a pause has to
+    /// be before it changes. A kind with no keep is left alone; a comma
+    /// with no keep of its own uses the mid-sentence one.
+    public struct PauseRules: Equatable, Sendable {
+        public var sentence: Time?
+        public var comma: Time?
+        public var mid: Time?
+        /// Sentence pauses at least this long change.
+        public var minimum: Time
+        /// Comma and mid-sentence pauses at least this long change.
+        public var midMinimum: Time
+
+        public init(sentence: Time?, comma: Time?, mid: Time?, minimum: Time, midMinimum: Time) {
+            self.sentence = sentence
+            self.comma = comma
+            self.mid = mid
+            self.minimum = minimum
+            self.midMinimum = midMinimum
+        }
+
+        /// One keep and one minimum for every pause, as `--min`/`--keep`.
+        public static func uniform(keep: Time, minimum: Time) -> PauseRules {
+            PauseRules(sentence: keep, comma: keep, mid: keep, minimum: minimum, midMinimum: minimum)
+        }
+
+        public func keep(for kind: PauseKind) -> Time? {
+            switch kind {
+            case .sentence: return sentence
+            case .comma: return comma ?? mid
+            case .mid: return mid
+            }
+        }
+
+        public func shortest(for kind: PauseKind) -> Time {
+            kind == .sentence ? minimum : midMinimum
+        }
+    }
+
+    /// What a pause follows, from the punctuation the transcript put on the
+    /// word before it.
+    public static func pauseKind(after text: String) -> PauseKind {
+        let closers: Set<Character> = ["\"", "'", "\u{201D}", "\u{2019}", ")", "]", "\u{BB}"]
+        var trimmed = Substring(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        while let last = trimmed.last, closers.contains(last) { trimmed = trimmed.dropLast() }
+        guard let last = trimmed.last else { return .mid }
+        if ".?!\u{2026}".contains(last) { return .sentence }
+        if ",;:".contains(last) { return .comma }
+        return .mid
+    }
+
+    /// Whether any of `times` falls in the pause, edges included.
+    public static func isProtected(_ pause: Pause, by times: [Time]) -> Bool {
+        times.contains { pause.start <= $0 && $0 <= pause.end }
+    }
+
     /// Shortens each pause to `keep`, cutting from the middle so half the
     /// kept silence stays after the last word and half before the next one.
     /// Cut edges are rounded inwards to frame boundaries, so the kept
     /// silence is never shorter than `keep`. Pauses that would lose less
     /// than a frame are left alone.
     public static func plan(_ pauses: [Pause], keep: Time, frameRate: FrameRate) -> [PlannedCut] {
-        let half = Time(flicks: keep.flicks / 2)
-        let rest = keep - half
+        plan(pauses, rules: .uniform(keep: keep, minimum: .zero), frameRate: frameRate, snug: false)
+    }
+
+    /// Shortens each pause to the keep for what it follows (`PauseRules`).
+    /// Pauses shorter than their kind's minimum, or of a kind with no keep,
+    /// are left alone. With `snug` the cut is as long as whole frames allow
+    /// and centred in the pause, so what's kept is within a frame of the
+    /// keep (never under it). Rounding both edges inwards instead can keep
+    /// two frames more, which is most of Mike's 0.08 s mid-sentence keep.
+    public static func plan(_ pauses: [Pause], rules: PauseRules, frameRate: FrameRate, snug: Bool = true) -> [PlannedCut] {
+        let frame = frameRate.frameDuration
         return pauses.compactMap { pause in
-            let start = TimeText.ceilToFrame(pause.start + half, frameRate)
-            let end = TimeText.floorToFrame(pause.end - rest, frameRate)
-            guard end - start >= frameRate.frameDuration else { return nil }
-            return PlannedCut(pause: pause, cut: TimeRange(start: start, end: end))
+            let kind = pauseKind(after: pause.before)
+            guard let keep = rules.keep(for: kind), pause.duration >= rules.shortest(for: kind) else { return nil }
+            let cut: TimeRange
+            if snug {
+                let length = Time.frames((pause.duration - keep).flicks / frame.flicks, at: frameRate)
+                guard length >= frame else { return nil }
+                let centred = (pause.start + Time(flicks: (pause.duration - length).flicks / 2)).roundedToFrame(frameRate)
+                let start = max(TimeText.ceilToFrame(pause.start, frameRate), min(centred, TimeText.floorToFrame(pause.end - length, frameRate)))
+                cut = TimeRange(start: start, duration: length)
+            } else {
+                let half = Time(flicks: keep.flicks / 2)
+                let start = TimeText.ceilToFrame(pause.start + half, frameRate)
+                let end = TimeText.floorToFrame(pause.end - (keep - half), frameRate)
+                guard end - start >= frame else { return nil }
+                cut = TimeRange(start: start, end: end)
+            }
+            return PlannedCut(pause: pause, cut: cut, kind: kind, keep: keep)
         }
     }
 
     /// `rippleDeleteRange` commands for a plan, latest first so every range
     /// is still in the current timeline's times when it runs.
     public static func commands(for cuts: [PlannedCut]) -> [EditCommand] {
-        cuts.sorted { $0.cut.start > $1.cut.start }.map { .rippleDeleteRange(range: $0.cut, trackIDs: nil) }
+        commands(for: cuts, widening: [])
+    }
+
+    /// The cuts and the widening trims as one batch, latest first: each
+    /// command only moves what comes after it, so every time in it is still
+    /// in the current timeline's times when it runs.
+    public static func commands(for cuts: [PlannedCut], widening: [PlannedWiden]) -> [EditCommand] {
+        var steps: [(time: Time, commands: [EditCommand])] = cuts.map { ($0.cut.start, [.rippleDeleteRange(range: $0.cut, trackIDs: nil)]) }
+        for widen in widening {
+            var trims: [EditCommand] = []
+            // The rippled head trim keeps the later clip's start, so the tail
+            // trim after it still finds the earlier clip ending at the join.
+            if widen.head > .zero {
+                trims.append(.trim(clipID: widen.nextClipID, edge: .start, to: widen.at - widen.head, ripple: true, includeLinked: nil))
+            }
+            if widen.tail > .zero {
+                trims.append(.trim(clipID: widen.clipID, edge: .end, to: widen.at + widen.tail, ripple: true, includeLinked: nil))
+            }
+            steps.append((widen.at, trims))
+        }
+        return steps.sorted { $0.time > $1.time }.flatMap(\.commands)
+    }
+
+    // MARK: - Widening
+
+    /// Joins between two speech clips that leave less silence than the keep
+    /// for what they follow, widened back to it from the take either side:
+    /// a rippled tail trim on the clip before the join and a rippled head
+    /// trim on the one after, which their linked camera and screen clips
+    /// follow. Only silence between words comes back. Each side gives what
+    /// the take has before its next (or previous) transcribed word, less
+    /// `widenGuard`, and nothing where a word runs through the clip's edge.
+    /// Amounts are whole frames, split evenly where both sides have room.
+    public static func widening(
+        in map: SpeechMap, project: Project, rules: PauseRules, protect: [Time] = [],
+        from: Time? = nil, to: Time? = nil, transcripts: (MediaItem) -> Transcript?
+    ) -> [PlannedWiden] {
+        let frameRate = project.settings.frameRate
+        let frame = frameRate.frameDuration
+        let tolerance = Time(flicks: frame.flicks / 2)
+        let clips = Dictionary(map.clips.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var cache: [String: Transcript?] = [:]
+        func transcript(_ mediaID: String) -> Transcript? {
+            if let cached = cache[mediaID] { return cached }
+            let found = project.media(mediaID).flatMap(transcripts)
+            cache[mediaID] = found
+            return found
+        }
+        func frames(_ time: Time) -> Int64 { time > .zero ? time.flicks / frame.flicks : 0 }
+
+        var result: [PlannedWiden] = []
+        for index in map.words.indices.dropFirst() {
+            let before = map.words[index - 1], after = map.words[index]
+            guard before.clipID != after.clipID, after.start >= before.end,
+                  let left = clips[before.clipID], let right = clips[after.clipID],
+                  let mediaID = left.mediaID, right.mediaID == mediaID,
+                  let leftTrack = project.location(ofClip: left.id)?.track,
+                  project.location(ofClip: right.id)?.track == leftTrack,
+                  abs((right.start - left.end).flicks) <= tolerance.flicks,
+                  let words = transcript(mediaID)?.words
+            else { continue }
+            // A through-edit: the take carries straight on, so the gap is as
+            // he said it, not something a cut made.
+            if left.speed == right.speed, abs((right.sourceStart - left.sourceEnd).flicks) <= frame.flicks { continue }
+            let gap = TimeRange(start: before.end, end: after.start)
+            if let from, gap.start < from { continue }
+            if let to, gap.end > to { continue }
+            let pause = Pause(
+                start: gap.start, end: gap.end, duration: gap.duration,
+                before: context(map.words, upTo: index), after: context(map.words, from: index),
+                clipIDs: [left.id, right.id]
+            )
+            let kind = pauseKind(after: pause.before)
+            guard !isProtected(pause, by: protect), let keep = rules.keep(for: kind) else { continue }
+            let wanted = Int64(((keep - gap.duration).seconds / frame.seconds).rounded())
+            guard wanted > 0 else { continue }
+
+            // Silence in the take after the earlier clip and before the later
+            // one, in timeline time.
+            var tailRoom = Time.zero
+            let sourceEnd = left.sourceEnd
+            if !words.contains(where: { $0.start < sourceEnd && $0.end > sourceEnd }) {
+                let next = words.filter { $0.start >= sourceEnd }.map(\.start).min() ?? project.sourceLimit(for: left)
+                if let next { tailRoom = Time(seconds: (next - sourceEnd).seconds / left.speed) - widenGuard }
+            }
+            var headRoom = Time.zero
+            let sourceStart = right.sourceStart
+            if !words.contains(where: { $0.start < sourceStart && $0.end > sourceStart }) {
+                let previous = words.filter { $0.end <= sourceStart }.map(\.end).max() ?? .zero
+                headRoom = Time(seconds: (sourceStart - previous).seconds / right.speed) - widenGuard
+            }
+            // The linked camera and screen clips stretch too, so their files
+            // need the room as well.
+            for id in project.linkedClipIDs(of: left.id) {
+                guard let clip = project.clip(id), clip.mediaID != nil, !clip.holdEdges, let limit = project.sourceLimit(for: clip) else { continue }
+                tailRoom = min(tailRoom, Time(seconds: (limit - clip.sourceEnd).seconds / clip.speed))
+            }
+            for id in project.linkedClipIDs(of: right.id) {
+                guard let clip = project.clip(id), clip.mediaID != nil, !clip.holdEdges else { continue }
+                headRoom = min(headRoom, Time(seconds: clip.sourceStart.seconds / clip.speed))
+            }
+
+            let tailFrames = frames(tailRoom), headFrames = frames(headRoom)
+            var tail = min(tailFrames, (wanted + 1) / 2)
+            let head = min(headFrames, wanted - tail)
+            tail = min(tailFrames, wanted - head)
+            guard tail + head > 0 else { continue }
+            result.append(PlannedWiden(
+                pause: pause, kind: kind, keep: keep, at: right.start, clipID: left.id, nextClipID: right.id,
+                tail: Time.frames(tail, at: frameRate), head: Time.frames(head, at: frameRate)
+            ))
+        }
+        return result
     }
 
     // MARK: - Section cuts

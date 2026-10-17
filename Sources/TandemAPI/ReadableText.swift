@@ -190,23 +190,56 @@ extension PausesResult: ReadableResult {
     }
 }
 
+extension TightenResult {
+    /// The keeps by kind, like "0.400s after a sentence, 0.080s mid-sentence".
+    var keepsText: String {
+        var parts: [String] = []
+        if let sentence { parts.append("\(TimeText.duration(sentence)) after a sentence") }
+        if let comma { parts.append("\(TimeText.duration(comma)) after a comma") }
+        if let mid { parts.append("\(TimeText.duration(mid)) mid-sentence") }
+        return parts.joined(separator: ", ")
+    }
+}
+
 extension TightenResult: ReadableResult {
     public var readableText: String {
         var lines: [String] = []
         let mode = applied == nil ? "dry run" : "applied"
-        if cuts.isEmpty {
-            lines.append("Nothing to tighten: no pauses of \(TimeText.duration(minimum)) or more that would lose a frame.")
-        } else {
-            lines.append("Shorten \(cuts.count) pause\(cuts.count == 1 ? "" : "s") of \(TimeText.duration(minimum)) or more to \(TimeText.duration(keep)) (\(mode), revision \(revision)):")
-            for cut in cuts {
-                lines.append("  \(cut.pause.start)-\(cut.pause.end)  \(TimeText.duration(cut.pause.duration)) -> cut \(cut.cut.start)-\(cut.cut.end)  ...\(cut.pause.before) | \(cut.pause.after)...")
+        let bySentence = sentence != nil || comma != nil || mid != nil
+        if cuts.isEmpty && widened.isEmpty {
+            if bySentence {
+                lines.append("Nothing to tighten: keeping \(keepsText), no pause would lose a frame.")
+            } else {
+                lines.append("Nothing to tighten: no pauses of \(TimeText.duration(minimum)) or more that would lose a frame.")
             }
-            lines.append("Removes \(TimeText.duration(removed)): \(durationBefore) -> \(durationAfter).")
+        } else {
+            if bySentence {
+                let midMinimum = midMinimum.map { ", comma and mid-sentence ones of \(TimeText.duration($0)) or more" } ?? ""
+                lines.append("Keep \(keepsText) (sentence pauses of \(TimeText.duration(minimum)) or more\(midMinimum); \(mode), revision \(revision)):")
+            } else {
+                lines.append("Shorten \(cuts.count) pause\(cuts.count == 1 ? "" : "s") of \(TimeText.duration(minimum)) or more to \(TimeText.duration(keep)) (\(mode), revision \(revision)):")
+            }
+            for cut in cuts {
+                let kind = bySentence ? (cut.kind.map { " \($0.rawValue)" } ?? "") : ""
+                lines.append("  \(cut.pause.start)-\(cut.pause.end)  \(TimeText.duration(cut.pause.duration))\(kind) -> cut \(cut.cut.start)-\(cut.cut.end)  ...\(cut.pause.before) | \(cut.pause.after)...")
+            }
+            if !widened.isEmpty {
+                lines.append("Widen \(widened.count) join\(widened.count == 1 ? "" : "s") to their keep, from silence in the take:")
+                for widen in widened {
+                    lines.append("  \(widen.pause.start)-\(widen.pause.end)  \(TimeText.duration(widen.pause.duration)) \(widen.kind.rawValue) -> +\(TimeText.duration(widen.added)) at the join at \(widen.at) (\(TimeText.duration(widen.tail)) after, \(TimeText.duration(widen.head)) before)  ...\(widen.pause.before) | \(widen.pause.after)...")
+                }
+            }
+            var change = "Removes \(TimeText.duration(removed))"
+            if added > .zero { change += ", adds \(TimeText.duration(added))" }
+            lines.append("\(change): \(durationBefore) -> \(durationAfter).")
+        }
+        if !protected.isEmpty {
+            lines.append("Left \(protected.count) protected pause\(protected.count == 1 ? "" : "s") alone: \(protected.map { "\($0.start)-\($0.end)" }.joined(separator: ", ")).")
         }
         for warning in warnings { lines.append("Warning: \(warning)") }
         if let applied {
             lines.append("Applied as revision \(applied.revision) (\"\(applied.label)\"). Undo with `tandem undo`.")
-        } else if !cuts.isEmpty {
+        } else if !cuts.isEmpty || !widened.isEmpty {
             lines.append("Nothing changed yet. Run again with --apply (or apply: true) to make the cut.")
         }
         return lines.joined(separator: "\n")

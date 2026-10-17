@@ -45,6 +45,8 @@ public enum Editing {
             try removeClips(&project, clipIDs, ripple: ripple ?? false, includeLinked: includeLinked ?? true, &context)
         case .rippleDeleteRange(let range, let trackIDs):
             try rippleDeleteRange(&project, range, trackIDs: trackIDs, &context)
+        case .cutRanges(let ranges, let trackIDs):
+            try cutRanges(&project, ranges, trackIDs: trackIDs, &context)
         case .closeGap(let trackID, let at):
             try closeGap(&project, trackID: trackID, at: at, &context)
         case .insertTime(let at, let duration, let trackIDs):
@@ -163,6 +165,8 @@ public enum Editing {
             return .insertClip(trackID: try one(trackID), clip: clip, mode: mode)
         case .rippleDeleteRange(let range, let trackIDs):
             return .rippleDeleteRange(range: range, trackIDs: try many(trackIDs))
+        case .cutRanges(let ranges, let trackIDs):
+            return .cutRanges(ranges: ranges, trackIDs: try many(trackIDs))
         case .closeGap(let trackID, let at):
             return .closeGap(trackID: try one(trackID), at: at)
         case .insertTime(let at, let duration, let trackIDs):
@@ -752,6 +756,17 @@ public enum Editing {
             if cut.isEmpty { cut = Set(p.allTracks.filter { $0.rippleMode != .off }.map(\.id)) }
         }
         try rippleRemove(&p, range, cut: cut, &context)
+    }
+
+    static func cutRanges(_ p: inout Project, _ ranges: [TimeRange], trackIDs: [String]?, _ context: inout EditContext) throws {
+        guard !ranges.isEmpty else { throw EditError.invalid("list at least one range to cut") }
+        for range in ranges {
+            guard range.duration > .zero else { throw EditError.invalid("the range at \(range.start) is empty") }
+            guard range.start >= .zero else { throw EditError.invalid("the range at \(range.start) starts before 0") }
+        }
+        for range in TimeRange.union(ranges).reversed() {
+            try rippleDeleteRange(&p, range, trackIDs: trackIDs, &context)
+        }
     }
 
     static func closeGap(_ p: inout Project, trackID: String, at: Time, _ context: inout EditContext) throws {

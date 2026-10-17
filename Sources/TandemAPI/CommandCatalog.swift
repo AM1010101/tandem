@@ -8,7 +8,7 @@ import TandemCore
 public enum CommandCase: String, CaseIterable, Codable, Sendable {
     case updateProject, updateSettings, addTrack, removeTrack, moveTrack, updateTrack
     case addMedia, updateMedia, removeMedia
-    case placeMedia, insertClip, removeClips, rippleDeleteRange, closeGap, insertTime, insertTemplate, addSectionCards, fitSectionCards
+    case placeMedia, insertClip, removeClips, rippleDeleteRange, cutRanges, closeGap, insertTime, insertTemplate, addSectionCards, fitSectionCards
     case blade, join, joinThroughEdits, trim, roll, slip, slide, setSpeed
     case moveClips, updateClip, link, unlink, applyLayout, zoomToRegion, setFormatLayout, adoptFormat, addMotion
     case addTransition, updateTransition, removeTransition
@@ -33,6 +33,7 @@ extension EditCommand {
         case .insertClip: return .insertClip
         case .removeClips: return .removeClips
         case .rippleDeleteRange: return .rippleDeleteRange
+        case .cutRanges: return .cutRanges
         case .closeGap: return .closeGap
         case .insertTime: return .insertTime
         case .insertTemplate: return .insertTemplate
@@ -92,6 +93,9 @@ public enum CommandText {
         case .insertClip(_, let clip, let mode): return mode == .insert ? "Insert clip at \(clip.start)" : "Add clip at \(clip.start)"
         case .removeClips(let ids, let ripple, _): return ripple == true ? "Ripple delete \(count(ids.count, "clip"))" : "Lift \(count(ids.count, "clip"))"
         case .rippleDeleteRange(let range, _): return "Ripple delete \(range.start)-\(range.end)"
+        case .cutRanges(let ranges, _):
+            let total = TimeRange.union(ranges).reduce(Time.zero) { $0 + $1.duration }
+            return "Cut \(count(ranges.count, "range")) (\(TimeText.duration(total)))"
         case .closeGap(_, let at): return "Close gap at \(at)"
         case .insertTime(let at, let duration, _): return "Insert \(TimeText.duration(duration)) at \(at)"
         case .insertTemplate(let template, let at, _, _): return "Insert \(template.name) at \(at)"
@@ -228,7 +232,7 @@ public enum CommandJSON {
             let timeMap = key.map(timeMapKeys.contains) ?? false
             var result: [String: JSONValue] = [:]
             for (k, v) in fields { result[k] = normalize(v, key: timeMap ? "time" : k) }
-            if key == "range", result["duration"] == nil,
+            if key == "range" || key == "ranges", result["duration"] == nil,
                case .number(let start)? = result["start"], case .number(let end)? = result["end"] {
                 result["duration"] = .number(end - start)
                 result.removeValue(forKey: "end")

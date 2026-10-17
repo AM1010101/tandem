@@ -48,7 +48,7 @@ tandem transcribe <id or path>...  [--wait | --no-wait]   transcribe any file wi
 tandem wait [transcript|matte|proxy|jobs|export] [--media <id>]... [--timeout S]   wait for background work
 tandem search "<phrase>"           where a phrase is said
 tandem pauses [--min 0.6]          silences between words
-tandem tighten [--min 0.6] [--keep 0.15] [--apply]
+tandem tighten [--mike] [--sentence S] [--mid S] [--protect T,T] [--widen] [--apply]   or [--min 0.6] [--keep 0.15]
 tandem join [--from T] [--to T] [--apply]   join through-edits back into one clip
 tandem captions [--from T] [--to T] [--max-words 3] [--y 0.42] [--apply]
 tandem short [--apply]             lay out a 9:16 short from the same edit
@@ -332,6 +332,12 @@ inside the same batch, give it your own ID (`"id": "clip_title1"`).
 parameters also take `mm:ss.mmm` (`01:23.500`). Inside edit commands use
 numbers; strings like `"1:02.5"` are accepted but numbers are clearer.
 `sourceStart` and `slip` deltas are in media time (seconds into the file).
+
+**Several cuts in one batch.** Each command sees the timeline as the
+commands before it left it, so a ripple delete moves everything after it
+earlier. To cut many ranges you read (stumbles, retakes, a rough cut), put
+them all in one `cutRanges` command: its ranges are all in the times before
+it, in any order, and Tandem cuts them latest first.
 
 **Overlaps.** Clips on one track can't overlap. An overlap under a
 millisecond counts as touching, so rounding in a batch doesn't fail it: the
@@ -934,6 +940,21 @@ cutting phrases. The range is `start` plus `duration`, or `start` and
 {"rippleDeleteRange": {"range": {"start": 12.4, "duration": 0.8}}}
 ```
 
+#### cutRanges
+
+Ripple deletes several ranges in one go, with every range in the timeline's
+times before the command: the times you read from `pauses`, `search` or
+`transcript`, in any order. Tandem cuts them latest first, so no cut moves
+another, and cuts overlapping or touching ranges once. Use it for a rough
+cut or a list of stumbles instead of sorting `rippleDeleteRange` commands
+latest first yourself. Each range is `start` plus `duration`, or `start`
+and `end`; `trackIDs` works as it does for `rippleDeleteRange`. One undo
+puts them all back.
+
+```json
+{"cutRanges": {"ranges": [{"start": 12.4, "end": 13.2}, {"start": 47.1, "end": 52.6}]}}
+```
+
 #### closeGap
 
 Closes the gap on a track that contains a time. Fails if another cut track
@@ -1468,24 +1489,54 @@ them alone.
 ### Tighten pauses
 
 ```bash
-tandem pauses --min 0.6                      # what's there
-tandem tighten --min 0.6 --keep 0.15         # the plan, nothing changes
-tandem tighten --min 0.6 --keep 0.15 --apply
+tandem pauses --min 0.5                      # what's there
+tandem tighten --mike                        # the plan, nothing changes
+tandem tighten --mike --protect 2:14.5,5:03 --widen --apply
 tandem clip 0:00 1:00 -o /tmp/review.mp4     # watch the result
 tandem undo                                  # if it's too tight
 ```
 
-Each pause of at least `--min` is shortened to `--keep`, cut from the
-middle so half the kept silence stays after the last word and half before
-the next one, with the cut edges on frame boundaries. Word edges come from
-the voice, so a pause is the real gap between words (breaths and clicks in
-it included), not what's left between the transcript's stretched word
-times. The plan is a batch of
-`rippleDeleteRange` commands (latest first, so every range is in the
-current timeline's times); `--json` prints it if you'd rather adjust it and
-`apply` it yourself. `--from` and `--to` limit it to part of the video. In
-MCP: `tighten {"min": 0.6, "keep": 0.15}`, then again with `"apply": true,
-"expectedRevision": <the plan's revision>`.
+`--mike` is Mike's rules ("How Mike likes a take cut" in the skill): 0.4 s
+after a sentence, 0.12 s after a comma and 0.08 s for a thinking pause
+mid-sentence, and only pauses of 0.5 s or more change, so breaths and
+natural pauses stay as he said them. What a pause follows comes from the
+punctuation on the word before it: `. ? !` (or `...`) end a sentence,
+`, ; :` are a comma, anything else is mid-sentence. Set or override each
+keep with `--sentence`, `--comma` and `--mid`; a kind with no keep is left
+alone, and a comma without one uses `--mid`. `--min` (default 0.5 here) is
+the shortest sentence pause that changes and `--mid-min` (default 0.5) the
+shortest comma or mid-sentence one. Each cut is as many whole frames as fit,
+centred in the pause, so what's kept is within a frame of the keep.
+
+`--protect` takes timeline times, comma separated (or the option again):
+the pauses containing them are left alone, for the beats Mike wants kept (a
+point landing, a reaction, something animating on screen). The plan lists
+what it protected.
+
+`--widen` also opens up joins that are too tight: where a cut between two
+speech clips leaves less than the keep for what it follows (0.2 s between
+sentences after a retake was cut, say), it brings back silence from the take
+either side with ripple trims, so the camera and screen stay in sync. It
+only takes silence before the take's next transcribed word (less 40 ms) and
+nothing where a word runs through the clip's edge, so it never brings back
+speech the transcript knows about; an "um" the transcript left out can come
+back, so listen to widened joins. It's off unless you ask, and leaves
+through-edits and protected joins alone.
+
+Without any of those, every pause of at least `--min` (0.6) is shortened to
+`--keep` (0.15), cut from the middle so half the kept silence stays after
+the last word and half before the next one, with the cut edges rounded
+inwards to frames.
+
+Word edges come from the voice, so a pause is the real gap between words
+(breaths and clicks in it included), not what's left between the
+transcript's stretched word times. The plan is a batch of
+`rippleDeleteRange` commands (and the widening's `trim`s), latest first so
+every time is in the current timeline's times; `--json` prints it if you'd
+rather adjust it and `apply` it yourself. `--from` and `--to` limit it to
+part of the video. In MCP: `tighten {"mike": true, "protect": [134.5],
+"widen": true}`, then again with `"apply": true, "expectedRevision": <the
+plan's revision>`.
 
 ### Join through-edits
 
@@ -1607,6 +1658,17 @@ no breath is left behind (`tandem pauses --from 2:10 --to 2:20` shows them):
 ```
 
 Then check it with `tandem clip 2:08 2:20`.
+
+For several phrases, or a rough cut that drops false starts and retakes,
+list every range as you read it in one `cutRanges` command rather than
+working out the order of ripple deletes. To keep only some stretches,
+cut the gaps between them:
+
+```json
+{"label": "Rough cut: drop the false starts", "expectedRevision": 57, "commands": [
+  {"cutRanges": {"ranges": [{"start": 0, "end": 18.15}, {"start": 25.6, "end": 46.24}, {"start": 134.2, "end": 136.05}]}}
+]}
+```
 
 ### Put B-roll over a sentence
 
@@ -2125,7 +2187,7 @@ still when it's beside it. It's one undo step.
 | wait | `tandem wait [transcript\|matte\|proxy\|jobs\|export] [--media <id>]... [--timeout]` | `POST /v1/wait {"what", "media": [...], "timeout"}` | `wait` |
 | search | `tandem search "<phrase>"` | `POST /v1/search {"phrase"}` | `search` |
 | pauses | `tandem pauses [--min]` | `POST /v1/pauses {"min"}` | `pauses` |
-| tighten | `tandem tighten [--min] [--keep] [--apply]` | `POST /v1/tighten {"min", "keep", "apply"}` | `tighten` |
+| tighten | `tandem tighten [--mike] [--sentence] [--comma] [--mid] [--mid-min] [--min] [--keep] [--protect] [--widen] [--apply]` | `POST /v1/tighten {"mike", "sentence", "comma", "mid", "midMin", "min", "keep", "protect", "widen", "apply"}` | `tighten` |
 | join | `tandem join [--from] [--to] [--apply]` | `POST /v1/join {"from", "to", "apply"}` | `join` |
 | captions | `tandem captions [--from] [--to] [--max-words] [--y] [--apply]` | `POST /v1/captions {"from", "to", "words", "y", "apply"}` | `captions` |
 | short | `tandem short [--apply]` | `POST /v1/short {"apply"}` | `short` |

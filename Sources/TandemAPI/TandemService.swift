@@ -376,19 +376,23 @@ public final class TandemService: @unchecked Sendable {
     }
 
     public func tighten(_ request: TightenRequest, context: CallContext) throws -> TightenResult {
-        let minimum = Time(seconds: request.min ?? TranscriptTools.defaultMinimum)
-        let keep = Time(seconds: request.keep ?? TranscriptTools.defaultKeep)
-        guard minimum > .zero else { throw ServiceError(.badRequest, "`min` must be more than 0 seconds.") }
-        guard keep >= .zero, keep < minimum else {
-            throw ServiceError(.badRequest, "`keep` (\(TimeText.duration(keep))) must be shorter than `min` (\(TimeText.duration(minimum))).")
-        }
+        let rules = try pauseRules(for: request)
         let (project, revision) = coordinator.snapshot()
         try checkExpected(request.expectedRevision, at: revision)
         let map = TranscriptTools.speechMap(project, analysis: analysis)
-        let pauses = TranscriptTools.pauses(in: map, minimum: minimum, from: request.from, to: request.to)
-        let cuts = TranscriptTools.plan(pauses, keep: keep, frameRate: project.settings.frameRate)
-        let commands = TranscriptTools.commands(for: cuts)
+        let protect = request.protect ?? []
+        let found = TranscriptTools.pauses(in: map, minimum: min(rules.minimum, rules.midMinimum), from: request.from, to: request.to)
+        let protected = found.filter { TranscriptTools.isProtected($0, by: protect) }
+        let cuts = TranscriptTools.plan(
+            found.filter { !TranscriptTools.isProtected($0, by: protect) }, rules: rules,
+            frameRate: project.settings.frameRate, snug: request.bySentence
+        )
+        let widened = request.widen == true
+            ? TranscriptTools.widening(in: map, project: project, rules: rules, protect: protect, from: request.from, to: request.to) { analysis.transcript(for: $0) }
+            : []
+        let commands = TranscriptTools.commands(for: cuts, widening: widened)
         let removed = cuts.reduce(Time.zero) { $0 + $1.cut.duration }
+        let added = widened.reduce(Time.zero) { $0 + $1.added }
 
         var warnings: [String] = []
         if !map.missing.isEmpty {
@@ -396,21 +400,25 @@ public final class TandemService: @unchecked Sendable {
             warnings.append("No transcript yet for \(names), so pauses there aren't included.")
         }
         let locked = project.allTracks.filter { $0.rippleMode == .cut && $0.locked }.map(\.name)
-        if !locked.isEmpty && !cuts.isEmpty {
+        if !locked.isEmpty && !commands.isEmpty {
             let message = "Track \(locked.map { "\"\($0)\"" }.joined(separator: ", ")) is locked, so tightening would put the take out of sync. Unlock it first."
             if request.apply == true { throw ServiceError(.locked, message) }
             warnings.append(message)
         }
 
+        let bySentence = request.bySentence
         var result = TightenResult(
-            revision: revision, minimum: minimum, keep: keep, cuts: cuts, removed: removed,
-            durationBefore: project.duration, durationAfter: project.duration - removed,
+            revision: revision, minimum: rules.minimum,
+            keep: rules.sentence ?? rules.comma ?? rules.mid ?? .zero,
+            sentence: bySentence ? rules.sentence : nil, comma: bySentence ? rules.comma : nil,
+            mid: bySentence ? rules.mid : nil, midMinimum: bySentence ? rules.midMinimum : nil,
+            cuts: cuts, widened: widened, protected: protected, removed: removed, added: added,
+            durationBefore: project.duration, durationAfter: project.duration - removed + added,
             commands: commands, applied: nil, warnings: warnings, missing: map.missing
         )
-        guard !cuts.isEmpty else { return result }
-        let label = request.label ?? "Tighten \(cuts.count) pause\(cuts.count == 1 ? "" : "s") to \(TimeText.duration(keep))"
+        guard !commands.isEmpty else { return result }
         let apply = ApplyRequest(
-            label: label, author: request.author, commands: commands,
+            label: request.label ?? tightenLabel(result), author: request.author, commands: commands,
             expectedRevision: revision, dryRun: request.apply != true
         )
         let applied = try self.apply(apply, context: context)
@@ -418,6 +426,55 @@ public final class TandemService: @unchecked Sendable {
         result.warnings += applied.warnings
         if request.apply == true { result.applied = applied }
         return result
+    }
+
+    /// The keeps and minimums a tighten request asks for: one keep for every
+    /// pause, or one for each kind of pause (`sentence`, `comma`, `mid`, or
+    /// Mike's rules with `mike`, which the others override).
+    func pauseRules(for request: TightenRequest) throws -> TranscriptTools.PauseRules {
+        func time(_ seconds: Double?) -> Time? { seconds.map { Time(seconds: $0) } }
+        guard request.bySentence else {
+            if request.midMin != nil {
+                throw ServiceError(.badRequest, "`midMin` is for comma and mid-sentence pauses; give `mid` or `comma` (or `mike`) with it.")
+            }
+            let minimum = Time(seconds: request.min ?? TranscriptTools.defaultMinimum)
+            let keep = Time(seconds: request.keep ?? TranscriptTools.defaultKeep)
+            guard minimum > .zero else { throw ServiceError(.badRequest, "`min` must be more than 0 seconds.") }
+            guard keep >= .zero, keep < minimum else {
+                throw ServiceError(.badRequest, "`keep` (\(TimeText.duration(keep))) must be shorter than `min` (\(TimeText.duration(minimum))).")
+            }
+            return .uniform(keep: keep, minimum: minimum)
+        }
+        if request.keep != nil {
+            throw ServiceError(.badRequest, "`keep` is one keep for every pause. With `sentence`, `comma`, `mid` or `mike`, give each kind its own instead.")
+        }
+        let preset = request.mike == true ? TranscriptTools.mikeRules : nil
+        let rules = TranscriptTools.PauseRules(
+            sentence: time(request.sentence) ?? preset?.sentence,
+            comma: time(request.comma) ?? preset?.comma,
+            mid: time(request.mid) ?? preset?.mid,
+            minimum: time(request.min) ?? preset?.minimum ?? Time(seconds: TranscriptTools.defaultSentenceMinimum),
+            midMinimum: time(request.midMin) ?? preset?.midMinimum ?? Time(seconds: TranscriptTools.defaultMidMinimum)
+        )
+        for (name, keep) in [("sentence", rules.sentence), ("comma", rules.comma), ("mid", rules.mid)] {
+            if let keep, keep < .zero { throw ServiceError(.badRequest, "`\(name)` can't be less than 0 seconds.") }
+        }
+        guard rules.minimum > .zero else { throw ServiceError(.badRequest, "`min` must be more than 0 seconds.") }
+        guard rules.midMinimum > .zero else { throw ServiceError(.badRequest, "`midMin` must be more than 0 seconds.") }
+        return rules
+    }
+
+    func tightenLabel(_ result: TightenResult) -> String {
+        let cuts = result.cuts.count, widened = result.widened.count
+        func plural(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
+        guard result.sentence != nil || result.comma != nil || result.mid != nil else {
+            return "Tighten \(plural(cuts, "pause")) to \(TimeText.duration(result.keep))"
+                + (widened > 0 ? ", widen \(plural(widened, "join"))" : "")
+        }
+        var parts: [String] = []
+        if cuts > 0 { parts.append("Tighten \(plural(cuts, "pause"))") }
+        if widened > 0 { parts.append(parts.isEmpty ? "Widen \(plural(widened, "join"))" : "widen \(plural(widened, "join"))") }
+        return parts.joined(separator: ", ") + ": " + result.keepsText
     }
 
     // MARK: - apply

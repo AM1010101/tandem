@@ -182,7 +182,8 @@ struct CLI {
             try args.expectPositionals(atMost: 0, command: name)
             let request = CheckRequest(
                 from: try time(args, "from"), to: try time(args, "to"),
-                changed: args.has("changed") ? true : nil, quick: args.has("quick") ? true : nil, width: try args.integer("width")
+                changed: args.has("changed") ? true : nil, quick: args.has("quick") ? true : nil, cuts: args.has("cuts") ? true : nil,
+                width: try args.integer("width")
             )
             let result = try await client().call(request)
             _ = show(result, json: json)

@@ -62,6 +62,11 @@ public enum EditCommand: Codable, Equatable, Sendable {
     /// tightened. With no `trackIDs` every `.cut` track is cut and `.follow`
     /// tracks follow; named tracks are always cut.
     case rippleDeleteRange(range: TimeRange, trackIDs: [String]? = nil)
+    /// Ripple deletes several ranges, all given in the timeline's times
+    /// before this command. They're cut latest first, so an earlier cut never
+    /// moves a later range, and overlapping or touching ranges are cut once.
+    /// `trackIDs` works as it does for `rippleDeleteRange`.
+    case cutRanges(ranges: [TimeRange], trackIDs: [String]? = nil)
     /// Closes the gap on `trackID` that contains `at`. Fails if another
     /// `.cut` track has something in that gap.
     case closeGap(trackID: String, at: Time)

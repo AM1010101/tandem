@@ -595,6 +595,15 @@ extension CommandSchema {
             example: #"{"rippleDeleteRange": {"range": {"start": 12.4, "duration": 0.8}}}"#
         ),
         Entry(
+            command: .cutRanges,
+            summary: "Ripple deletes several ranges at once, every one in the timeline's times before this command (as you read them), in any order. Tandem cuts them latest first so no cut moves another, and cuts overlapping or touching ranges once. Use it instead of sorting rippleDeleteRange commands latest first yourself.",
+            arguments: S.object([
+                "ranges": S.array(S.ref("TimeRange"), "The stretches to cut: start plus duration, or start and end."),
+                "trackIDs": S.tracks("Only cut these tracks (and ripple from them). Default: every cut track.")
+            ], required: ["ranges"]),
+            example: #"{"cutRanges": {"ranges": [{"start": 12.4, "duration": 0.8}, {"start": 47.1, "duration": 5.5}]}}"#
+        ),
+        Entry(
             command: .closeGap,
             summary: "Closes the gap on a track that contains a time. Fails if another cut track has content in that gap.",
             arguments: S.object(["trackID": S.track(), "at": S.time("Any time inside the gap.")], required: ["trackID", "at"]),

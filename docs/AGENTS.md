@@ -865,6 +865,21 @@ cutting phrases. The range is `start` plus `duration`, or `start` and
 {"rippleDeleteRange": {"range": {"start": 12.4, "duration": 0.8}}}
 ```
 
+#### cutRanges
+
+Ripple deletes several ranges in one go, with every range in the timeline's
+times before the command: the times you read from `pauses`, `search` or
+`transcript`, in any order. Tandem cuts them latest first, so no cut moves
+another, and cuts overlapping or touching ranges once. Use it for a rough
+cut or a list of stumbles instead of sorting `rippleDeleteRange` commands
+latest first yourself. Each range is `start` plus `duration`, or `start`
+and `end`; `trackIDs` works as it does for `rippleDeleteRange`. One undo
+puts them all back.
+
+```json
+{"cutRanges": {"ranges": [{"start": 12.4, "end": 13.2}, {"start": 47.1, "end": 52.6}]}}
+```
+
 #### closeGap
 
 Closes the gap on a track that contains a time. Fails if another cut track

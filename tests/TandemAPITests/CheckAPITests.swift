@@ -1,3 +1,4 @@
+import AVFoundation
 import XCTest
 @testable import TandemAPI
 @testable import TandemCore
@@ -152,7 +153,7 @@ final class CheckAPITests: XCTestCase {
     func testRequestsThatDontMakeSenseAreRefused() async throws {
         let h = try ServiceHarness()
         defer { h.close() }
-        for request in [CheckRequest(from: t(10), to: t(5)), CheckRequest(from: t(1), changed: true), CheckRequest(width: 10)] {
+        for request in [CheckRequest(from: t(10), to: t(5)), CheckRequest(from: t(1), changed: true), CheckRequest(width: 10), CheckRequest(quick: true, cuts: true)] {
             do {
                 _ = try await request.run(on: h.service, context: h.context)
                 XCTFail("\(request) should be refused")
@@ -162,10 +163,108 @@ final class CheckAPITests: XCTestCase {
         }
     }
 
+    // MARK: - Cuts
+
+    /// The camera's sound as a 16 kHz WAV: room noise, with "words" (a buzz
+    /// of harmonics) where `words` says, in file time.
+    private func writeVoice(to url: URL, length: Double, words: [(Double, Double)]) throws {
+        let rate = 16_000.0
+        let count = Int(length * rate)
+        let format = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 1)!
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(count))!
+        buffer.frameLength = AVAudioFrameCount(count)
+        let data = buffer.floatChannelData![0]
+        var seed: UInt32 = 7
+        var rumble: Float = 0
+        for i in 0..<count {
+            seed = seed &* 1_664_525 &+ 1_013_904_223
+            rumble += (Float(Int32(bitPattern: seed)) / Float(Int32.max) - rumble) * 0.04
+            data[i] = rumble * 0.03
+        }
+        for (start, end) in words {
+            let from = Int(start * rate), to = Int(end * rate)
+            for i in from..<to {
+                let t = Double(i) / rate
+                let fade = min(1, Double(i - from) / 80, Double(to - i) / 80)
+                var buzz = 0.0
+                for harmonic in stride(from: 150.0, through: 3000, by: 150) { buzz += sin(2 * .pi * harmonic * t) / (harmonic / 150) }
+                data[i] += Float(buzz * 0.08 * fade)
+            }
+        }
+        let file = try AVAudioFile(forWriting: url, settings: [
+            AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: rate, AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false
+        ], commonFormat: .pcmFormatFloat32, interleaved: false)
+        try file.write(from: buffer)
+    }
+
+    /// The fixture with the camera's sound in a WAV file that's really there.
+    private func voicedHarness(words: [(Double, Double)]) throws -> ServiceHarness {
+        var project = APIFixture.project()
+        project.media[0].path = "source/take1-camera.wav"
+        let h = try ServiceHarness(project: project)
+        try FileManager.default.createDirectory(at: h.folder.file("source"), withIntermediateDirectories: true)
+        try writeVoice(to: h.folder.file("source/take1-camera.wav"), length: 64, words: words)
+        return h
+    }
+
+    func testAWordRunningPastACutIsAProblemWithItsFix() async throws {
+        // "section." runs on 0.12 s past file time 30, where the first piece
+        // of the take ends; "Now" starts well after the second piece does (32).
+        let h = try voicedHarness(words: [(1, 3.6), (29.5, 30.12), (30.5, 31.4), (32.3, 32.8)])
+        defer { h.close() }
+        let result = try await CheckRequest(cuts: true).run(on: h.service, context: h.context)
+        XCTAssertFalse(result.ok)
+        XCTAssertEqual(result.frames, 0, "nothing rendered")
+        XCTAssertEqual(result.cuts, 4, "the take's start, the cut at 30 (both sides) and its end")
+        XCTAssertEqual(result.problems.map(\.kind), [.clippedWord])
+        let problem = try XCTUnwrap(result.problems.first)
+        XCTAssertEqual(problem.start, t(30))
+        XCTAssertEqual(problem.clipIDs, ["clip_voc1", "clip_voc2"])
+        let cut = try XCTUnwrap(problem.cut)
+        XCTAssertEqual(cut.clipID, "clip_voc1")
+        XCTAssertEqual(cut.edge, .end)
+        // Just into the pause after the word (30.16), on a frame.
+        let to = t(30) + Time.frames(5, at: .fps30)
+        XCTAssertEqual(cut.to, to)
+        let fix = EditCommand.trim(clipID: "clip_voc1", edge: .end, to: to, ripple: true, includeLinked: nil)
+        XCTAssertEqual(result.commands, [fix])
+        XCTAssertEqual(result.revision, h.service.coordinator.revision)
+
+        let text = result.readableText
+        XCTAssertTrue(text.hasPrefix("Checked 00:00.000-01:00.000 (4 cut edges) in "), text)
+        XCTAssertTrue(text.contains("  00:30.000  Clipped word at the end of clip_voc1: the voice runs on 0.12 s past the cut. Trim the end 0.167 s later, into the pause after it.  On: clip_voc1 take1-camera, clip_voc2 take1-camera"), text)
+        XCTAssertTrue(text.contains("Fix: tandem apply --expect \(result.revision ?? 0) --label \"Move clipped cuts into pauses\" '[{\"trim\":"), text)
+
+        // Applying the fix leaves nothing to find.
+        try h.service.apply(ApplyRequest(label: "fix", commands: result.commands), context: h.context)
+        let again = try await CheckRequest(cuts: true).run(on: h.service, context: h.context)
+        XCTAssertTrue(again.ok, "\(again.problems)")
+        XCTAssertTrue(again.commands.isEmpty)
+    }
+
+    func testCutsInPausesAreFine() async throws {
+        let h = try voicedHarness(words: [(1, 3.6), (29.5, 29.9), (32.3, 32.8)])
+        defer { h.close() }
+        let result = try await CheckRequest(from: t(25), to: t(35), cuts: true).run(on: h.service, context: h.context)
+        XCTAssertTrue(result.ok, "\(result.problems)")
+        XCTAssertEqual(result.cuts, 2, "only the cut in the stretch checked")
+        XCTAssertTrue(result.readableText.contains("no problems."), result.readableText)
+    }
+
+    func testCutsWithNoSoundToReadSaySo() async throws {
+        let h = try ServiceHarness()
+        defer { h.close() }
+        let result = try await CheckRequest(cuts: true).run(on: h.service, context: h.context)
+        XCTAssertTrue(result.ok)
+        XCTAssertEqual(result.warnings, ["Couldn't read the sound of take1-camera.mov, so its cuts weren't checked."])
+    }
+
     func testTheRequestReadsFriendlyTimes() throws {
-        let request = try ServiceJSON.decodeRequest(CheckRequest.self, from: Data(#"{"from": "5:40", "to": 371, "quick": true}"#.utf8))
+        let request = try ServiceJSON.decodeRequest(CheckRequest.self, from: Data(#"{"from": "5:40", "to": 371, "quick": true, "cuts": true}"#.utf8))
         XCTAssertEqual(request.from, t(340))
         XCTAssertEqual(request.to, t(371))
         XCTAssertEqual(request.quick, true)
+        XCTAssertEqual(request.cuts, true)
     }
 }

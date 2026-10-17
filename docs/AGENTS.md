@@ -53,7 +53,7 @@ tandem short [--apply]             lay out a 9:16 short from the same edit
 tandem cards [--insert] [--no-sounds] [--apply]   a section card at every section marker
 tandem apply <batch.json | - | '<json>'>   [--dry-run] [--expect N] [--label L] [--key K]
 tandem undo [--count N] [--expect N]    tandem redo [--count N]    tandem history    tandem validate
-tandem check [--changed | --from T --to T] [--quick]   what Mike would catch: black, flickers, keys, dead air, bare page changes
+tandem check [--changed | --from T --to T] [--quick | --cuts]   what Mike would catch: black, flickers, keys, dead air, bare page changes; --cuts: clipped words
 tandem frame <time> [-o out.png]   tandem clip <start> <end> [-o out.mp4]
 tandem frames <time>... | --every S [--from T] [--to T]  [-o sheet.png] [--width 480]   one labelled contact sheet
 tandem export [--preset <name>] [-o out.mp4] [--from T] [--to T] [--format <id>]
@@ -529,6 +529,41 @@ clips in the range).
     13:34.380-13:35.180  Dead air: 0.80 s with nothing said, no sound effect or music swell, and a still picture (after "is called the committer."). Cut it, or keep it if the pause earns it.  On: clip_nyc6dj73 2026-10-02_110856-camera, clip_5z5qpmkz 2026-10-02_110856-screen
     13:44.650-13:45.467  Dead air: 0.82 s with nothing said, no sound effect or music swell, and a still picture (after "one at a time."). Cut it, or keep it if the pause earns it.  On: clip_p8v54ivp 2026-10-02_110856-camera, clip_cmqvrmad 2026-10-02_110856-screen
     13:45.467-13:45.633  Page change inside a clip, with no transition: 18% of the screen recording changes at once, then holds. If it's a new page, push it: freeze 0.35 s either side and push between the freezes.  On: clip_huxupr6f 2026-10-02_110856-screen
+  ```
+
+  `tandem check --cuts` (MCP and HTTP `cuts: true`) checks only for words
+  clipped at cuts, and renders nothing, so it's quick. Run it after
+  cutting the take, with `--changed` or `--from`/`--to` as above. Most of
+  Mike's "word gets cut off" comments were cuts placed from transcript
+  word times, which can be half a second out, or snapped to the quietest
+  point near a word's end, which lands in the gaps inside words. So it
+  goes by the sound instead. For every cut edge on the speech tracks (two
+  pieces of the take meeting, not a through-edit, or a piece beside a gap)
+  it reads the file's own sound either side of the edit, in 10 ms frames,
+  over the full band and again above 4 kHz, where a final "s" or "t" is
+  heard. Quiet is 10 dB over the take's noise floor (its quietest tenth
+  around the cuts), and never more than 30 dB under its loud tenth. A real
+  pause is quiet for 0.08 s or more in both bands; a shorter gap (the
+  closure before the "k" of "takes") is inside a word.
+
+  An edge is fine if the frame on either side of it is in a real pause:
+  the clip ends in silence, or ends right as a word it doesn't keep
+  starts. Otherwise the voice runs through the cut and a word is clipped,
+  a problem that fails the check. Each one says which clip's start or end,
+  how much of the voice is cut off, and the trim (with ripple) that moves
+  the edge into the nearest real pause within 0.3 s, 0.04 s into it and on
+  a frame where one lands there. The nearer pause is the side with less
+  of the word, so it finishes a word that's mostly kept and drops a
+  fragment that's mostly cut, as transcript placement does. The last line
+  is a `tandem apply` that makes every fix (in `--json`, `commands`,
+  latest first, and `revision`; each problem's `cut` has `clipID`, `edge`,
+  `to` and `fix`). Listen to the ones it can't fix (no pause within reach)
+  with `tandem clip`.
+
+  ```
+  Checked 00:00.000-01:00.000 (4 cut edges) in 0.1 s: 1 problem:
+    00:30.000  Clipped word at the end of clip_voc1: the voice runs on 0.12 s past the cut. Trim the end 0.167 s later, into the pause after it.  On: clip_voc1 take1-camera, clip_voc2 take1-camera
+  Fix: tandem apply --expect 7 --label "Move clipped cuts into pauses" '[{"trim":{"clipID":"clip_voc1","edge":"end","ripple":true,"to":30.166667}}]'
   ```
 - Titles in a font this Mac doesn't have are drawn in SF Pro, and never
   quietly: `frame`, `clip`, `export`, `captions`, `status` and `validate`
@@ -1537,7 +1572,8 @@ no breath is left behind (`tandem pauses --from 2:10 --to 2:20` shows them):
 ]}
 ```
 
-Then check it with `tandem clip 2:08 2:20`.
+Then check it with `tandem check --cuts --from 2:10 --to 2:20` (it gives the
+trim if a word got clipped) and listen with `tandem clip 2:08 2:20`.
 
 ### Put B-roll over a sentence
 
@@ -2063,7 +2099,7 @@ still when it's beside it. It's one undo step.
 | undo, redo | `tandem undo [--count N]`, `tandem redo [--count N]` | `POST /v1/undo`, `/v1/redo` `{"count", "expectedRevision"}` | `undo`, `redo` |
 | history | `tandem history` | `POST /v1/history` | `history` |
 | validate | `tandem validate` | `POST /v1/validate` | `validate` |
-| check | `tandem check [--changed]` | `POST /v1/check {"from", "to", "changed", "quick"}` | `check` |
+| check | `tandem check [--changed] [--quick \| --cuts]` | `POST /v1/check {"from", "to", "changed", "quick", "cuts"}` | `check` |
 | frame | `tandem frame <time> -o out.png` | `POST /v1/frame {"time", "output"}` | `frame` (image) |
 | frames | `tandem frames <time>... [--every] [--from] [--to] -o sheet.png` | `POST /v1/frames {"times", "every", "from", "to", "width", "output"}` | `frames` (image) |
 | screenshot | | `POST /v1/screenshot` | `screenshot` (app only) |

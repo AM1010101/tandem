@@ -12,14 +12,18 @@ public struct CheckRequest: ServiceCall {
     public var changed: Bool?
     /// Only the checks that need no rendering: gaps, soft pictures and slivers.
     public var quick: Bool?
+    /// Only the cuts on the speech tracks: does the voice run right up to
+    /// one (a clipped word)? Reads the files' sound, renders nothing.
+    public var cuts: Bool?
     /// How wide frames are rendered for the scan. Default 384.
     public var width: Int?
 
-    public init(from: Time? = nil, to: Time? = nil, changed: Bool? = nil, quick: Bool? = nil, width: Int? = nil) {
+    public init(from: Time? = nil, to: Time? = nil, changed: Bool? = nil, quick: Bool? = nil, cuts: Bool? = nil, width: Int? = nil) {
         self.from = from
         self.to = to
         self.changed = changed
         self.quick = quick
+        self.cuts = cuts
         self.width = width
     }
 
@@ -29,6 +33,7 @@ public struct CheckRequest: ServiceCall {
         to = try c.decodeTime(.to)
         changed = try c.decodeIfPresent(Bool.self, forKey: .changed)
         quick = try c.decodeIfPresent(Bool.self, forKey: .quick)
+        cuts = try c.decodeIfPresent(Bool.self, forKey: .cuts)
         width = try c.decodeIfPresent(Int.self, forKey: .width)
     }
 
@@ -60,14 +65,24 @@ public struct CheckResult: Codable, Sendable {
     /// Why nothing was checked, when nothing was.
     public var note: String?
     public var warnings: [String]
+    /// With `cuts`: how many cut edges on the speech tracks were checked.
+    public var cuts: Int?
+    /// With `cuts`: the trims that move each clipped edge into its pause,
+    /// latest first. Pass them to `apply` with `revision`.
+    public var commands: [EditCommand]
+    /// The revision the check read, for `commands`.
+    public var revision: Int?
 
     public var ok: Bool { problems.isEmpty }
 
     enum CodingKeys: String, CodingKey {
-        case ranges, frames, seconds, problems, notes, clipNames, note, warnings, ok
+        case ranges, frames, seconds, problems, notes, clipNames, note, warnings, cuts, commands, revision, ok
     }
 
-    public init(ranges: [TimeRange], frames: Int, seconds: Double, problems: [CheckProblem], notes: [CheckProblem] = [], clipNames: [String: String], note: String? = nil, warnings: [String] = []) {
+    public init(
+        ranges: [TimeRange], frames: Int, seconds: Double, problems: [CheckProblem], notes: [CheckProblem] = [], clipNames: [String: String],
+        note: String? = nil, warnings: [String] = [], cuts: Int? = nil, commands: [EditCommand] = [], revision: Int? = nil
+    ) {
         self.ranges = ranges
         self.frames = frames
         self.seconds = seconds
@@ -76,6 +91,9 @@ public struct CheckResult: Codable, Sendable {
         self.clipNames = clipNames
         self.note = note
         self.warnings = warnings
+        self.cuts = cuts
+        self.commands = commands
+        self.revision = revision
     }
 
     public init(from decoder: Decoder) throws {
@@ -88,6 +106,9 @@ public struct CheckResult: Codable, Sendable {
         clipNames = try c.decodeIfPresent([String: String].self, forKey: .clipNames) ?? [:]
         note = try c.decodeIfPresent(String.self, forKey: .note)
         warnings = try c.decodeIfPresent([String].self, forKey: .warnings) ?? []
+        cuts = try c.decodeIfPresent(Int.self, forKey: .cuts)
+        commands = try c.decodeIfPresent([EditCommand].self, forKey: .commands) ?? []
+        revision = try c.decodeIfPresent(Int.self, forKey: .revision)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -100,6 +121,9 @@ public struct CheckResult: Codable, Sendable {
         try c.encode(clipNames, forKey: .clipNames)
         try c.encodeIfPresent(note, forKey: .note)
         if !warnings.isEmpty { try c.encode(warnings, forKey: .warnings) }
+        try c.encodeIfPresent(cuts, forKey: .cuts)
+        if cuts != nil { try c.encode(commands, forKey: .commands) }
+        try c.encodeIfPresent(revision, forKey: .revision)
         try c.encode(ok, forKey: .ok)
     }
 }
@@ -110,11 +134,12 @@ extension CheckResult: ReadableResult {
     public var readableText: String {
         if ranges.isEmpty { return note ?? "Nothing to check." }
         let stretches = ranges.map { "\($0.start)-\($0.end)" }.joined(separator: ", ")
-        let scanned = frames > 0 ? "\(frames) frames" : "quick: no frames rendered"
+        let scanned = cuts.map { "\($0) cut edge\($0 == 1 ? "" : "s")" } ?? (frames > 0 ? "\(frames) frames" : "quick: no frames rendered")
         let verdict = problems.isEmpty ? "no problems." : "\(problems.count) problem\(problems.count == 1 ? "" : "s"):"
         var lines = ["Checked \(stretches) (\(scanned)) in \(String(format: "%.1f", seconds)) s: \(verdict)"]
         func line(_ problem: CheckProblem) -> String {
-            var line = "  \(problem.start)-\(problem.end)  \(problem.message)"
+            let when = problem.start == problem.end ? "\(problem.start)" : "\(problem.start)-\(problem.end)"
+            var line = "  \(when)  \(problem.message)"
             if !problem.clipIDs.isEmpty {
                 let clips = problem.clipIDs.prefix(3).map { id in clipNames[id].map { "\(id) \($0)" } ?? id }
                 line += "  On: " + clips.joined(separator: ", ")
@@ -127,6 +152,13 @@ extension CheckResult: ReadableResult {
             lines += notes.map(line)
         }
         lines += warnings.map { "Warning: \($0)" }
+        if !commands.isEmpty {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            let batch = (try? encoder.encode(commands)).map { String(decoding: $0, as: UTF8.self) } ?? "[]"
+            let expect = revision.map { " --expect \($0)" } ?? ""
+            lines.append("Fix: tandem apply\(expect) --label \"\(CutCheck.label)\" '\(batch)'")
+        }
         return lines.joined(separator: "\n")
     }
 }
@@ -160,6 +192,26 @@ extension TandemService {
             ranges = [TimeRange(start: start, end: end)]
         }
         ranges = QualityCheck.merge(ranges)
+        if request.cuts == true {
+            if request.quick == true { throw ServiceError(.badRequest, "A cuts check renders nothing already, so it doesn't take quick.") }
+            let folder = self.folder
+            let revision = coordinator.revision
+            let toCheck = ranges
+            let why = note
+            return {
+                let started = Date()
+                let outcome = toCheck.isEmpty ? CutCheck.Outcome() : await CutCheck.run(project: project, folder: folder, ranges: toCheck)
+                var names: [String: String] = [:]
+                for id in Set(outcome.problems.flatMap(\.clipIDs)) {
+                    guard let clip = project.clip(id) else { continue }
+                    names[id] = Self.checkName(clip, in: project)
+                }
+                return CheckResult(
+                    ranges: toCheck, frames: 0, seconds: Date().timeIntervalSince(started), problems: outcome.problems,
+                    clipNames: names, note: why, warnings: outcome.warnings, cuts: outcome.checked, commands: outcome.commands, revision: revision
+                )
+            }
+        }
         let width = request.width ?? 384
         guard (64...1920).contains(width) else { throw ServiceError(.badRequest, "width is 64 to 1920 pixels.") }
         // Proxies where they're ready: the check looks for what's wrong in

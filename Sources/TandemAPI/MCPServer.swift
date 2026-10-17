@@ -649,13 +649,14 @@ enum MCPTools {
         ),
         Tool(
             name: "check", title: "Check for problems",
-            description: "Looks for what Mike would otherwise catch in review: black frames and gaps, one-frame flickers, green screens that didn't key and white blocks that come and go. Notes, which don't fail it, are judgement calls: pictures zoomed past their own pixels; dead air (0.8 s or more of a still picture with nothing said and no sound effect or music swell: cut it, or keep it if the pause earns it); and page changes on the screen recording with no transition (push them if they're pages in an explainer or slides); and slivers, clips or gaps between clips on a track shorter than a frame. Renders the frames small, so a minute takes seconds. Run it with changed: true on what you changed before handing back. ok is false when it finds a problem.",
+            description: "Looks for what Mike would otherwise catch in review: black frames and gaps, one-frame flickers, green screens that didn't key and white blocks that come and go. Notes, which don't fail it, are judgement calls: pictures zoomed past their own pixels; dead air (0.8 s or more of a still picture with nothing said and no sound effect or music swell: cut it, or keep it if the pause earns it); and page changes on the screen recording with no transition (push them if they're pages in an explainer or slides); and slivers, clips or gaps between clips on a track shorter than a frame. Renders the frames small, so a minute takes seconds. Run it with changed: true on what you changed before handing back. With cuts: true it checks only for words clipped at cuts, and gives the trims that fix them. ok is false when it finds a problem.",
             operation: .check,
             properties: [
                 "from": time("Start. Default 0."),
                 "to": time("End. Default the end of the timeline."),
                 "changed": S.boolean("Only the stretches agents changed that are waiting for Mike's review."),
                 "quick": S.boolean("Only the checks that need no rendering: gaps, slivers and pictures zoomed past their own pixels. No dead air or page changes."),
+                "cuts": S.boolean("Only the cuts on the speech tracks, from the files' own sound (nothing rendered): a clippedWord problem where the voice runs right up to a cut, full band or above 4 kHz (a final \"s\"). Each has cut.fix, a trim into the nearest real pause (0.08 s quiet in both bands) within 0.3 s; commands holds them all, latest first, to apply with expectedRevision: revision. Run it after cutting the take."),
                 "width": S.integer("How wide frames are rendered for the scan. Default 384.")
             ],
             readOnly: true, idempotent: true

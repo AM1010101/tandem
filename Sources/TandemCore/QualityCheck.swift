@@ -29,6 +29,9 @@ public struct CheckProblem: Codable, Equatable, Sendable {
         /// A clip, or a gap between two clips on a track, shorter than a
         /// frame: usually rounding in an agent's batch.
         case sliver
+        /// The voice runs right up to a cut in its file: a word is clipped
+        /// (`tandem check --cuts`).
+        case clippedWord
 
         /// Worth knowing rather than wrong: Mike signed off softer zooms on
         /// cartoon B-roll than on screen recordings, a pause can let a point
@@ -45,14 +48,35 @@ public struct CheckProblem: Codable, Equatable, Sendable {
     public var message: String
     /// The clips there: the pictures on screen, top first, or the soft clip.
     public var clipIDs: [String]
+    /// For a clipped word, the clip edge and where to move it.
+    public var cut: CutEdge?
 
-    public init(kind: Kind, start: Time, end: Time, frames: Int? = nil, message: String, clipIDs: [String] = []) {
+    public init(kind: Kind, start: Time, end: Time, frames: Int? = nil, message: String, clipIDs: [String] = [], cut: CutEdge? = nil) {
         self.kind = kind
         self.start = start
         self.end = end
         self.frames = frames
         self.message = message
         self.clipIDs = clipIDs
+        self.cut = cut
+    }
+
+    /// The edge of a speech clip a word is clipped at.
+    public struct CutEdge: Codable, Equatable, Sendable {
+        public var clipID: String
+        public var edge: ClipEdge
+        /// Where to trim the edge to (timeline time, with ripple), into the
+        /// nearest real pause. Nil when there's none near enough.
+        public var to: Time?
+        /// The trim that does it.
+        public var fix: EditCommand?
+
+        public init(clipID: String, edge: ClipEdge, to: Time? = nil, fix: EditCommand? = nil) {
+            self.clipID = clipID
+            self.edge = edge
+            self.to = to
+            self.fix = fix
+        }
     }
 }
 

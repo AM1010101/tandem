@@ -68,7 +68,8 @@ rounds up.
    changed instead of trusting the numbers.
 4. **Check.** `tandem check --changed` before you hand back. It renders
    what you changed and finds black frames, flickers, green screen that
-   didn't key and white blocks. Fix every problem it reports. Its notes
+   didn't key and white blocks. If you cut the take, also run
+   `tandem check --changed --cuts` for words clipped at the cuts. Fix every problem it reports. Its notes
    are judgement calls, but go through each one:
    - soft zooms;
    - dead air: 0.8 s or more of a still picture with nothing said and no
@@ -290,17 +291,20 @@ From his review comments on the Daytona and Build Your Own Convex videos
 - **Check cuts against the voice, not the transcript alone.** Word times
   can be off by up to 0.5 s ("since when?" ended half a second after the
   transcript said, and a drawn-out "Aaall... right" started 0.9 s early).
-  Most of his "word gets cut off" comments were this. `tandem pauses` has
-  the voice's real edges; listen with `tandem clip` when unsure.
-  Don't snap a cut to the "quietest point near the word end" either: inside
-  a word there are short quiet gaps (the closure before the "k" of "takes"
-  or the "t" of "parts"), and a final "s" hardly registers below 4 kHz, so
-  the snap lands mid-word and cuts "takes" to "ta" (three of these on the
-  Tandem video, October 2026). A real pause is quiet for 80 ms or more in
-  the full band and above 4 kHz alike. Words the transcript runs straight
-  into the next ("takes" ending exactly as "and" starts) are where it guesses,
-  so check those cuts first, and confirm a fix by running Whisper on the
-  `tandem clip` of the cut.
+  Most of his "word gets cut off" comments were this. After cutting, run
+  `tandem check --cuts` (with `--changed` or `--from`/`--to`): it reads the
+  take's own sound either side of every cut, full band and above 4 kHz,
+  flags each one the voice runs through, and ends with a `tandem apply`
+  that trims each clipped edge into the nearest real pause. Use it instead
+  of writing your own energy script or running Whisper on a `tandem clip`
+  (agents wrote that script about 15 times). Don't snap a cut to the
+  "quietest point near the word end" by hand either: inside a word there
+  are short quiet gaps (the closure before the "k" of "takes" or the "t" of
+  "parts"), and a final "s" hardly registers below 4 kHz, so the snap lands
+  mid-word and cuts "takes" to "ta" (three of these on the Tandem video,
+  October 2026). A real pause is quiet for 80 ms or more in the full band
+  and above 4 kHz alike, which is what the check goes by. Listen with
+  `tandem clip` to any it can't fix (no pause within 0.3 s).
 - **Before uploading,** watch the start of the export, where sync problems
   show first. The limiter takes about 8 dB off his voice's peaks to reach
   -14 LUFS, and he hears that as artificial, so he asked for -16 after

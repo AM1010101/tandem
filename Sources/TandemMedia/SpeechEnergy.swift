@@ -115,34 +115,63 @@ public struct SpeechEnergy: Sendable {
     }
 }
 
-/// What counts as quiet in a take, in each band: 10 dB over its noise floor
-/// (the quietest tenth of its frames), and never more than 30 dB under its
-/// loud tenth, so digital silence doesn't drag it down to nothing. The same
-/// rule `TranscriptAlignment` finds the voice with, so both agree on where
-/// a word is.
+/// What counts as quiet, and as speech, in a take, from the frames read
+/// around its cuts: its noise floor (the quietest tenth) and its loud
+/// tenth, in each band.
+///
+/// Quiet is 10 dB over the floor, and never more than 25 dB under the loud
+/// tenth in the full band, or 15 dB under it above 4 kHz. Breath, mouth
+/// noise and room tone reach above 4 kHz too, and on the Tandem video
+/// (October 2026) a high-band threshold set from the floor alone called
+/// them voice at half the edges of an edit Mike had approved. Speech, the
+/// level a clipped word has to reach to count, is within 20 dB of the loud
+/// tenth in the full band and 10 dB above 4 kHz, where an "s" sits.
 public struct SpeechLevels: Equatable, Sendable {
+    /// Quiet is under these.
     public var full: Float
     public var high: Float
+    /// Speech is at or over these.
+    public var fullSpeech: Float
+    public var highSpeech: Float
+    /// The loud tenth above 4 kHz: a "k" or "t" released after its closure
+    /// gets near it.
+    public var highLoud: Float
+    /// A take whose loud tenth is this quiet carries no voice (a screen
+    /// recording's system sound, mostly digital silence), so its cuts
+    /// aren't judged.
+    public var isVoice: Bool
 
     static let overFloor: Float = 10
-    static let underLoud: Float = 30
+    static let quietUnderLoud: Float = 25
+    static let highQuietUnderLoud: Float = 15
+    static let speechUnderLoud: Float = 20
+    static let highSpeechUnderLoud: Float = 10
+    static let quietestVoice: Float = -60
 
-    public init(full: Float, high: Float) {
+    public init(full: Float, high: Float, fullSpeech: Float, highSpeech: Float, highLoud: Float, isVoice: Bool = true) {
         self.full = full
         self.high = high
+        self.fullSpeech = fullSpeech
+        self.highSpeech = highSpeech
+        self.highLoud = highLoud
+        self.isVoice = isVoice
     }
 
-    /// Thresholds from every frame read of one take.
+    /// Levels from every frame read of one take.
     public init(of readings: [SpeechEnergy]) {
-        func threshold(_ values: [Float]) -> Float {
+        func spread(_ values: [Float]) -> (floor: Float, loud: Float) {
             let sorted = values.sorted()
-            guard !sorted.isEmpty else { return -110 }
-            let floor = sorted[sorted.count / 10]
-            let loud = sorted[min(sorted.count - 1, sorted.count * 9 / 10)]
-            return max(floor + Self.overFloor, loud - Self.underLoud)
+            guard !sorted.isEmpty else { return (-120, -120) }
+            return (sorted[sorted.count / 10], sorted[min(sorted.count - 1, sorted.count * 9 / 10)])
         }
-        full = threshold(readings.flatMap(\.full))
-        high = threshold(readings.flatMap(\.high))
+        let full = spread(readings.flatMap(\.full))
+        let high = spread(readings.flatMap(\.high))
+        self.full = max(full.floor + Self.overFloor, full.loud - Self.quietUnderLoud)
+        self.high = max(high.floor + Self.overFloor, high.loud - Self.highQuietUnderLoud)
+        fullSpeech = max(self.full, full.loud - Self.speechUnderLoud)
+        highSpeech = max(self.high, high.loud - Self.highSpeechUnderLoud)
+        highLoud = high.loud
+        isVoice = full.loud > Self.quietestVoice
     }
 }
 
@@ -153,6 +182,17 @@ public struct SpeechLevels: Equatable, Sendable {
 /// 4 kHz alike. Shorter quiet gaps are inside words (the closure before the
 /// "k" of "takes"), so a cut in one still clips the word, and snapping a
 /// cut to the quietest point near a word's end lands in one of those.
+///
+/// An edge out of a pause is only a clipped word when it's worth hearing:
+/// at least `minSpeech` of speech-level voice on both sides (less on the
+/// kept side is a fragment, less on the cut side a tail nobody misses),
+/// and the edge not in a dip between two sounds. Fluent speech often has
+/// no 80 ms pause between words, so a cut between them lands in a dip
+/// (12 dB under the voice either side) and is fine; the exception is the
+/// end of a clip in a closure, with the "k" or "t" released at speech
+/// level right after it. On the Tandem video, an edit Mike approved, the
+/// first version of this check flagged 144 of 758 edges; these rules leave
+/// 6, each a cut through a sound.
 public enum CutAudit {
     public static let minPause = 0.08
     /// How far an edge may move to reach a pause.
@@ -160,6 +200,12 @@ public enum CutAudit {
     /// How far into the pause a moved edge goes, so the word's tail (or the
     /// breath before the next one) isn't right on the cut.
     public static let pad = 0.04
+    /// Voice at speech level a clipped word has on each side of the edge.
+    public static let minSpeech = 0.05
+    /// How far under the voice either side an edge is in a dip.
+    static let dip: Float = 12
+    /// How near the high band's loud tenth a release after a closure gets.
+    static let release: Float = 8
 
     /// Which side of the edge the clip plays: `before` for a clip's end
     /// (it plays up to the edge), `after` for a clip's start.
@@ -212,6 +258,37 @@ public enum CutAudit {
         let (keptFrame, keptStep, lostFrame, lostStep) = side == .before ? (before, -1, after, 1) : (after, 1, before, -1)
         if isPause(keptFrame) || isPause(lostFrame) { return .clean }
 
+        let reachFrames = Int((reach / step).rounded())
+        /// Frames from `frame` going `direction`, up to a pause or `reach`.
+        func stretch(_ frame: Int, _ direction: Int) -> [Int] {
+            var frames: [Int] = []
+            var index = frame
+            while !isPause(index), frames.count < reachFrames {
+                frames.append(index)
+                index += direction
+            }
+            return frames
+        }
+        func speech(_ frames: [Int]) -> (full: Int, high: Int) {
+            (frames.filter { energy.full[$0] >= levels.fullSpeech }.count, frames.filter { energy.high[$0] >= levels.highSpeech }.count)
+        }
+        let lostSpeech = speech(stretch(lostFrame, lostStep))
+        let keptSpeech = speech(stretch(keptFrame, keptStep))
+        let enough = Int((minSpeech / step).rounded())
+        guard max(lostSpeech.full, lostSpeech.high) >= enough, max(keptSpeech.full, keptSpeech.high) >= enough else { return .clean }
+
+        func level(_ frames: [Int], _ band: [Float]) -> Float {
+            frames.filter { $0 >= 0 && $0 < count }.map { band[$0] }.max() ?? -120
+        }
+        let near = Int((0.1 / step).rounded())
+        // Past the frames read is the file's start or end: silence.
+        let edgeLevel = (before - 1...after + 1).map { $0 >= 0 && $0 < count ? energy.full[$0] : -120 }.min() ?? -120
+        let keptPeak = level((0..<near).map { keptFrame + $0 * keptStep }, energy.full)
+        let lostPeak = level((0..<near).map { lostFrame + $0 * lostStep }, energy.full)
+        let inDip = edgeLevel <= min(keptPeak, lostPeak) - dip
+        let released = side == .before && level((0..<3).map { lostFrame + $0 }, energy.high) >= levels.highLoud + release
+        if inDip && !released { return .clean }
+
         /// The first pause frame from `frame` going `direction`, and how far
         /// its near edge is from `time`.
         func nearestPause(from frame: Int, _ direction: Int) -> (frame: Int, distance: Double) {
@@ -232,22 +309,9 @@ public enum CutAudit {
             break
         }
 
-        // What's cut off, up to the pause or `reach`: heard in the full band,
-        // or only above 4 kHz?
-        let reachFrames = Int((reach / step).rounded())
-        var heardFull = false, heardHigh = false
-        var index = lostFrame
-        while index != lostPause.frame, abs(index - lostFrame) <= reachFrames {
-            if index >= 0, index < count {
-                if energy.full[index] >= levels.full { heardFull = true }
-                if energy.high[index] >= levels.high { heardHigh = true }
-            }
-            index += lostStep
-        }
-
         var edge = Edge(
             clipped: true, kept: keptPause.distance, lost: lostPause.distance <= reach + 1e-9 ? lostPause.distance : nil,
-            gap: gap, highBandOnly: heardHigh && !heardFull, pause: nil, suggestion: nil
+            gap: gap, highBandOnly: lostSpeech.full == 0, pause: nil, suggestion: nil
         )
         let options = [(lostPause, lostStep), (keptPause, keptStep)].filter { $0.0.distance <= reach + 1e-9 }
         guard let (pause, direction) = options.min(by: { $0.0.distance < $1.0.distance }) else { return edge }

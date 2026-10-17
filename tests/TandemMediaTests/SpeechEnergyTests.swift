@@ -5,13 +5,15 @@ import XCTest
 /// A few seconds of a made-up take at 32 kHz: a low hum of room noise, a
 /// faint hiss over it, and "words" (a buzz of harmonics up to 3 kHz) and
 /// "s" sounds (hiss above 4 kHz that hardly registers in the full band)
-/// where asked. Times are media seconds from `start`.
+/// and "k" releases (a loud burst of the same hiss) where asked. Times are
+/// media seconds from `start`.
 private struct Take {
     static let rate = 32_000.0
     var start = 10.0
     var length = 4.0
     var words: [(Double, Double)] = []
     var esses: [(Double, Double)] = []
+    var releases: [(Double, Double)] = []
 
     var samples: [Float] {
         let count = Int(length * Self.rate)
@@ -48,14 +50,14 @@ private struct Take {
                 out[i] += Float(buzz * 0.08) * fade(i, in: range)
             }
         }
-        for ess in esses {
-            // Each sample against the last: white noise tipped up to the top
-            // of the band, about -50 dB over all.
+        // Each sample against the last: white noise tipped up to the top of
+        // the band, about -54 dB over all for an "s", -34 for a release.
+        for (hiss, gain) in esses.map({ ($0, Float(0.0025)) }) + releases.map({ ($0, Float(0.025)) }) {
             var last: Float = 0
-            let range = span(ess)
+            let range = span(hiss)
             for i in range {
                 let white = noise()
-                out[i] += (white - last) * 0.0025 * fade(i, in: range)
+                out[i] += (white - last) * gain * fade(i, in: range)
                 last = white
             }
         }
@@ -102,12 +104,27 @@ final class SpeechEnergyTests: XCTestCase {
     }
 
     func testAShortGapInsideAWordIsNotAPause() throws {
-        // "ta" and "kes" with the 40 ms closure before the "k" between them.
-        let take = Take(words: [(11.0, 11.3), (11.34, 11.6)])
+        // "ta" and "kes" with the 40 ms closure before the "k" between them,
+        // and the "k" released at the start of "kes".
+        let take = Take(words: [(11.0, 11.3), (11.34, 11.6)], releases: [(11.34, 11.37)])
         let edge = judge(take, at: 11.32, keeps: .before)
         XCTAssertTrue(edge.clipped, "a cut in the closure cuts \"takes\" to \"ta\"")
         XCTAssertEqual(try XCTUnwrap(edge.gap), 0.04, accuracy: 0.015)
         XCTAssertEqual(try XCTUnwrap(edge.suggestion), 11.64, accuracy: 0.015, "the pause after the word is nearer than the one before it")
+    }
+
+    func testACutBetweenTwoWordsWithNoPauseIsFine() {
+        // Fluent speech: 40 ms between the words, too short for a pause, and
+        // the next word starts on a vowel, not a release.
+        let take = Take(words: [(11.0, 11.3), (11.34, 11.6), (12.0, 12.4)])
+        XCTAssertFalse(judge(take, at: 11.32, keeps: .before).clipped, "the cut is in the dip between the words")
+        XCTAssertFalse(judge(take, at: 11.32, keeps: .after).clipped)
+    }
+
+    func testALittleVoiceEitherSideIsntAClippedWord() {
+        let take = Take(words: [(11.0, 11.6), (12.0, 12.5)])
+        XCTAssertFalse(judge(take, at: 11.57, keeps: .before).clipped, "30 ms of the word's tail cut off")
+        XCTAssertFalse(judge(take, at: 11.57, keeps: .after).clipped, "a 30 ms fragment of the word left at the clip's start")
     }
 
     func testAFinalSIsHeardAboveFourKilohertz() throws {
@@ -123,11 +140,11 @@ final class SpeechEnergyTests: XCTestCase {
     }
 
     func testAFragmentAtTheStartOfAClipIsDroppedWhenThatsNearer() throws {
-        // The clip starts 50 ms before the end of a word that was cut out.
+        // The clip starts 80 ms before the end of a word that was cut out.
         let take = Take(words: [(11.0, 11.6), (12.0, 12.5)])
-        let edge = judge(take, at: 11.55, keeps: .after)
+        let edge = judge(take, at: 11.52, keeps: .after)
         XCTAssertTrue(edge.clipped)
-        XCTAssertEqual(edge.kept, 0.05, accuracy: 0.015)
+        XCTAssertEqual(edge.kept, 0.08, accuracy: 0.015)
         XCTAssertEqual(try XCTUnwrap(edge.suggestion), 11.64, accuracy: 0.015, "later, past the fragment")
     }
 
@@ -145,6 +162,12 @@ final class SpeechEnergyTests: XCTestCase {
         XCTAssertTrue(edge.clipped)
         XCTAssertNil(edge.suggestion)
         XCTAssertNil(edge.lost, "no pause within reach past the cut")
+    }
+
+    func testATakeWithNoVoiceIsntJudged() {
+        let silent = SpeechEnergy(samples: [Float](repeating: 0, count: 32_000), sampleRate: Take.rate, start: 0)
+        XCTAssertFalse(SpeechLevels(of: [silent]).isVoice, "a screen recording's silent system sound")
+        XCTAssertTrue(SpeechLevels(of: [Take(words: [(11.0, 11.6)]).energy]).isVoice)
     }
 
     func testReadsAFileInItsOwnTime() async throws {

@@ -96,6 +96,8 @@ enum CutCheck {
                 continue
             }
             let levels = SpeechLevels(of: readings)
+            // A screen recording's system sound, say: nothing said to clip.
+            guard levels.isVoice else { continue }
             for edge in group {
                 guard let energy = readings.first(where: { $0.start <= edge.mediaTime && edge.mediaTime <= $0.end }) else { continue }
                 let verdict = CutAudit.judge(energy, levels: levels, at: edge.mediaTime, keeps: edge.edge == .end ? .before : .after)

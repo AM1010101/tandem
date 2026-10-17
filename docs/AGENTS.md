@@ -541,15 +541,24 @@ clips in the range).
   pieces of the take meeting, not a through-edit, or a piece beside a gap)
   it reads the file's own sound either side of the edit, in 10 ms frames,
   over the full band and again above 4 kHz, where a final "s" or "t" is
-  heard. Quiet is 10 dB over the take's noise floor (its quietest tenth
-  around the cuts), and never more than 30 dB under its loud tenth. A real
-  pause is quiet for 0.08 s or more in both bands; a shorter gap (the
-  closure before the "k" of "takes") is inside a word.
+  heard. Levels come from the take's own sound around its cuts: quiet is
+  10 dB over its noise floor (the quietest tenth), and never more than
+  25 dB under its loud tenth (15 dB above 4 kHz, where breath and room
+  tone reach too); speech is within 20 dB of the loud tenth (10 dB above
+  4 kHz). A real pause is quiet for 0.08 s or more in both bands; a
+  shorter gap (the closure before the "k" of "takes") is inside a word. A
+  take with no voice in it (a screen recording's system sound) isn't
+  judged.
 
   An edge is fine if the frame on either side of it is in a real pause:
   the clip ends in silence, or ends right as a word it doesn't keep
-  starts. Otherwise the voice runs through the cut and a word is clipped,
-  a problem that fails the check. Each one says which clip's start or end,
+  starts. It's also fine with less than 0.05 s of speech on either side
+  (a tail nobody misses, or a fragment), or in a dip between two sounds,
+  12 dB under the voice either side, as a cut between words in fluent
+  speech is; unless a clip's end is in a closure with the "k" or "t"
+  released loudly right after it. Otherwise the voice runs through the
+  cut and a word is clipped, a problem that fails the check. On the
+  Tandem video, an edit Mike approved, it flags 6 of 758 edges. Each one says which clip's start or end,
   how much of the voice is cut off, and the trim (with ripple) that moves
   the edge into the nearest real pause within 0.3 s, 0.04 s into it and on
   a frame where one lands there. The nearer pause is the side with less

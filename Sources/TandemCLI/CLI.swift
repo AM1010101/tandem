@@ -192,9 +192,15 @@ struct CLI {
             return show(try await client().call(request), json: json)
         case "tighten":
             try args.expectPositionals(atMost: 0, command: name)
+            let protect = try (args.repeated["protect"] ?? [])
+                .flatMap { $0.split(separator: ",") }
+                .map { try parseTime($0.trimmingCharacters(in: .whitespaces)) }
             let request = TightenRequest(
-                min: try seconds(args, "min"), keep: try seconds(args, "keep"), apply: args.has("apply"),
-                from: try time(args, "from"), to: try time(args, "to"),
+                min: try seconds(args, "min"), keep: try seconds(args, "keep"),
+                sentence: try seconds(args, "sentence"), comma: try seconds(args, "comma"), mid: try seconds(args, "mid"),
+                midMin: try seconds(args, "mid-min"), mike: args.has("mike") ? true : nil,
+                protect: protect.isEmpty ? nil : protect, widen: args.has("widen") ? true : nil,
+                apply: args.has("apply"), from: try time(args, "from"), to: try time(args, "to"),
                 label: args.options["label"], expectedRevision: try args.integer("expect")
             )
             return show(try await client().call(request), json: json)

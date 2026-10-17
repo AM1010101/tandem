@@ -20,10 +20,11 @@ struct Arguments {
         "project", "author", "from", "to", "min", "keep", "limit", "label", "key", "expect",
         "output", "preset", "width", "height", "port", "timeout", "name", "format",
         "out", "search", "rewrite", "recipe", "max-words", "y", "track", "size",
-        "kind", "provider", "at", "duration", "variations", "clips", "field", "value", "mode", "kicker", "marker", "anchor", "media", "count", "every"
+        "kind", "provider", "at", "duration", "variations", "clips", "field", "value", "mode", "kicker", "marker", "anchor", "media", "count", "every",
+        "sentence", "comma", "mid", "mid-min", "protect"
     ]
     /// Options that are on or off.
-    static let flagOptions: Set<String> = ["json", "refresh", "words", "summary", "apply", "dry-run", "help", "version", "once", "portrait", "online", "optional", "keep-levels", "with-cache", "replace", "insert", "no-sounds", "pop", "changed", "quick", "all", "default", "copy", "revision"]
+    static let flagOptions: Set<String> = ["json", "refresh", "words", "summary", "apply", "dry-run", "help", "version", "once", "portrait", "online", "optional", "keep-levels", "with-cache", "replace", "insert", "no-sounds", "pop", "changed", "quick", "all", "default", "copy", "revision", "widen", "mike"]
     static let shortOptions: [String: String] = ["o": "output", "h": "help", "v": "version"]
 
     static func parse(_ arguments: [String]) throws -> Arguments {
@@ -128,16 +129,23 @@ struct Arguments {
         return best?.0
     }
 
+    /// Edits between two words, a swap of two neighbouring letters counting
+    /// as one, so --mni is closer to --min than to --mid.
     static func editDistance(_ a: String, _ b: String) -> Int {
         let a = Array(a), b = Array(b)
         if a.isEmpty { return b.count }
         if b.isEmpty { return a.count }
+        var beforePrevious: [Int] = []
         var previous = Array(0...b.count)
         for i in 1...a.count {
             var current = [i] + Array(repeating: 0, count: b.count)
             for j in 1...b.count {
                 current[j] = min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1))
+                if i > 1, j > 1, a[i - 1] == b[j - 2], a[i - 2] == b[j - 1] {
+                    current[j] = min(current[j], beforePrevious[j - 2] + 1)
+                }
             }
+            beforePrevious = previous
             previous = current
         }
         return previous[b.count]

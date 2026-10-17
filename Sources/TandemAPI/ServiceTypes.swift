@@ -369,12 +369,36 @@ public struct PausesResult: Codable, Sendable {
     public var missing: [String]
 }
 
+/// What a pause follows: the end of a sentence (. ? !), a comma (, ; :) or
+/// neither, a pause in the middle of a sentence.
+public enum PauseKind: String, Codable, Sendable {
+    case sentence, comma, mid
+}
+
 public struct TightenRequest: ServiceCall {
     public static let operation = ServiceOperation.tighten
-    /// Pauses at least this long get shortened. Default 0.6 s.
+    /// Pauses at least this long get shortened. Default 0.6 s, or 0.5 s for
+    /// sentence pauses when tightening by what a pause follows.
     public var min: Double?
-    /// How much of each pause to keep. Default 0.15 s.
+    /// How much of each pause to keep. Default 0.15 s. Not with `sentence`,
+    /// `comma` or `mid`.
     public var keep: Double?
+    /// Tighten by what a pause follows: keep this much after a sentence
+    /// (a word ending . ? or !), after a comma (, ; or :) and mid-sentence.
+    /// A kind with no keep is left alone; a comma falls back to `mid`.
+    public var sentence: Double?
+    public var comma: Double?
+    public var mid: Double?
+    /// Comma and mid-sentence pauses at least this long change, so breaths
+    /// stay. Default 0.5 s.
+    public var midMin: Double?
+    /// Mike's rules (`TranscriptTools.mikeRules`); the other fields override them.
+    public var mike: Bool?
+    /// Pauses containing any of these timeline times are left alone.
+    public var protect: [Time]?
+    /// Widen joins between speech clips that leave less than the keep, from
+    /// silence in the take either side.
+    public var widen: Bool?
     /// Make the edit. Without it this is a dry run that returns the plan.
     public var apply: Bool?
     public var from: Time?
@@ -385,11 +409,20 @@ public struct TightenRequest: ServiceCall {
     public var expectedRevision: Int?
 
     public init(
-        min: Double? = nil, keep: Double? = nil, apply: Bool? = nil, from: Time? = nil, to: Time? = nil,
+        min: Double? = nil, keep: Double? = nil, sentence: Double? = nil, comma: Double? = nil, mid: Double? = nil,
+        midMin: Double? = nil, mike: Bool? = nil, protect: [Time]? = nil, widen: Bool? = nil,
+        apply: Bool? = nil, from: Time? = nil, to: Time? = nil,
         label: String? = nil, author: String? = nil, expectedRevision: Int? = nil
     ) {
         self.min = min
         self.keep = keep
+        self.sentence = sentence
+        self.comma = comma
+        self.mid = mid
+        self.midMin = midMin
+        self.mike = mike
+        self.protect = protect
+        self.widen = widen
         self.apply = apply
         self.from = from
         self.to = to
@@ -402,6 +435,13 @@ public struct TightenRequest: ServiceCall {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         min = try c.decodeSeconds(.min)
         keep = try c.decodeSeconds(.keep)
+        sentence = try c.decodeSeconds(.sentence)
+        comma = try c.decodeSeconds(.comma)
+        mid = try c.decodeSeconds(.mid)
+        midMin = try c.decodeSeconds(.midMin)
+        mike = try c.decodeIfPresent(Bool.self, forKey: .mike)
+        protect = try c.decodeTimes(.protect)
+        widen = try c.decodeIfPresent(Bool.self, forKey: .widen)
         apply = try c.decodeIfPresent(Bool.self, forKey: .apply)
         from = try c.decodeTime(.from)
         to = try c.decodeTime(.to)
@@ -409,6 +449,9 @@ public struct TightenRequest: ServiceCall {
         author = try c.decodeIfPresent(String.self, forKey: .author)
         expectedRevision = try c.decodeIfPresent(Int.self, forKey: .expectedRevision)
     }
+
+    /// Whether the keeps depend on what each pause follows.
+    public var bySentence: Bool { sentence != nil || comma != nil || mid != nil || mike == true }
 
     public func run(on service: TandemService, context: CallContext) async throws -> TightenResult {
         try service.tighten(self, context: context)
@@ -419,15 +462,58 @@ public struct PlannedCut: Codable, Equatable, Sendable {
     public var pause: Pause
     /// The time `rippleDeleteRange` removes, frame aligned.
     public var cut: TimeRange
+    /// What the pause follows, and how much of it is kept.
+    public var kind: PauseKind?
+    public var keep: Time?
+
+    public init(pause: Pause, cut: TimeRange, kind: PauseKind? = nil, keep: Time? = nil) {
+        self.pause = pause
+        self.cut = cut
+        self.kind = kind
+        self.keep = keep
+    }
+}
+
+/// A join between two speech clips widened back to its keep with silence
+/// from the take either side.
+public struct PlannedWiden: Codable, Equatable, Sendable {
+    /// The silence between the words either side of the join, before.
+    public var pause: Pause
+    public var kind: PauseKind
+    public var keep: Time
+    /// Where the two clips meet, in the timeline's current times.
+    public var at: Time
+    /// The clip before the join, whose end gets `tail` more of the take.
+    public var clipID: String
+    /// The clip after it, whose start gets `head` more of the take.
+    public var nextClipID: String
+    public var tail: Time
+    public var head: Time
+
+    public var added: Time { tail + head }
 }
 
 public struct TightenResult: Codable, Sendable {
     /// The revision the plan was made against.
     public var revision: Int
+    /// The shortest pause that changes (a sentence pause, when tightening by
+    /// what a pause follows).
     public var minimum: Time
+    /// What every pause keeps; when tightening by what a pause follows, the
+    /// first of the sentence, comma and mid keeps given.
     public var keep: Time
+    /// Set when tightening by what a pause follows.
+    public var sentence: Time?
+    public var comma: Time?
+    public var mid: Time?
+    public var midMinimum: Time?
     public var cuts: [PlannedCut]
+    /// Joins widened back out (`widen`).
+    public var widened: [PlannedWiden]
+    /// Pauses left alone because they contain a `protect` time.
+    public var protected: [Pause]
     public var removed: Time
+    public var added: Time
     public var durationBefore: Time
     public var durationAfter: Time
     /// The batch that makes the cut, latest first so each range is still in

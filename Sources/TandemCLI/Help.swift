@@ -27,7 +27,7 @@ enum Help {
                     details: """
                     The JSON can be a batch {"label": ..., "commands": [...]}, a list of commands, or one command like {"blade": {"at": 12.5}}, in a file, on standard input (-) or quoted as the argument itself.
                     --expect refuses the edit unless the project is at that revision. --key makes a retry safe (idempotency key).
-                    `tandem schema` prints the JSON schema; docs/AGENTS.md has an example of every command.
+                    `tandem help <edit command>` (like addTransition) gives its arguments and an example, and `tandem schema` prints the JSON schema. docs/AGENTS.md in the Tandem repo indexes the guides; docs/agents/edit-commands.md has what help doesn't say.
                     """),
         CommandHelp(name: "undo", usage: "tandem undo [--count <n>] [--expect <revision>]", summary: "Undo the last edit, or the last n with --count.", options: ["expect", "count"],
                     details: "--count undoes several steps in one go, stopping early if the history runs out; use it rather than undoing twice, since each undo makes a new revision. --expect refuses unless the project is at that revision, even if Tandem only found new media since, because the top undo step would then be that."),

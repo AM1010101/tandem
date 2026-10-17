@@ -44,8 +44,13 @@ this repo root. It requires macOS 15 or newer and Xcode 26 or newer with Swift 6
   Do not make CLI or MCP edits bypass the coordinator.
 - Keep module boundaries in `Package.swift` and `docs/ARCHITECTURE.md`.
   Core model and time logic stay independent of UI and media frameworks.
-- `docs/AGENTS.md` documents the CLI, MCP and HTTP API. Keep it current when
-  command behaviour changes.
+- `docs/AGENTS.md` is the agents' entry point (keep it under about 25 KB),
+  and `docs/agents/` holds its topic files: edit command semantics, JSON
+  output, recipes, operations and troubleshooting. Keep them current when
+  command behaviour changes. Put arguments, defaults and examples in the
+  command schema and `Help.swift` (`tandem help <command>`) rather than
+  repeating them in the docs; the docs carry what help can't. DocsTests
+  decodes every JSON example in them.
 - `sdk/` is a TypeScript client over the HTTP API for agents' bulk edits.
   When edit commands change, regenerate `sdk/commands.gen.ts` from a running
   server (`bun sdk/gen-types.ts <project.tandem>`) and run

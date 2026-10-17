@@ -5,15 +5,25 @@ do through the `tandem` command, the local HTTP API or MCP. All three speak
 the same operations and the same edit commands, and every edit lands in the
 app's undo menu and activity feed under the agent's name.
 
-This guide covers setup, how editing works, every edit command with an
-example, and recipes for the common jobs. `docs/ARCHITECTURE.md` is the
-contract behind it.
+This page is the entry point: setup, how editing works, how to read a
+project, and an index of every command, recipe and topic. It's meant to be
+read whole. For the rest, read only what you need:
+
+- `tandem help <command>` (like `tandem help tighten`) gives a command's
+  options and what they do.
+- `tandem help <edit command>` (like `tandem help addTransition`) gives an
+  edit command's summary, every argument with its type and whether it's
+  required (a model like `Transition` opened up one level), and a working
+  example, all from the schema.
+- `tandem schema` prints the whole edit batch JSON schema, and `tandem
+  effects` the effects with their parameters, the transitions with their
+  default lengths, the layouts and the animatable parameters.
+- The topic files in [docs/agents/](agents/) have what help can't say:
+  semantics, gotchas and recipes ([index below](#recipes-and-topics)).
+
+`docs/ARCHITECTURE.md` is the contract behind all of it.
 
 ## Setup
-
-### The CLI
-
-`build-app.sh` puts the command inside the app bundle:
 
 ```bash
 bash setup_mac.sh
@@ -21,259 +31,45 @@ bash install.sh
 tandem --version
 ```
 
-While working on Tandem itself, `swift build --package-path .`
-builds it at `.build/debug/tandem`.
+While working on Tandem itself, `swift build --package-path .` builds it at
+`.build/debug/tandem`.
 
-Commands find the project from `--project <file.tandem or folder>`, then
-`$TANDEM_PROJECT`, then the single `.tandem` file in the current folder or
-the nearest parent that has one. A folder with several versions
-(`Video.tandem`, `Video v2.tandem`) needs `--project`.
+- Commands find the project from `--project <file.tandem or folder>`, then
+  `$TANDEM_PROJECT`, then the single `.tandem` file in the current folder or
+  the nearest parent that has one. A folder with several versions
+  (`Video.tandem`, `Video v2.tandem`) needs `--project`.
+- Set `TANDEM_AUTHOR=claude` (or pass `--author claude`) so your edits are
+  credited to you. Without it they show up as `cli`.
+- Output is plain text for reading; `--json` on any command gives the JSON
+  result ([JSON output](#json-output)). Errors exit 1 (2 for usage
+  mistakes); with `--json` the error is `{"error": {...}}` on standard
+  output. When you pipe `--json`, use `set -o pipefail` or check the
+  `error` key.
+- When the Tandem app has the project open, every command goes through the
+  app, so your edits appear in front of Mike as you make them. When it's
+  closed, each command opens the file, edits, saves and lets go. `tandem
+  status` says which. `tandem serve` holds the project headless for a long
+  session, and hands it over if Mike opens it in the app.
+- Transcripts, mattes and proxies are made in the background by whatever
+  holds the project. `tandem wait transcript` (or `matte`, `proxy`, or plain
+  `tandem wait`) waits for them, and makes them itself with the app closed.
+  `tandem transcribe <id>` makes a transcript of any other file with sound.
+  Never start `tandem serve` just to get a transcript, and never poll
+  `tandem media` or `tandem status` in a sleep loop.
+- MCP: `claude mcp add tandem -- ~/Applications/Tandem.app/Contents/MacOS/tandem mcp`.
+  The tools mirror the CLI commands and take the same arguments, plus
+  `project` and `json: true`; the `apply` tool's input schema describes
+  every edit command.
+- HTTP: the app (or `tandem serve`) listens on 127.0.0.1; the port and a
+  bearer token are in `<video folder>/.tandem/<name>.lock`. `POST
+  /v1/<operation>` takes the same JSON as the MCP tool.
+- For bulk jobs, `sdk/` is a TypeScript client over the HTTP API
+  (`sdk/README.md`).
 
-Set `TANDEM_AUTHOR=claude` (or pass `--author claude`) so your edits are
-credited to you. Without it they show up as `cli`.
-
-Output is plain text for reading. Add `--json` to any command for the JSON
-result. Errors go to standard error with exit code 1 (2 for usage
-mistakes); with `--json` the error is printed on standard output as
-`{"error": {...}}` and the exit code is still 1. If you pipe `--json` into
-another program, check the pipeline's status (`set -o pipefail`) or the
-output's `error` key, since a pipe reports the last program's exit code.
-
-```
-tandem status [--revision]         revision, length, who has it open, jobs, missing fonts, edits waiting for review
-tandem timeline [--summary] [--from T] [--to T] [--words] [--json]
-tandem media [--refresh]           files, clip counts, analysis status
-tandem transcript [<clip or media id>] [--from T] [--to T] [--make]
-tandem transcribe <id or path>...  [--wait | --no-wait]   transcribe any file with sound
-tandem wait [transcript|matte|proxy|jobs|export] [--media <id>]... [--timeout S]   wait for background work
-tandem search "<phrase>"           where a phrase is said
-tandem pauses [--min 0.6]          silences between words
-tandem tighten [--mike] [--sentence S] [--mid S] [--protect T,T] [--widen] [--apply]   or [--min 0.6] [--keep 0.15]
-tandem join [--from T] [--to T] [--apply]   join through-edits back into one clip
-tandem captions [--from T] [--to T] [--max-words 3] [--y 0.42] [--apply]
-tandem short [--apply]             lay out a 9:16 short from the same edit
-tandem cards [--insert] [--no-sounds] [--apply]   a section card at every section marker
-tandem apply <batch.json | - | '<json>'>   [--dry-run] [--expect N] [--label L] [--key K]
-tandem undo [--count N] [--expect N]    tandem redo [--count N]    tandem history    tandem validate
-tandem clips [--track T] [--from T] [--to T] [--media M] [--ids]   find clips and their IDs
-tandem diff --since <revision | file.tandem | export.mp4>          what changed, clip by clip, by edit and who made it
-tandem restore --from <revision | file | export> (--clips <id,id> | --from-time T --to-time T [--track T]) [--apply]
-tandem check [--changed | --from T --to T] [--quick | --cuts]   what Mike would catch: black, flickers, keys, dead air, bare page changes; --cuts: clipped words
-tandem frame <time> [-o out.png]   tandem clip <start> <end> [-o out.mp4] [--tracks Music,SFX] [--audio-only]
-tandem frames <time>... | --every S [--from T] [--to T]  [-o sheet.png] [--width 480]   one labelled contact sheet
-tandem export [--preset <name>] [-o out.mp4] [--from T] [--to T] [--format <id>]
-tandem loudness [--from T --to T [--step S] [--tracks Music] [--gains]]   files' levels, or the mix over time
-tandem effects    tandem schema    tandem watch [--once]
-tandem archive [<project>] [--to <folder>] [--with-cache] [--dry-run]
-tandem relink [--search <folder>]... [--dry-run]    find missing media
-tandem new <path.tandem>           tandem serve    tandem mcp
-tandem import filmora <file.wfp> [--out DIR] [--keep-levels]   a Filmora project as a .tandem
-tandem import edl [edl.json] --recipe decision-models [--out DIR]
-tandem import compare <a.tandem> <b.tandem>      how two cuts of one take differ
-tandem assets providers                          asset sources and what to fix
-tandem assets search "<text>" [--kind sfx] [--provider id] [--online] [--limit n]
-tandem assets use <id> [--at T] [--duration T] [--anchor A] [--pop]   copy into the project, add, place
-tandem assets fetch <id>    tandem assets show <id>    tandem assets credits [--optional]
-tandem assets generate sfx|music "<prompt>" [--duration s]    tandem assets install-starter
-tandem segments list                             saved segments in the shared library
-tandem segments save "<name>" --clips <id,id> | --from T --to T [--field <clip>=<label>]... [--replace]
-tandem segments insert "<name>" --at T [--value key=text]... [--mode overwrite]
-```
-
-`tandem help <command>` explains each one. `tandem help <edit command>`
-(like `tandem help addTransition`) prints an edit command's summary, every
-argument with its type and whether it's required (a model like
-`Transition` opened up one level), and its example, all from the schema.
-
-Imports write `<out>/<name>/<name>.tandem` with a report beside it
-(`<name>.import.txt` for people, `.import.json` for agents) listing anything
-that couldn't be carried over. Filmora media paths saved on another Mac are
-fixed with `--rewrite /Users/old/=/Users/new/`, and moved files are found
-with `--search <folder>`. A Filmora import normalises speech (the camera's
-sound and the Voice tracks) to the project's speech level with no gain, the
-way placing does, instead of copying Filmora's gains; music and sound
-effects keep their Filmora volume. `--keep-levels` keeps Filmora's own
-levels: its Auto Normalization becomes `normalizeTo: -24` (where Filmora
-levels, on Tandem's meter) with the clip's gain on top.
-
-### What a new project finds
-
-`tandem new` adds every media file in the folder (as `tandem media
---refresh` does later) and gives each a role from its name and folder:
-record-it's `-camera` and `-screen` files (and its audio-only `-audio`
-take, a camera take with no picture, so it lands on Voice and gets a
-transcript), then folders like `music/`,
-`sfx/`, `broll/`, `graphics/` and `stickers/`. A video nothing names, like a
-phone's `IMG_0151.MOV`, becomes the camera take when it's a recording with
-a voice and a face: shot by a phone or camera (its metadata names it) or
-sitting in `source/`, with speech in its sound and a face in its frames. A
-render of an edit has both too, so one anywhere else in the folder stays
-`other`. Only files new to the project get a role this way. `tandem new`
-says which file it took for the camera, why, and how to change it:
-
-```
-Added 16 media files from the folder.
-13 are Live Photos: the still is the media item, with its motion clip kept on it (livePhotoVideo) rather than added on its own.
-Camera take: source/IMG_0151.MOV (med_yccfihfs), an Apple iPhone XS Max video with speech and a face in it.
-Not the camera? tandem apply '{"updateMedia": {"mediaID": "med_yccfihfs", "patch": {"role": "other"}}}'
-```
-
-A Live Photo exported from Photos is a still and a movie of a few seconds
-with the same name (`IMG_0130.HEIC`, `IMG_0130.mov`). The still is the
-media item and keeps the movie's path in `livePhotoVideo`; the movie isn't
-media of its own. `tandem media` shows it as `Live Photo, motion clip
-IMG_0130.mov`. Folder refreshes, the app's folder watcher and files dropped
-on the app all pair them the same way. A movie a project already had as
-media stays as it is. Archiving, relink and segments take the movie along
-with its still.
-
-### When the app is open
-
-Only one process owns a project at a time. When the Tandem app has it open,
-the app serves the API and every `tandem` command (and MCP tool call) goes
-through the app, so your edits appear in front of Mike as you make them.
-When the app is closed, each command opens the `.tandem` file itself, makes
-the change, saves and lets go, usually in a few milliseconds. You don't
-need to care which is happening; `tandem status` tells you.
-
-`tandem serve` opens the project and serves the API headless until you stop
-it with Ctrl-C (it saves on the way out). Use it for a long session with the
-app closed, or to watch changes live. If Mike opens the project in the app
-meanwhile, the app asks `tandem serve` to save and quit, and your next
-command goes through the app instead.
-
-### Background work: transcripts, mattes, proxies
-
-Transcripts, cutout mattes, proxies, waveforms and loudness are made in the
-background by whatever holds the project: the app, or `tandem serve`. A
-command run with the app closed opens the file for a moment and makes
-nothing, except `tandem wait` and `tandem transcribe`, which make the work
-themselves for as long as they run. Don't start `tandem serve` just to get
-a transcript, and don't poll `tandem media` or `tandem status` in a sleep
-loop.
-
-`tandem wait` blocks until the work is done, printing progress lines, and
-then says what finished:
-
-```
-tandem wait                         every background job
-tandem wait transcript              the transcripts the project makes
-tandem wait transcript --media med_x   one file's
-tandem wait matte                   mattes for clips with their cutout on
-tandem wait proxy                   proxies for large video on the timeline
-tandem wait export                  exports running through the app or tandem serve
-```
-
-```
-transcript med_2atn285x running 40%
-transcript med_2atn285x done
-Done after 3.2 s:
-  source/take1-camera.mov: ready, 1843 words
-```
-
-With the app closed, the wait opens the project the way `tandem serve`
-does until it's done: other commands still work meanwhile (they go through
-it), and if Mike opens the project in the app, the wait hands it over and
-carries on waiting there. `--timeout` defaults to 600 seconds; when it
-passes the wait says what's still going, and running it again keeps
-waiting. A file nothing makes the thing for (a transcript of a music bed, a
-matte for a clip with no cutout) is an error that says how to get it made,
-not a wait that can only time out. Exit code 1 when anything failed or the
-wait timed out.
-
-Tandem transcribes camera takes and whatever is on a speech track (Voice)
-by itself. `tandem transcribe <media id, clip id or path>` makes a
-transcript of any other file with sound, with the same on-device
-SpeechAnalyzer: a generated clip you're checking for made-up speech, a
-sound effect, a music cue. It marks the file (`transcribe: true` on the
-media, one undo step) so the transcript is made wherever the project is
-open, and with the app closed it waits for it and prints each file's word
-count. An empty transcript (`ready, no speech`) is an answer too. With the
-app open it queues it and returns; add `--wait` to wait. Then read it with
-`tandem transcript <id>`, or do both at once with `tandem transcript <id>
---make`. Only reach for Whisper if SpeechAnalyzer can't do it (another
-language it doesn't support, say).
-
-### MCP
-
-`tandem mcp` is an MCP server on stdin and stdout. Add it to Claude Code:
-
-```bash
-claude mcp add tandem -- ~/Applications/Tandem.app/Contents/MacOS/tandem mcp
-```
-
-Started from a video's folder it uses that folder's project. To pin one
-project, or to use it from anywhere:
-
-```bash
-claude mcp add --scope user tandem -- ~/Applications/Tandem.app/Contents/MacOS/tandem mcp --project "/Users/m5-mike/dev/convex/convex-videos/decision-models/Decision Models.tandem"
-```
-
-Every tool also takes a `project` argument, so one server can work on any
-project. Edits are credited to the client's name (`claude`, `codex`) unless
-`--author` or `$TANDEM_AUTHOR` says otherwise.
-
-For Codex, in `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.tandem]
-command = "/Users/m5-mike/Applications/Tandem.app/Contents/MacOS/tandem"
-args = ["mcp"]
-```
-
-The tools mirror the operations: `status`, `timeline`, `media`,
-`transcript`, `transcribe`, `search`, `pauses`, `tighten`, `join`, `captions`, `short`, `cards`, `apply`, `undo`, `redo`,
-`history`, `diff`, `restore`, `clips`, `validate`, `frame`, `frames`, `screenshot`, `clip`, `export`, `archive`,
-`relink`, `loudness`, `watch`, `wait` and `effects`, plus the asset library's `assets_search`,
-`assets_show`, `assets_use`, `assets_credits`, `assets_generate` and `assets_providers`,
-and the saved segments' `segments_list`, `segments_save` and
-`segments_insert`.
-Tool results are readable text; pass `json: true` for the raw JSON. `frame`, `frames` and `screenshot` return the picture as an image.
-The `apply` tool's input schema describes every edit command. The server
-speaks both MCP revisions in use: the `initialize` handshake (2025-11-25 and
-earlier) and the stateless 2026-07-28 revision.
-
-### HTTP
-
-The app (or `tandem serve`) listens on 127.0.0.1 on a random port. The port
-and a bearer token are in the project's lock file,
-`<video folder>/.tandem/<name>.lock`:
-
-```bash
-LOCK="$HOME/dev/convex/convex-videos/decision-models/.tandem/Decision Models.lock"
-PORT=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['port'])" "$LOCK")
-TOKEN=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['token'])" "$LOCK")
-curl -s -H "Authorization: Bearer $TOKEN" -H "X-Tandem-Author: claude" \
-  -d '{"commands": [{"blade": {"at": 12.5}}]}' "http://127.0.0.1:$PORT/v1/apply"
-curl -s -N -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$PORT/v1/watch"
-```
-
-- `POST /v1/<operation>` with the same JSON the MCP tool takes. Operations
-  without parameters also answer `GET`.
-- `GET /v1/watch` streams server-sent events (`edit`, `undo`, `redo`,
-  `reload`, `jobs`, `export`). Send `Last-Event-ID` to catch up after a
-  reconnect.
-- `GET /v1/schema` returns the edit batch JSON schema. `GET /v1/health`
-  needs no token. `POST /v1/release` asks `tandem serve` to save and quit
-  (the app refuses it).
-- Errors are `{"error": {"code": "...", "message": "..."}}` with a matching
-  status: 400 bad request, 401 token, 404 not found, 409 conflict (stale
-  revision, overlap, locked, nothing to undo), 501 not built yet.
-
-### Code mode (the SDK)
-
-`sdk/` is a thin TypeScript client over the HTTP API, for bulk jobs: one
-script reads the project, works out the edit and applies it as one labelled
-batch, and only its result prints. It finds the project's lock file, and
-starts `tandem serve` for the run when nothing is serving the project.
-
-```bash
-~/.bun/bin/bun sdk/run.ts "<name>.tandem" sdk/examples/swoosh-pushes.ts
-~/.bun/bin/bun sdk/run.ts "<name>.tandem" -e 'const p = await t.project(); return p.captions().length'
-```
-
-`sdk/README.md` has the API. After edit commands change, regenerate its
-types from a running server with `bun sdk/gen-types.ts <project.tandem>`.
+[agents/setup.md](agents/setup.md) has all of this in full: what `tandem
+new` picks up and how it finds the camera take, Live Photos, Filmora and
+EDL imports, waiting on background work, MCP for Claude Code and Codex, the
+HTTP endpoints and errors, and the SDK.
 
 ## How editing works
 
@@ -281,30 +77,33 @@ types from a running server with `bun sdk/gen-types.ts <project.tandem>`.
 batch. A batch is applied to a copy of the project, validated, and committed
 only if every command worked, so a failing command leaves nothing half done
 and the error says which command failed and why. Each committed batch is one
-undo step with a label and an author.
+undo step with a label and an author. [agents/edit-commands.md](agents/edit-commands.md#batches-and-patches)
+has the batch format; patches (`updateClip`, `updateTrack`...) are JSON
+merge patches, where `null` removes a field.
 
 **Revisions.** Each commit bumps the project's revision. Read it from
-`status` or `timeline`, and send it back as `expectedRevision`: if Mike (or
-another agent) changed the timeline in the meantime the batch is refused
-with a `staleRevision` error instead of editing something you haven't seen.
-Re-read and try again. `tandem status --revision` prints just the number.
-Take it when you read what you're basing the edit on: read right before
-applying, it protects nothing. Tandem finding new files in the project
-folder ("Found new media", by system) bumps the revision too, but a batch
-whose revision is behind only by those still goes ahead, unless it adds,
-changes or removes media itself (the scan may have just added the same
-file). Any other change in between (an edit, an undo) makes it stale.
+`status` or `timeline`, and send it back as `expectedRevision` (`tandem
+apply --expect N`): if Mike (or another agent) changed the timeline in the
+meantime the batch is refused with a `staleRevision` error instead of
+editing something you haven't seen. Re-read and try again. `tandem status
+--revision` prints just the number. Take it when you read what you're
+basing the edit on: read right before applying, it protects nothing. Tandem
+finding new files in the project folder ("Found new media", by system)
+bumps the revision too, but a batch whose revision is behind only by those
+still goes ahead, unless it adds, changes or removes media itself (the scan
+may have just added the same file). Any other change in between (an edit,
+an undo) makes it stale.
 
 **Dry runs.** `"dryRun": true` (or `tandem apply --dry-run`) checks a batch
 on a copy and reports what it would do: warnings, clips added, removed and
 changed, and the new length. IDs it reports are made up fresh by the real
 run.
 
-**Retries.** Give a batch an `idempotencyKey` and a retry with the same key
-returns the first result instead of applying it twice. An `interrupted`
-error means the app went away (quit or crashed) after it got the call but
-before it answered, so an edit may have been applied: check `tandem
-history` before sending it again.
+**Retries.** Give a batch an `idempotencyKey` (`--key`) and a retry with the
+same key returns the first result instead of applying it twice. An
+`interrupted` error means the app went away (quit or crashed) after it got
+the call but before it answered, so an edit may have been applied: check
+`tandem history` before sending it again.
 
 **Restarts.** You can keep working while Tandem restarts (a new build going
 in). When it quits, calls it's already running finish and answer first.
@@ -320,22 +119,21 @@ check is strict, new media included, because the last batch would then be
 Tandem's media scan rather than your edit. Each undo makes a new revision,
 so to back out several edits use `tandem undo --count N` (MCP and HTTP
 `count`) rather than undoing twice; it stops early if the history runs out,
-and the result lists each step's `labels` and `authors`. With
-the app closed, undo history for CLI and MCP edits is kept in
+and the result lists each step's `labels` and `authors`. With the app
+closed, undo history for CLI and MCP edits is kept in
 `.tandem/<name>.undo.json`, so `tandem undo` works across commands. It's
 dropped as soon as the project is edited somewhere that doesn't keep it
 (the app has its own undo).
 
-**History.** Separately from undo, every change (an edit, an undo, a
-redo, Tandem finding new media) is appended to
-`.tandem/<name>.history.jsonl` by whoever has the project open: the app,
-`tandem serve` or a CLI command. It lasts across restarts, says who made
-each change and where on the timeline it was, and keeps enough to take
-the clips back to any revision since. `tandem history` lists it, and
-`tandem diff` and `tandem restore` use it (see [What changed, and putting
-it back](#what-changed-and-putting-it-back)). It starts when this version
-of Tandem first opens a project; edits made before that, or by an older
-Tandem, aren't in it.
+**History.** Separately from undo, every change (an edit, an undo, a redo,
+Tandem finding new media) is appended to `.tandem/<name>.history.jsonl` by
+whoever has the project open: the app, `tandem serve` or a CLI command. It
+lasts across restarts, says who made each change and where on the timeline
+it was, and keeps enough to take the clips back to any revision since.
+`tandem history` lists it, and `tandem diff` and `tandem restore` use it
+(see [agents/review-and-history.md](agents/review-and-history.md#what-changed-and-putting-it-back)).
+It starts when this version of Tandem first opens a project; edits made
+before that, or by an older Tandem, aren't in it.
 
 **IDs** are short strings with a prefix: `clip_`, `trk_`, `med_`, `tr_`,
 `fx_`, `mk_`, `lnk_`. They never change. When a clip is split the left part
@@ -347,6 +145,7 @@ inside the same batch, give it your own ID (`"id": "clip_title1"`).
 parameters also take `mm:ss.mmm` (`01:23.500`). Inside edit commands use
 numbers; strings like `"1:02.5"` are accepted but numbers are clearer.
 `sourceStart` and `slip` deltas are in media time (seconds into the file).
+Keyframe times are seconds from the clip's start.
 
 **Several cuts in one batch.** Each command sees the timeline as the
 commands before it left it, so a ripple delete moves everything after it
@@ -364,7 +163,8 @@ overlap.
 
 **Validation.** Commands are checked against the schema before they run,
 so a misspelt field is an error (`unknown field "rippel" (did you mean
-"ripple"?)`) rather than silently ignored.
+"ripple"?)`) rather than silently ignored. The error names what's missing
+and what's allowed, and `tandem help <command>` shows the right shape.
 
 ### Tracks
 
@@ -401,7 +201,8 @@ so use one of those.
   clips slide along with the take. A music bed or B-roll shot that spans the
   removed time keeps playing from where it started and simply ends that much
   sooner. A clip that sat entirely inside the removed time is removed, with a
-  warning.
+  warning. When time is opened up instead (`insertTime`), a follow clip
+  spanning that point stays put and plays on across it.
 - **off** tracks stay where they are whatever happens elsewhere.
 - A ripple edit made on a follow or off track only moves that track, so
   closing a gap in the B-roll never touches the take.
@@ -422,2115 +223,117 @@ the groups as `linked #1`, `linked #2`.
 
 ### Transitions
 
-A transition joins two touching clips on one track, or sits at one clip's
-head or tail. On its own at an overlay's tail (`fromClipID` only), a push or
-slide moves the overlay off screen and the tracks below show where it was,
-as in Filmora (a B-roll pushed out upwards, leaving Mike playing below); at a
-head (`toClipID` only) it comes in. A transition between two clips is centred on the cut, so each
-clip plays half its length past the cut. Where a clip has no frames there
-(its file used to the last frame, or from the first) that edge frame holds
-for the rest, as in Premiere and Filmora, and the edit's warnings say how
-long; trim the clip for real motion instead. On audio tracks every
-transition is a crossfade, and sound past a file's ends is silence.
-
-A transition can carry a sound effect: an ordinary clip on SFX (the first
-free SFX track), so Mike sees it and can nudge, trim or turn it down, tied
-to the transition by its `soundClipID`. It keeps its distance from the
-transition's middle (the cut, for one between two clips, where a push or
-wipe moves fastest), so a swoosh stays on the cut whatever the length:
-rolling the cut, rippling the take or moving both clips takes it along,
-whole, and a fade at a clip's head carries it as it grows. It goes when
-the transition goes, whether that's a `removeTransition`, a clip it joins
-deleted, the clips moved apart, or an undo. Deleting the sound clip
-leaves the transition silent. In the app, push, slide, cut slide and wipe
-come with a light swoosh unless Mike picks otherwise (Tandem > Settings).
+A transition joins two touching clips on one track, centred on the cut, or
+sits at one clip's head or tail. It can carry a sound effect, an ordinary
+clip on SFX that stays on the cut whatever happens to the transition and
+goes when it goes. [agents/edit-commands.md](agents/edit-commands.md#transitions)
+has how edges hold, overlays push off, audio crossfades and the sound
+follows.
 
 ## Reading the project
 
-Times in a clip's source range (`sourceStart`, the `[in-out]` of the
-timeline view, transcript word times) are the file's own timestamps, as
-AVFoundation reads them. `ffmpeg -ss` counts from the file's start
-instead, so when you analyse a source with ffmpeg, add the stream's
-`start_time` (`ffprobe -show_entries stream=start_time`). Record It's
-camera files start at 0.1 s and its screen files at 0.33 s: left out,
-that's enough to clip a word.
+- `tandem status`: revision, who has it open, background jobs, missing
+  fonts and your edits still waiting for Mike's review. Run it first.
+- `tandem timeline --summary`: one line per track with its clip count, span
+  and gaps, plus the markers. Then `tandem timeline --from 1:00 --to 2:00`
+  for a part in full (`--words` adds what each voice clip says).
+- `tandem clips --track B-roll --from 1:20 --to 1:40` (or `--media <file>`,
+  `--ids`) for clip IDs. Don't dump `timeline --json` to look them up.
+- `tandem transcript [<clip or media id>]`, `tandem search "<phrase>"` and
+  `tandem pauses --min 0.6` for what's said where. Word times are trimmed to
+  the voice, and a word a cut runs through shows once, on the side where
+  most of it plays.
+- `tandem frame <time>`, `tandem frames --every 5 --from 1:00 --to 2:00`
+  (one contact sheet) and `tandem clip <start> <end>` (a 720p review MP4)
+  to look and listen; `tandem loudness --from T --to T` to measure the mix.
+- `tandem check --changed` before handing back: black frames, flickers,
+  failed keys, gaps and slivers, with notes on dead air and page changes;
+  `--cuts` finds clipped words at cuts.
+- `tandem diff --since <revision>` for what Mike changed since your last
+  round, and `tandem comments` for the notes he left on the timeline.
 
-`tandem timeline` (MCP `timeline`) is the view to start from:
-
-```
-Decision Models: 01:00.000 long, 3840x2160 at 30 fps, revision 7
-Tracks top to bottom as the app shows them. cut tracks hold the take and ripple edits cut them together; follow tracks move with them; off tracks stay put.
-Clips: ID, start-end on the timeline, length, content [source in-out of the file], then settings that aren't the defaults.
-
-Markers
-  00:30.000  section  "Section 2"  mk_s2
-
-V5 Text  trk_text  follow
-  clip_txt1  00:02.000-00:05.000     3.000s  text "DECISION MODELS" callout  in popIn
-
-V3 B-roll  trk_broll  follow
-  clip_brl1  00:20.000-00:25.000     5.000s  servers.mp4 [00:01.000-00:06.000]
-
-V2 Camera  trk_camera  cut
-  clip_cam1  00:00.000-00:30.000    30.000s  take1-camera.mov [00:00.000-00:30.000]  linked #1  layout pipRight  scale 0.5 at 0.87,0.77  cutout  fx dropShadow
-    ~ dissolve 0.500s into clip_cam2  tr_dissolve
-  clip_cam2  00:30.000-01:00.000    30.000s  take1-camera.mov [00:32.000-01:02.000]  linked #2  layout pipRight  scale 0.5 at 0.87,0.77  cutout  fx dropShadow
-
-A1 Voice  trk_voice  cut
-  clip_voc1  00:00.000-00:30.000    30.000s  take1-camera.mov [00:00.000-00:30.000]  linked #1  level -20 LUFS
-  clip_voc2  00:30.000-01:00.000    30.000s  take1-camera.mov [00:32.000-01:02.000]  linked #2  level -20 LUFS
-
-A2 Music  trk_music  follow
-  clip_mus1  00:00.000-01:00.000  01:00.000  bed.m4a [00:00.000-01:00.000]  gain -31 dB  fade out 2.000s
-
-Media
-  med_camera  source/take1-camera.mov  camera  01:10.000  3840x2160 30fps  take take1 +0.500s
-  ...
-```
-
-Each track line has the track's ID for commands that need one. Transitions
-(`~`) sit between the clips they join, ending `sound clip_...` when one
-plays a sound (that's its clip on SFX, whose own line says `sound of
-tr_...`), and gaps in the take are listed as `gap`. When most of a track's
-clips share settings (a PiP camera track's `layout pipRight, scale 0.5 at
-0.87,0.77, cutout, fx dropShadow`), the track line says them once as
-`(most clips: ...)`, each clip lists only what's different, and `not: ...`
-marks a clip that lacks one of them.
-
-A real edit runs to hundreds of clips, so start with `--summary` (one line
-per track with its clip count, span and gaps, plus the markers), then read a
-part in full with `--from 1:00 --to 2:00`. `--words` prints what each voice
-clip says under it, and `--json` gives the project JSON (tracks keep only the
-clips in the range).
-
-- `transcript <clip ID>` gives word timings in timeline time;
-  `transcript <media ID>` gives the whole file in file time; with no ID you
-  get everything said on the timeline.
-- Word times are trimmed to the voice. SpeechAnalyzer times its words end
-  to end, so each pause hides inside a word; Tandem pulls every word in to
-  where the take's waveform is over its noise floor (about what ffmpeg's
-  silencedetect hears at -32 dB on a phone take) when it reads the
-  transcript, including transcripts made before it did.
-- A word a cut runs through shows once, on the side where most of it
-  plays, and a word with less than half of it left doesn't show: it was
-  cut. Captions, `pauses`, `tighten`, `search`, `transcript` and `timeline
-  --words` all follow this, and so does the app's transcript lane, so
-  cutting a pause never doubles a word and cutting out a stumble takes its
-  words with it.
-- `search "phrase"` gives timeline ranges and the clips that play them. It
-  ignores case and punctuation, marks hits a cut runs through as partial
-  (one hit for each side, covering the phrase's words there), and also
-  lists matches in material that was cut out.
-- `pauses --min 0.6` lists the gaps between words in timeline time. Only
-  gaps fully covered by transcribed speech count, so a hole in the take or a
-  clip still waiting for its transcript is never reported as a pause. A
-  breath, click or "um" between two words (SpeechAnalyzer leaves ums out)
-  is part of the pause, so `tighten` cuts it with the silence.
-- `clips` lists clips with their ID, track, start, end and what they
-  play, filtered by `--track` (an ID, a name like `Camera`, or a label
-  like `V2`), `--from`/`--to` (clips overlapping that stretch) and
-  `--media` (a media ID, path or file name). `--ids` prints just the IDs,
-  one a line. Use it to find clip IDs instead of reading the whole
-  timeline JSON:
-
-  ```
-  $ tandem clips --track B-roll --from 0:15 --to 0:30
-  1 clip (revision 7):
-    clip_brl1  V3 B-roll  00:20.000-00:25.000  servers.mp4 [00:01.000-00:06.000]
-  ```
-- `media` shows each file's analysis state. Transcripts, loudness, proxies
-  and cutout mattes are made in the background; tools that need a
-  transcript say which files don't have one yet. `tandem wait` waits for
-  them, and `tandem transcribe` makes a transcript of a file Tandem
-  wouldn't transcribe by itself (see "Background work").
-- `frame <time>` renders one frame (MCP returns the image, 1280 px wide by
-  default). `clip <start> <end>` renders a 720p review MP4 you can watch.
-  `--tracks Music,SFX` plays only those audio tracks (names or IDs), at
-  the timeline's own level rather than mastered, so a stem sounds as it
-  sits in the mix; the names go in the file name. `--audio-only` writes
-  the sound alone as a `.m4a`, and `-o stem.wav` as 24-bit PCM. MCP's
-  `clip` takes `tracks` and `audioOnly`.
-- `loudness --from 1:00 --to 1:30` renders the mix the way export does
-  and prints its loudness every step instead of the per-file report. See
-  [Check the sound](#check-the-sound).
-- `frames <time>...` renders several frames the same way onto one contact
-  sheet PNG, in time order, each labelled with its time in a strip
-  underneath (so captions stay visible). `--every 5` takes one every 5 s
-  through the timeline, or from `--from` to `--to` (`--to` is shown; the
-  timeline's own end isn't); give times as well if you like. Each tile is
-  480 px wide (`--width`, 64 to 1920), and a sheet holds at most 48. The
-  default file is `frames-<first>-<last>.png`, with dots for the colons.
-  Use it instead of looping `frame` and stitching the PNGs with ffmpeg.
-  MCP's `frames` tool takes `times`, `every`, `from`, `to`, `width`,
-  `format` and `output`, and returns the sheet as an image.
-- `frame`, `frames`, `clip` and `export` list what the render shows
-  differently from the project, like `Warning: No cutout matte for ...-camera.mov yet, showing the
-  full frame.` while the matte is still being made; only lines about what
-  plays in the part rendered are shown.
-- `check` looks for what Mike would otherwise catch in review, so his
-  rounds go on the edit itself. It renders every frame of the stretch small
-  (384 wide, from proxies where they're ready), and the screen recordings
-  again on their own beside it, and reports, with the clips on screen there:
-  - black frames, and gaps with nothing on any video track;
-  - flickers: one to three frames unlike the frames either side, like a
-    stale still or a frame of the wrong shot;
-  - green screen that didn't key, and flat white blocks that come and go
-    (a key or matte that failed);
-  - as notes that don't fail it:
-    - pictures zoomed past three times their own pixels (1080p past 150%
-      on a 4K frame), which look soft;
-    - dead air: 0.8 s or more with nothing said, no sound effect, no music
-      swell and a still picture. Speech is the words `pauses` reads, with
-      their edges on the voice, so a 0.4 s sentence pause never shows up.
-      Every other clip that's heard counts as sound while it plays (sound
-      effects, demo sounds), and music only where its `audio.gainDB`
-      keyframes rise or a new bed comes in. Mike moving in his camera
-      corner, the Dock popping up along the frame's edge and a cursor nudged
-      now and then don't count as movement; an animation, a result
-      appearing, a slow fade or a cursor that keeps moving do. Section cards
-      are never dead air. Cut it (`rippleDeleteRange`, leaving Mike's 0.4 s
-      between sentences), or keep it only if the pause earns it: a point
-      landing, the end of a paragraph. Until the take has a transcript, the
-      check says so and doesn't judge its pauses.
-    - page changes with no transition: the screen recording, judged on its
-      own (as recorded, not zoomed, without the camera over it), changes a
-      large share of its picture at once and then holds, where the viewer
-      sees it (not under full-frame B-roll or the camera full frame) and no
-      transition covers it. Typing, scrolling, a moving cursor and a demo's
-      animations don't count. If it's a new page in an explainer or slides,
-      push it: at a cut, a 0.7 s push on the Screen track with the light
-      swoosh (`addTransition`); inside a clip, freeze 0.35 s either side of
-      the flip (`freezeFrame` clips) and push between the freezes. A button
-      that changes most of a page can show up too; leave those.
-    - slivers: an enabled clip shorter than a frame at the project's frame
-      rate, or a gap that short between two clips on a track, on any track.
-      They're usually rounding left by a batch: delete the clip, or trim a
-      neighbour to close the gap.
-
-  Run `tandem check --changed` before handing an edit back: it checks only
-  what agents changed that's waiting for Mike's review, half a second either
-  side. It exits 1 when it finds a problem; notes never fail it. `--quick`
-  skips rendering, so it only finds gaps, soft pictures and slivers.
-
-  ```
-  Checked 05:40.000-06:11.000 (930 frames) in 0.9 s: 1 problem:
-    05:56.900-05:57.167  White block: a flat white patch over 13% of the frame comes and goes in 8 frames (a key or matte that failed?).  On: clip_w2fkvxg9 m-outro1
-  ```
-
-  In Build Your Own Convex, two pauses on a chapter's title page, then the
-  explainer turning to the chapter's first page with no push:
-
-  ```
-  Checked 13:30.000-13:50.000 (600 frames) in 2.1 s: no problems.
-  Notes (not problems):
-    13:34.380-13:35.180  Dead air: 0.80 s with nothing said, no sound effect or music swell, and a still picture (after "is called the committer."). Cut it, or keep it if the pause earns it.  On: clip_nyc6dj73 2026-10-02_110856-camera, clip_5z5qpmkz 2026-10-02_110856-screen
-    13:44.650-13:45.467  Dead air: 0.82 s with nothing said, no sound effect or music swell, and a still picture (after "one at a time."). Cut it, or keep it if the pause earns it.  On: clip_p8v54ivp 2026-10-02_110856-camera, clip_cmqvrmad 2026-10-02_110856-screen
-    13:45.467-13:45.633  Page change inside a clip, with no transition: 18% of the screen recording changes at once, then holds. If it's a new page, push it: freeze 0.35 s either side and push between the freezes.  On: clip_huxupr6f 2026-10-02_110856-screen
-  ```
-
-  `tandem check --cuts` (MCP and HTTP `cuts: true`) checks only for words
-  clipped at cuts, and renders nothing, so it's quick. Run it after
-  cutting the take, with `--changed` or `--from`/`--to` as above. Most of
-  Mike's "word gets cut off" comments were cuts placed from transcript
-  word times, which can be half a second out, or snapped to the quietest
-  point near a word's end, which lands in the gaps inside words. So it
-  goes by the sound instead. For every cut edge on the speech tracks (two
-  pieces of the take meeting, not a through-edit, or a piece beside a gap)
-  it reads the file's own sound either side of the edit, in 10 ms frames,
-  over the full band and again above 4 kHz, where a final "s" or "t" is
-  heard. Levels come from the take's own sound around its cuts: quiet is
-  10 dB over its noise floor (the quietest tenth), and never more than
-  25 dB under its loud tenth (15 dB above 4 kHz, where breath and room
-  tone reach too); speech is within 20 dB of the loud tenth (10 dB above
-  4 kHz). A real pause is quiet for 0.08 s or more in both bands; a
-  shorter gap (the closure before the "k" of "takes") is inside a word. A
-  take with no voice in it (a screen recording's system sound) isn't
-  judged.
-
-  An edge is fine if the frame on either side of it is in a real pause:
-  the clip ends in silence, or ends right as a word it doesn't keep
-  starts. It's also fine with less than 0.05 s of speech on either side
-  (a tail nobody misses, or a fragment), or in a dip between two sounds,
-  12 dB under the voice either side, as a cut between words in fluent
-  speech is; unless a clip's end is in a closure with the "k" or "t"
-  released loudly right after it. Otherwise the voice runs through the
-  cut and a word is clipped, a problem that fails the check. On the
-  Tandem video, an edit Mike approved, it flags 6 of 758 edges. Each one says which clip's start or end,
-  how much of the voice is cut off, and the trim (with ripple) that moves
-  the edge into the nearest real pause within 0.3 s, 0.04 s into it and on
-  a frame where one lands there. The nearer pause is the side with less
-  of the word, so it finishes a word that's mostly kept and drops a
-  fragment that's mostly cut, as transcript placement does. The last line
-  is a `tandem apply` that makes every fix (in `--json`, `commands`,
-  latest first, and `revision`; each problem's `cut` has `clipID`, `edge`,
-  `to` and `fix`). Listen to the ones it can't fix (no pause within reach)
-  with `tandem clip`.
-
-  ```
-  Checked 00:00.000-01:00.000 (4 cut edges) in 0.1 s: 1 problem:
-    00:30.000  Clipped word at the end of clip_voc1: the voice runs on 0.12 s past the cut. Trim the end 0.167 s later, into the pause after it.  On: clip_voc1 take1-camera, clip_voc2 take1-camera
-  Fix: tandem apply --expect 7 --label "Move clipped cuts into pauses" '[{"trim":{"clipID":"clip_voc1","edge":"end","ripple":true,"to":30.166667}}]'
-  ```
-- Titles in a font this Mac doesn't have are drawn in SF Pro, and never
-  quietly: `frame`, `clip`, `export`, `captions`, `status` and `validate`
-  all say so with the fix, like `Tilt Warp, the caption preset's font, isn't
-  installed, so 42 text clips are drawn in SF Pro instead. Install it with:
-  tandem assets use fontsource:tilt-warp`.
-
-### What changed, and putting it back
-
-`tandem diff --since <revision>` (MCP `diff`) says what changed on the
-timeline since then, clip by clip, grouped by edit with who made it and
-where it was. Use it to find what Mike changed since your last round
-(the revision you handed back at, or the one `status` gave you then)
-instead of diffing `timeline --json` yourself:
-
-```
-$ tandem diff --since 95
-Since revision 95 (now revision 98): 1 added, 1 removed, 2 changed, 14 moved.
-r96  Trim  by user  00:12.000-00:12.500 on V2 Camera, A1 Voice
-    changed  clip_cam4  V2 Camera  00:12.000-00:20.000  take1-camera.mov: start trimmed +0.500s, rippled
-    changed  clip_voc4  A1 Voice  00:12.000-00:20.000  take1-camera.mov: start trimmed +0.500s, rippled
-    moved  14 clips by -0.500s on V3 B-roll, V2 Camera, V1 Screen, A1 Voice (from 00:20.500)
-r97  Swap the server shot  by user  00:40.000-00:44.000 on V3 B-roll
-    removed  clip_brl3  V3 B-roll  00:40.000-00:44.000  servers.mp4
-    added  clip_k2m9x8qa  V3 B-roll  00:40.000-00:43.000  racks.mp4
-r98  Quieter music  by user  00:00.000-05:00.000 on A2 Music
-    changed  clip_mus1  A2 Music  00:00.000-05:00.000  bed.m4a: gain -31 -> -35 dB
-```
-
-Each clip says what changed: added, removed, `moved`, a trimmed `start`
-or `end` (and `start trimmed ..., rippled` where a ripple trim took it
-off the start), `slipped`, a cut (`cut at ..., the rest is clip_...`),
-and settings like `scale`, `position`, `opacity`, `crop`, `layout`,
-`gain`, `fade in`, `level`, effects and keyframes. Clips that moved
-together by the same amount, riding a ripple, are one line. Edits that
-changed no clips (Tandem finding new media) are one line too. Media,
-markers, transitions and settings aren't compared. `--json` has each
-clip as it was and is (`before`, `after`).
-
-`--since` takes:
-
-- a revision. The edit history is walked back to it, so the changes come
-  grouped by edit. Past the start of the history, a backup in
-  `.tandem/backups` saved at that revision is used instead; otherwise it
-  says where the history starts and what to use.
-- a `.tandem` file: a backup, another version, or the snapshot every
-  export writes beside itself (`exports/v3.mp4.tandem`). A backup of this
-  project that the history reaches comes grouped by edit as well.
-- an export (`exports/v3.mp4`), read from the snapshot beside it.
-
-Paths are absolute or relative to the project folder (the CLI makes them
-absolute from where you run it).
-
-`tandem history` says where each edit was, so you can tell Mike's trims
-apart without diffing anything:
-
-```
-$ tandem history
-Revision 98.
-Undo, newest first:
-  Quieter music  (user)  00:00.000-05:00.000 on A2 Music
-  ...
-Edits, newest first (kept across restarts; tandem diff --since <revision> shows what each did to the clips):
-  r98  10:42:01  Quieter music  (user)  00:00.000-05:00.000 on A2 Music  1 changed
-  r97  10:41:30  Swap the server shot  (user)  00:40.000-00:44.000 on V3 B-roll  1 added, 1 removed
-  r56-r95  09:58:02-10:30:12  Found new media x40  (system)
-```
-
-`tandem restore --from <revision, file or export>` (MCP `restore`) puts
-clips back as they were there: where they were, their trims, settings and
-keyframes. Name them with `--clips clip_a,clip_b`, or take every clip that
-was between `--from-time` and `--to-time` (in that timeline's times), on
-`--track` if given. A clip that's gone is put back on its track, one
-that's changed is changed back, and one that wasn't there comes out. It's
-a dry run until `--apply`, and then one undo step, made through the same
-edit path as any batch (so it's checked, journaled and highlighted for
-Mike). Transitions, media and markers aren't restored. If something now
-sits where a clip goes back, the dry run says it wouldn't apply: restore
-that clip too, or move it first. To rebuild a round Mike rejected:
-
-```
-$ tandem restore --from "exports/v3.mp4" --from-time 2:00 --to-time 3:30 --track B-roll
-Restore 4 clips as they were in the export snapshot exports/v3.mp4.tandem (dry run, revision 120):
-  put back  clip_b7  V3 B-roll  02:04.000-02:09.500  config.mp4
-  ...
-Nothing changed yet. Run again with --apply (or apply: true) to restore them. Transitions, media and markers aren't restored.
-```
+Source times (`sourceStart`, transcript file times) are the file's own
+timestamps; `ffmpeg -ss` counts from the file's start, so add the stream's
+`start_time` when you analyse a source with ffmpeg.
+[agents/reading.md](agents/reading.md) has the timeline view line by line
+and the rest in full.
 
 ### JSON output
 
-A `--json` result is an object, and the project's `revision` is in it.
-These are the shapes of the ones you'll read most; a field marked `?` can be
-missing (or `null`), so read it with a default (`clip.get("video")` in
-Python, not `clip["video"]`).
-
-`tandem timeline --json` (MCP `timeline` with `format: json`) wraps the
-project. Tracks are in two lists, not one `tracks`, and video tracks go
-bottom to top (`videoTracks[0]` is V1, Screen). With `--from`/`--to`, each
-track keeps only the clips that overlap the range.
-
-```
-{"revision": 4,
- "project": {"id", "name", "schemaVersion", "settings": {"width", "height", "frameRate": {"numerator", "denominator"}, ...},
-             "metadata": {}, "markers": [{"id", "time", "duration", "name", "kind", "note"?}],
-             "media": [{"id", "path", "kind", "role", "duration", ...}],
-             "videoTracks": [Track], "audioTracks": [Track]}}
-
-Track: {"id", "name", "kind", "rippleMode", "muted", "solo", "locked", "hidden", "targeted",
-        "clips": [Clip], "transitions": [{"id", "type", "duration", "direction"?, "fromClipID"?, "toClipID"?, "soundClipID"?}]}
-
-Clip:  {"id", "start", "duration", "sourceStart", "speed", "enabled", "freezeFrame", "keyframes": {}, "tags": [],
-        "content": one of {"media": {"mediaID"}}, {"text": {"text", "preset"?, ...}},
-                          {"graphic": {...}}, {"solid": {"color"}}, {"adjustment": {}},
-        "name"?, "linkGroup"?, "video"?, "audio"?}
-```
-
-- A clip on the timeline from a file has its media ID at
-  `content.media.mediaID`, and its source range is `sourceStart` for
-  `duration * speed`.
-- `name` is missing on clips with no name (titles, solids).
-- `video` is missing until something sets it (a default transform, full
-  opacity, no crop), and `audio` likewise. Once set, `video` has
-  `transform` (`position {x, y}` 0 to 1, `scale`, `rotation`), `crop`,
-  `opacity`, `effects`, and maybe `layoutPreset` and `cutout`; `audio` has
-  `gainDB`, `fadeIn`, `fadeOut`, `muted`, `effects`, and maybe
-  `normalizeTo`.
-- `linkGroup` is missing on clips that aren't linked; linked clips share it.
-
-`tandem media --json`:
-
-```
-{"revision": 4, "added": ["med_..."],          // what --refresh added, usually []
- "items": [{"id", "path", "kind", "role", "hasVideo", "hasAudio", "clips", "exists",
-            "duration"?, "width"?, "height"?, "frameRate"?, "takeID"?, "takeOffset"?,
-            "analysis": {"transcript": {"state", "progress"?, "message"?}, "loudness": ..., "waveform": ..., "proxy": ..., "thumbnails": ...}}]}
-```
-
-`clips` is how many timeline clips use the file, and `state` is `ready`,
-`queued`, `running`, `failed`, `cancelled` or `none`.
-
-`tandem transcript --json`:
-
-```
-{"revision": 4, "scope": "timeline" | "clip" | "media", "id"?, "timelineTimes": true,
- "words": [{"text", "start", "end", "clipID"?, "confidence"?}],
- "missing": ["med_..."]}                       // media whose transcript isn't ready
-```
-
-`timelineTimes` is false for a media transcript, whose times are the
-file's own. `clipID` is set on timeline transcripts.
-
-`tandem wait --json` (and `waited` in `tandem transcribe --json`, which also
-has `revision`, `applied`, `files` and `headless`):
-
-```
-{"what": "transcript", "done": true, "timedOut": false, "elapsed": 3.2,
- "finished": [{"kind", "mediaID"?, "path", "state", "progress"?, "message"?, "words"?, "mode"?}],
- "pending": [...]}                             // what's still going after a timeout
-```
-
-`state` is `ready` (`done` for a job) or `failed` when finished, and
-`waiting`, `queued` or `running` when not. `words` is a ready transcript's
-word count, 0 when there's no speech.
-
-`tandem status --json`:
-
-```
-{"name", "path", "revision", "savedRevision", "dirty", "duration", "width", "height", "frameRate",
- "tracks", "clips", "media", "markers", "headless", "recoveredEdits", "apiVersion",
- "undo"?, "redo"?, "openIn"?: {"owner", "pid", "started"},
- "jobs": [...], "exports": [...], "warnings": [...],
- "reviewPending": [{"label", "author", "date", "clipIDs", "removals"}]}
-```
-
-`tandem history --json`:
-
-```
-{"revision": 4, "undo": [{"label", "author", "start"?, "end"?, "tracks"?}],  // newest first
- "redo"?: "label", "events": [{"seq", "kind", "date", "revision"?, "label"?, "author"?}],
- "edits"?: [{"revision", "kind", "label", "author", "date", "start"?, "end"?, "tracks"?, "summary"?}]}  // newest first
-```
-
-`events` are the changes this server saw; `edits` is the edit history,
-which lasts across restarts. `kind` is `edit`, `undo`, `redo`, `reload`
-or `opened` (where the history starts again). `tracks` are labels like
-`"V2 Camera"`.
-
-`tandem diff --json`:
-
-```
-{"revision": 98, "since": "revision 95", "sinceRevision"?: 95,
- "changes": [Change],                            // every clip that's different now
- "edits"?: [{"revision", "kind", "label", "author", "date", "start"?, "end"?, "tracks"?, "changes": [Change]}]}
-
-Change: {"id", "kind": "added" | "removed" | "changed", "track", "trackID", "start", "end", "content",
-         "details": ["start +0.500s", ...], "wasTrack"?, "wasStart"?, "wasEnd"?, "shift"?, "before"?: Clip, "after"?: Clip}
-```
-
-`edits` is there when the history reaches `since`. `shift` is set on a
-clip that only moved along its track.
-
-`tandem clips --json`:
-
-```
-{"revision": 7, "clips": [{"id", "track", "trackID", "start", "end", "duration", "content", "mediaID"?, "name"?, "enabled"}]}
-```
-
-`tandem restore --json` gives `{"revision", "from", "items": [{"id",
-"action": "putBack" | "changeBack" | "remove" | "unchanged", "track",
-"start", "end", "content", "details"}], "commands", "applied"?,
-"problem"?}`.
-
-`tandem apply --json` gives `{"revision", "label", "author", "createdIDs",
-"added", "changed", "removed", "duration", "warnings", "dryRun",
-"repeated"}`; `createdIDs` lists new clips, tracks, transitions and markers
-in the order the commands made them.
-
-## Assets
-
-Music, sound effects, stickers, icons, logos, fonts and stock footage come
-from Mike's asset library, one per user at
-`~/Library/Application Support/Tandem/Assets/`, shared with the app's
-browser. Every asset records its licence, and every use in a project is
-recorded, which is what the description credits are built from.
-`docs/ASSETS.md` explains the sources and licences.
-
-Mike's own reusable things live in his **shared library**, the folder
-`~/Movies/Tandem Library` (Stickers, Graphics, Sound effects, Music, Looks,
-Fonts, Segments). Its files are the `shared` source, with IDs that are
-their path in the folder: `shared:Stickers/Star.mov`, `shared:Sound
-effects/Whoosh.wav`. Unlike every other source, a shared asset isn't copied
-into the project when it's used: the project refers to the library's file
-where it is (absolute path), so a sticker Mike improves in the library
-improves every video that uses it. Archiving the project copies those files
-in (see [Archive a finished video](#archive-a-finished-video)).
-`tandem assets search --provider shared` lists them. The app watches the
-folder, and the CLI and MCP look at it again before they search (only
-changed files are read), so a file dropped in is found straight away.
-
-- `tandem assets providers` (MCP `assets_providers`) lists the sources and
-  whether each works now, with what to fix: a missing key, or an ElevenLabs
-  key without the `sound_generation` permission (music still works then).
-- `tandem assets search "whoosh" --kind sfx` (`assets_search`) searches the
-  library's catalogue: import folders, downloaded and generated assets, the
-  starter set and recent provider results. `--online` asks the providers
-  too (Noto emoji, Iconify, SVGL logos and Fontsource, plus Pexels, Pixabay
-  and Freesound when they have keys), and `--provider noto` limits it to one
-  source. Kinds are music, sfx, sticker, overlay, video, image, font, icon,
-  logo, lut, title and transition. Asset IDs look like `noto:1f680`,
-  `svgl:convex` or `import:sfx-3fa2c1/Whoosh_03.wav`.
-- `tandem assets use <id>` (`assets_use`) downloads and normalises the asset
-  if needed, copies it into the project's `assets/<kind>/` folder (a
-  `shared:` asset is used where it is instead, and the result says
-  `referencedInPlace`), records the use and adds it to the project's media. With `--at 1:23` it's also
-  placed on the track for its kind: sound effects on SFX at -15 dB, music on
-  Music at -31 dB with a 2 s fade out, stickers, icons and logos on
-  Graphics, stock video on B-roll. Stickers sit at the bottom of the frame
-  (see `placeMedia`); `--anchor topRight` puts a picture somewhere else and
-  `--pop` pops it in and out. The edit goes through the app when the app
-  has the project open, as one undo step under your name. Fonts are
-  installed instead of placed, into the project's `assets/font/` (a shared
-  library font stays in the library, where every render finds it, until
-  the project is archived); use their name in a title's style. When the
-  app has the project open it has the font straight away too (the output
-  says so), with no restart. A
-  `fontsource:<name>` ID works without searching first, so the fix a
-  missing-font warning gives can be run as it is.
-- `tandem assets fetch <id>` downloads and normalises without using it.
-- `tandem assets show <id>` (`assets_show`) prints what the library knows
-  about an asset without downloading anything: name, kind, provider and
-  model, the prompt a generated one was made from, duration, BPM and key,
-  loudness, licence, holder and credit line, and the file it plays from
-  (and the original). Use it instead of reading the `meta.json` files in
-  the library folder; `--json` has the whole record.
-- `tandem assets credits` (`assets_credits`) prints the credits block for
-  the video description from what the project uses now, plus anything to
-  sort out before publishing: assets with no licence on record, credits
-  without a credit line, subscriptions that must stay active.
-- `tandem assets generate sfx "short airy whoosh" --duration 1`
-  (`assets_generate`) makes a sound effect (0.5 to 30 s) or music cue (3 to
-  600 s) with ElevenLabs. Each take is a paid request, so make one unless
-  asked for more; `--variations 3` makes three.
-- `tandem assets install-starter` puts the starter set (about 40 animated
-  emoji, 30 icons and the tech logos Mike uses) in the catalogue. Each one
-  downloads the first time it's used.
-
-`$TANDEM_ASSETS_ROOT` moves the library, and `TANDEM_ASSETS_OFFLINE=1`
-keeps it off the network and out of the Keychain (for tests, or a flight).
-`$TANDEM_LIBRARY` moves the shared library for one command; with
-`$TANDEM_ASSETS_ROOT` set and no `$TANDEM_LIBRARY`, the shared library is
-`Tandem Library` inside that root, so tests never touch the real one.
-
-## Edit command reference
-
-A batch looks like this; `commands` is required and the rest is optional:
-
-```json
-{"label": "Tighten the intro", "author": "claude", "expectedRevision": 41, "idempotencyKey": "intro-tighten-1",
- "commands": [
-   {"rippleDeleteRange": {"range": {"start": 12.4, "duration": 0.8}}},
-   {"blade": {"at": 30}}
- ]}
-```
-
-`tandem apply` also takes a bare list of commands, or a single command, and the JSON can be quoted as the argument itself: `tandem apply '{"blade": {"at": 12.5}}'`.
-Patches (`updateClip`, `updateTrack`...) are JSON merge patches: send only
-the fields to change, nested objects merge, and `null` removes a field.
-`tandem schema` prints the full JSON schema.
-
-### Project and tracks
-
-#### updateProject
-
-Changes the project's name or metadata.
-
-```json
-{"updateProject": {"patch": {"name": "Decision Models v2", "metadata": {"script": "script.md"}}}}
-```
-
-#### updateSettings
-
-Changes the canvas size, frame rate, sample rate, the master's loudness
-target (`loudnessTarget`, -14 LUFS) or true peak ceiling (-1 dBTP), which
-every export preset masters to, the
-speech level (`speechLoudness`, -20 LUFS, between -40 and -10), or adds
-alternate formats like the 9:16 short. Changing the speech level moves every
-clip normalised to the old level to the new one; clips with a level of
-their own keep it.
-
-```json
-{"updateSettings": {"patch": {"loudnessTarget": -14}}}
-```
-
-#### addTrack
-
-Adds a track (`kind` is `video` or `audio`). Video tracks go on top unless
-`index` says otherwise (0 is the bottom).
-
-```json
-{"addTrack": {"kind": "video", "name": "Stickers"}}
-```
-
-#### removeTrack
-
-Removes a track and everything on it.
-
-```json
-{"removeTrack": {"trackID": "trk_stickers"}}
-```
-
-#### moveTrack
-
-Moves a track to another position among tracks of its kind.
-
-```json
-{"moveTrack": {"trackID": "trk_stickers", "index": 2}}
-```
-
-#### updateTrack
-
-Changes a track's `name`, `muted`, `solo`, `locked`, `hidden`, `targeted`
-or `rippleMode` (`cut`, `follow`, `off`).
-
-```json
-{"updateTrack": {"trackID": "trk_music", "patch": {"muted": true}}}
-```
-
-### Media
-
-#### addMedia
-
-Adds a file to the project (not the timeline). `tandem media --refresh`
-usually does this for you by scanning the folder.
-
-```json
-{"addMedia": {"item": {"path": "broll/servers.mp4", "kind": "video", "role": "broll", "duration": 12.5, "hasVideo": true}}}
-```
-
-#### updateMedia
-
-Changes a media item, for example its role or its colour look (effects
-applied to every clip of that file).
-
-```json
-{"updateMedia": {"mediaID": "med_screen", "patch": {"role": "screen"}}}
-```
-
-#### removeMedia
-
-Removes a media item. Fails while clips still use it.
-
-```json
-{"removeMedia": {"mediaID": "med_unused"}}
-```
-
-### Placing and removing clips
-
-#### placeMedia
-
-Puts media on the timeline the way the app does when you drag it in: each
-file goes to the track for its role (camera to Camera, screen to Screen,
-B-roll to B-roll, music to Music), a camera file's sound goes to Voice as a
-linked clip, and the files of one take are placed in sync and linked.
-`sourceStart` is measured from the start of the take (or the file) and
-`duration` defaults to all the media that's left. `mode` is `place` (fails
-if the range is taken), `overwrite` or `insert` (pushes later clips right).
-A sound effect placed where SFX is taken goes on SFX 2 (or the next free
-SFX track, made when there's none) instead of failing, unless you name the
-track with `audioTrackID`.
-
-Sound gets Mike's levels: speech (a camera's sound, files with no clearer
-role such as a rendered intro, and anything placed on a take track like
-Voice) is normalised to the project's speech level with no gain, music gets
--31 dB with a 2 s fade out, and sound effects -15 dB.
-
-```json
-{"placeMedia": {"mediaIDs": ["med_camera", "med_screen"], "at": 0}}
-```
-
-Stickers don't fill the frame. They sit at the bottom centre, at most 40%
-of the frame's width and 30% of its height (never more than twice their own
-pixels), 5% of the height in from the edge. `anchor` puts one somewhere else,
-or anchors any other picture (a logo, an image) the same way: `bottom`,
-`bottomLeft`, `bottomRight`, `top`, `topLeft`, `topRight`, `centre` or
-`lowerThird` (bottom left, inside the title-safe area). `pop` adds scale
-keyframes that pop it in over the first quarter second and out over the
-last.
-
-```json
-{"placeMedia": {"mediaIDs": ["med_comment"], "at": 371.2, "anchor": "bottomRight", "pop": true}}
-```
-
-#### insertClip
-
-Adds one clip to a track: a text title, a solid, a graphic, an adjustment
-layer or part of a media file. `content` is one of `{"media": {"mediaID":
-...}}`, `{"text": {...}}`, `{"graphic": {"template": ...}}`, `{"solid":
-{"color": {...}}}` or `{"adjustment": {}}`.
-
-```json
-{"insertClip": {"trackID": "trk_text", "clip": {"content": {"text": {"text": "TIP 1", "preset": "callout"}}, "start": 12, "duration": 3}}}
-```
-
-`{"graphic": {"template": "sectionCard", "props": {...}}}` is Mike's section
-card, drawn by Tandem ([Add a section card](#add-a-section-card)); other
-graphic templates aren't rendered yet.
-
-#### removeClips
-
-Removes clips. Without `ripple` they leave a gap (a lift); with `ripple` the
-gap closes like Shift-Delete, and on the take that ripples every track.
-
-```json
-{"removeClips": {"clipIDs": ["clip_k3f9x2mq"], "ripple": true}}
-```
-
-#### rippleDeleteRange
-
-Removes a stretch of time and closes it up: every cut track loses it and
-follow tracks move with it. This is the workhorse for tightening pauses and
-cutting phrases. The range is `start` plus `duration`, or `start` and
-`end`. `trackIDs` limits the cut to those tracks.
-
-```json
-{"rippleDeleteRange": {"range": {"start": 12.4, "duration": 0.8}}}
-```
-
-#### cutRanges
-
-Ripple deletes several ranges in one go, with every range in the timeline's
-times before the command: the times you read from `pauses`, `search` or
-`transcript`, in any order. Tandem cuts them latest first, so no cut moves
-another, and cuts overlapping or touching ranges once. Use it for a rough
-cut or a list of stumbles instead of sorting `rippleDeleteRange` commands
-latest first yourself. Each range is `start` plus `duration`, or `start`
-and `end`; `trackIDs` works as it does for `rippleDeleteRange`. One undo
-puts them all back.
-
-```json
-{"cutRanges": {"ranges": [{"start": 12.4, "end": 13.2}, {"start": 47.1, "end": 52.6}]}}
-```
-
-#### closeGap
-
-Closes the gap on a track that contains a time. Fails if another cut track
-has something in that gap.
-
-```json
-{"closeGap": {"trackID": "trk_broll", "at": 27}}
-```
-
-#### insertTime
-
-Opens up empty time, pushing everything later to the right (cut tracks
-split, follow tracks move).
-
-```json
-{"insertTime": {"at": 30, "duration": 2}}
-```
-
-#### insertTemplate
-
-Expands a template (a section card, Like and Subscribe, Comment Below, a
-saved segment) into linked clips at a time, filling `{{field}}`
-placeholders in text clips and a graphic's text props from `values`.
-Templates come from packs as JSON. Media a template uses is matched by
-path (`mediaPath`); a clip that carries its media item under `media` adds
-it when the project has nothing at that path yet, and reuses what's there
-otherwise. Saved segments carry theirs, which is how `tandem segments
-insert` works, and so does the Section card tile for its whooshes; without
-one, the file must already be in the project. `transitions` joins its
-clips by their place in `clips` (`{"from": 0, "to": 1, "type":
-"dissolve"}`, or only `to` for a fade in at a clip's head).
-
-```json
-{"insertTemplate": {"template": {"id": "sectionCard", "name": "Section card", "duration": 3, "fields": [{"key": "title", "label": "Title"}], "clips": [{"track": "Text", "clip": {"content": {"text": {"text": "{{title}}", "preset": "sectionHeader"}}, "duration": 3}}]}, "at": 60, "values": {"title": "CURSOR DOCS"}}}
-```
-
-A clip that carries its file:
-
-```json
-{"insertTemplate": {"template": {"id": "segment:Sting", "name": "Sting", "duration": 1.2, "clips": [{"track": "SFX", "trackKind": "audio", "clip": {"duration": 1.2, "audio": {"gainDB": -15}}, "mediaPath": "/Users/m5-mike/Movies/Tandem Library/Segments/Sting/sting.wav", "media": {"path": "sting.wav", "kind": "audio", "role": "sfx", "duration": 1.2, "hasAudio": true}}]}, "at": 42, "mode": "overwrite"}}
-```
-
-#### addSectionCards
-
-Puts a numbered section card at every section marker after 0:00 (a marker
-at the very start is the cold open, which gets none), or at `markerIDs`
-(any kind). Cards are numbered in time order (`01`, `02`...), `total` is
-the count, the title is the marker's name and the subtitle its note. Each
-card starts just early enough to hide the whole frame from its marker on,
-so the cut between sections is never seen, and is as long as its words need
-to be read (1.4 s for the wipes and 0.8 s to take it in, then the title,
-subtitle and kicker at 15 characters a second, from 4 s to 7 s) unless
-`duration` sets one length for all. Leave `kicker` off unless Mike asks for
-one: he prefers the number alone, which reads faster. A section card already over a marker is renumbered (and gets
-`kicker` if you pass one) but keeps its own words, colours, length and
-sounds, so run it again after adding a section.
-
-`mode` `overwrite` (the default) lays the cards over the timeline on
-Graphics (`trackID` for another video track). `insert` also makes room at
-each marker, so the card is a pause and its wipes show the last shot of one
-section and the first of the next; the whole take moves. `soundIn` and
-`soundOut` put a sound on SFX (or SFX 2... where SFX is taken) for each
-sweep, linked to its card: a media item already in the project, its gain
-(default -15 dB) and `offset`, seconds after its sweep starts (default 0.2
-in, 0 out). `tandem cards` fills them in with the section card whooshes
-from the asset library, levelled for the project's speech.
-
-```json
-{"addSectionCards": {"soundIn": {"mediaID": "med_swishin", "gainDB": -5.4, "offset": 0}, "soundOut": {"mediaID": "med_swishout", "gainDB": -8.3}}}
-```
-
-With `insert` the take is cut for each card's room at its marker, unless
-`cuts` says where instead, by marker ID: within 0.3 s of the marker (less
-for a card under 1.76 s), so the card still covers it. Put a cut in the
-pause before the section's first word, never on the word: room made right
-on a word's start leaves its first sound before the card and the rest
-after it. The card hides the frame from its cut on, and the marker moves
-with what it was on. `tandem cards --insert` works the cuts out from the
-voice (see Add a section card).
-
-```json
-{"addSectionCards": {"markerIDs": ["mk_daytona"], "mode": "insert", "cuts": {"mk_daytona": "15:03.233"}}}
-```
-
-#### fitSectionCards
-
-Makes section cards as long as their words need, like Fit to text in the
-app: every card, or `clipIDs`. Each keeps its start and its end moves
-(nothing ripples, so a longer card covers a little more of the section it
-opens), and its whoosh out moves with its sweep out. Cards that fit already
-are left alone. Use it after changing a card's words, clearing its kicker,
-or on cards made before the lengths grew (they used to be 3.2 s).
-
-```json
-{"fitSectionCards": {}}
-```
-
-### Cutting and trimming
-
-#### blade
-
-Cuts clips at a time. With `clipIDs` only those clips (and their linked
-partners); otherwise every clip under the time on `trackIDs`, or on every
-targeted track.
-
-```json
-{"blade": {"at": 12.5}}
-```
-
-#### join
-
-Joins a through-edit, the opposite of a blade: the clip and the one right
-after it on its track become one clip, with this clip's ID, start and link
-group. It only joins when one clip plays exactly what the two did: the same
-file at the same speed, touching, the file carrying straight on where this
-clip stops (within half a frame of rounding), and the same settings
-(effects that differ only by ID count as the same). The clips linked to them
-across the same cut (camera, screen, voice) join too, so the take stays in
-step: each has to meet the cut and join, or nothing does. Keyframes keep
-their timeline times. It fails, saying why, for a transition or a fade on
-the cut, different settings, an animation that wouldn't carry on across the
-cut (one clip's animation only joins when it sits still, at the other
-clip's value, all through the other clip), or a locked track.
-
-```json
-{"join": {"clipID": "clip_k3f9x2mq"}}
-```
-
-#### joinThroughEdits
-
-Joins every through-edit (see `join`) with its cut in `range`, both ends
-included, or on the whole timeline, as one command: what `tandem join
---apply` sends. Cuts that look like through-edits but would play
-differently joined are left, with a warning saying why.
-
-```json
-{"joinThroughEdits": {"range": {"start": 60, "duration": 60}}}
-```
-
-#### trim
-
-Moves a clip edge (`start` or `end`) to a timeline time. With `ripple` the
-clip keeps its place and everything after it moves instead.
-
-```json
-{"trim": {"clipID": "clip_k3f9x2mq", "edge": "end", "to": 42.2, "ripple": true}}
-```
-
-#### roll
-
-Moves the cut between two adjacent clips, trimming both, and the same cut
-on linked tracks.
-
-```json
-{"roll": {"leftClipID": "clip_a", "rightClipID": "clip_b", "delta": 0.5}}
-```
-
-#### slip
-
-Changes which part of the media a clip shows without moving it. `delta` is
-media time; negative shows earlier media.
-
-```json
-{"slip": {"clipID": "clip_k3f9x2mq", "delta": -1}}
-```
-
-#### slide
-
-Moves a clip between its neighbours, trimming them to compensate.
-
-```json
-{"slide": {"clipID": "clip_k3f9x2mq", "delta": 2}}
-```
-
-#### setSpeed
-
-Changes speed but keeps the same media, so the clip gets shorter or longer.
-Linked clips change with it; `ripple` moves later clips to fit.
-
-```json
-{"setSpeed": {"clipID": "clip_k3f9x2mq", "speed": 1.5, "ripple": true}}
-```
-
-### Moving and editing clips
-
-#### moveClips
-
-Moves clips in time (`delta`) and optionally to another track (clips from
-one track only). `mode` is `place` (fails if the destination is taken) or
-`overwrite`.
-
-```json
-{"moveClips": {"clipIDs": ["clip_k3f9x2mq"], "delta": 5, "toTrackID": "trk_graphics"}}
-```
-
-#### updateClip
-
-Changes any clip setting: `video.transform` (position, scale, rotation),
-`video.crop`, `video.opacity`, `video.cutout`, `audio.gainDB`,
-`audio.fadeIn`, `audio.fadeOut`, `audio.normalizeTo`, `audio.voiceIsolation`,
-the text of a title, `enabled`, `name`, `tags`...
-
-`audio.normalizeTo` levels the clip from its file's measured loudness (the
-target minus the measurement, at most 30 dB either way) and `audio.gainDB`
-is added after it: normalised to -20 LUFS with `gainDB` 2, a clip plays at
-about -18. `null` stops normalising.
-
-```json
-{"updateClip": {"clipID": "clip_k3f9x2mq", "patch": {"video": {"opacity": 0.5}}}}
-```
-
-To give several clips the same patch, send `clipIDs` instead of `clipID`.
-It becomes one `updateClip` per clip in the batch, so it's still one undo
-step:
-
-```json
-{"updateClip": {"clipIDs": ["clip_k3f9x2mq", "clip_p7d2wn4a"], "patch": {"audio": {"gainDB": -6}}}}
-```
-
-`holdEdges` lets a clip run past the ends of its file: its first frame
-holds before the file starts (a negative `sourceStart`) and its last frame
-after it ends, with no sound there. Use it when a shot is a little short
-for its line, or to hold a shot under a section card, instead of placing a
-still of its last frame. A still goes stale when the shot is regenerated;
-the clip's own frame can't. Set it, then trim the edge out, in one batch:
-
-```json
-{"label": "Hold the rail shot to the end of the line", "commands": [
-  {"updateClip": {"clipID": "clip_k3f9x2mq", "patch": {"holdEdges": true}}},
-  {"trim": {"clipID": "clip_k3f9x2mq", "edge": "end", "to": 81.9}}
-]}
-```
-
-`tandem timeline` shows how long it holds (`holds its last frame
-00:00.600`). To turn it off, trim the clip back inside its file first.
-
-#### link
-
-Links clips so they select, move, trim and cut together.
-
-```json
-{"link": {"clipIDs": ["clip_a", "clip_b"]}}
-```
-
-#### unlink
-
-Takes clips out of their link group.
-
-```json
-{"unlink": {"clipIDs": ["clip_a"]}}
-```
-
-#### applyLayout
-
-Sets a one-key layout on video clips: `full` (fills the frame), `pipRight`
-(50% with the cutout and Filmora's drop shadow, bottom right, Mike's usual
-PiP), `pipLeft`, `split` (camera on the right half, everything else on
-the left), or `fill` (covers the whole frame and crops the edges, so a
-landscape photo fills a 9:16 short). Audio clips in the list are skipped.
-
-```json
-{"applyLayout": {"clipIDs": ["clip_cam1"], "preset": "pipRight"}}
-```
-
-#### zoomToRegion
-
-Zooms a video clip into a rectangle of its source (0...1 from the top
-left). Without `at` the zoom is static; with `at` (a timeline time) it
-animates there over `duration` (default 0.5 s). Zoom back out later with the
-rectangle `{"x": 0, "y": 0, "width": 1, "height": 1}`.
-
-```json
-{"zoomToRegion": {"clipID": "clip_scr1", "rect": {"x": 0.5, "y": 0.25, "width": 0.5, "height": 0.5}, "at": 42, "duration": 0.5}}
-```
-
-#### addMotion
-
-A slow zoom or pan over the whole of each clip, the Ken Burns effect, for
-stills and photos: `zoomIn`, `zoomOut`, `panLeft`, `panRight`, `panUp`,
-`panDown`. It starts from the clip's current placement, so in a short apply
-the `fill` layout first. `amount` is how much bigger the zoomed end is
-(default 1.12, a gentle push). Pans travel across whatever part of the photo
-overflows the frame. It replaces the clip's position and scale animation.
-
-```json
-{"addMotion": {"clipIDs": ["clip_photo1"], "style": "zoomIn", "amount": 1.15}}
-```
-
-#### setFormatLayout
-
-Places video clips in an alternate output format from
-`settings.alternateFormats`, such as the 9:16 short (`portrait`): the `top`
-or `bottom` half, or the `full` frame, filled edge to edge with the sides
-cropped. `cutout` turns the cutout on or off in that format only (a short
-shows the camera with its background). The landscape layout is untouched,
-so one edit makes both videos. `tandem short` does this for a whole
-project.
-
-```json
-{"setFormatLayout": {"clipIDs": ["clip_cam1"], "format": "portrait", "slot": "bottom", "cutout": false}}
-```
-
-#### adoptFormat
-
-Makes an alternate output format the canvas, so the app shows it: the
-project takes the format's size and the format leaves `alternateFormats`,
-and each clip's placement there (transform, crop, cutout) becomes its main
-one. Keyframes are absolute, so a scale-only animation (a sticker's pop) is
-scaled to the format's size. A zoom that also moves is dropped, with a
-warning, since the format never showed it. A clip hidden in the format is
-switched off. The landscape layout is gone afterwards, so run it on a copy:
-`tandem short --copy` does that.
-
-```json
-{"adoptFormat": {"format": "portrait"}}
-```
-
-### Transitions
-
-#### addTransition
-
-Adds a transition: `dissolve`, `fadeToBlack`, `fadeFromBlack`, `push`,
-`slide`, `cutSlide`, `wipe` or `zoom` (`direction` for push, slide and
-wipe). Leave out `fromClipID` for a transition at the head of `toClipID`,
-or `toClipID` for one at the tail of `fromClipID`. `duration` defaults to
-Mike's usual length for the type.
-
-```json
-{"addTransition": {"trackID": "trk_camera", "transition": {"type": "dissolve", "duration": 0.5, "fromClipID": "clip_a", "toClipID": "clip_b"}}}
-```
-
-`sound` plays a sound effect with it: a media item already in the project
-(`tandem assets use` adds one), its clip `gainDB` (default -15) and its
-`offset`, when it starts in seconds from the transition's middle (default:
-as the transition starts). The batch returns the transition's ID, then the
-sound clip's. The light swoosh Mike likes on pushes is loudest 0.39 s in, so
-`-0.39` peaks it on the cut, and `-23.3` puts it 15 LU under speech at
--20 LUFS ([Put a swoosh on every push](#put-a-swoosh-on-every-push) has
-the rest).
-
-```json
-{"addTransition": {"trackID": "trk_camera", "transition": {"type": "push", "fromClipID": "clip_a", "toClipID": "clip_b"}, "sound": {"mediaID": "med_rgm8r7d7", "gainDB": -23.3, "offset": -0.39}}}
-```
-
-#### updateTransition
-
-Changes a transition's type, direction or duration, and its `sound`: an
-object with any of `mediaID` (another file in its place), `gainDB` and
-`offset` changes it, or adds one when there's none (with `mediaID`), and
-`null` removes it. What you leave out stays as the sound has it, so a new
-length or type keeps the sound where it is against the middle. The sound
-clip is an ordinary clip too: `updateClip` and `moveClips` on its ID work,
-and it stays tied. `soundClipID` ties a clip that's already on an audio
-track instead, like a whoosh someone placed by hand beside the transition
-(its old sound, if it had one, stays as a plain clip), and `null` unties
-it, leaving it where it is; `addTransition` takes one in its transition
-too. The clip can't be another transition's sound, or be in a crossfade
-of its own, which moving it with the transition would pull apart.
-
-```json
-{"updateTransition": {"transitionID": "tr_x", "patch": {"duration": 0.8}}}
-```
-
-```json
-{"updateTransition": {"transitionID": "tr_x", "patch": {"sound": {"gainDB": -20}}}}
-```
-
-```json
-{"updateTransition": {"transitionID": "tr_x", "patch": {"sound": null}}}
-```
-
-```json
-{"updateTransition": {"transitionID": "tr_x", "patch": {"soundClipID": "clip_whoosh"}}}
-```
-
-#### removeTransition
-
-Removes a transition and its sound.
-
-```json
-{"removeTransition": {"transitionID": "tr_x"}}
-```
-
-### Effects and animation
-
-#### addEffect
-
-Adds an effect to a clip's video or audio effects, depending on the effect.
-`tandem effects` lists the types with their parameters and defaults:
-`colorAdjust`, `colorWheels`, `hsl`, `vignette`, `sharpen`, `lut`,
-`dropShadow`, `border`, `roundedCorners`, `blur`, `pixelate` and
-`pitchShift`. [Grade the camera take](#grade-the-camera-take) has how the
-colour ones fit together.
-
-```json
-{"addEffect": {"clipID": "clip_cam1", "effect": {"type": "dropShadow", "params": {"opacity": 40}}}}
-```
-
-#### updateEffect
-
-Changes an effect's parameters or turns it on or off (`enabled`).
-
-```json
-{"updateEffect": {"clipID": "clip_cam1", "effectID": "fx_s", "patch": {"params": {"blur": 8}}}}
-```
-
-#### removeEffect
-
-Removes an effect and its animations.
-
-```json
-{"removeEffect": {"clipID": "clip_cam1", "effectID": "fx_s"}}
-```
-
-#### moveEffect
-
-Moves an effect to another position in the clip's list (effects apply in
-order).
-
-```json
-{"moveEffect": {"clipID": "clip_cam1", "effectID": "fx_s", "index": 0}}
-```
-
-#### setKeyframes
-
-Replaces the keyframes of one parameter: `video.transform.position`,
-`video.transform.scale`, `video.transform.rotation`, `video.opacity`,
-`video.crop.left` (and top, right, bottom), `audio.gainDB`, or an effect
-parameter as `video.effects.<effectID>.<param>`. Keyframe times are seconds
-from the clip's start, and move with the clip. An empty list removes the
-animation.
-
-```json
-{"setKeyframes": {"clipID": "clip_scr1", "parameter": "video.transform.scale", "keyframes": [{"time": 0, "value": 1, "interpolation": "linear"}, {"time": 2, "value": 1.5}]}}
-```
-
-### Sound
-
-#### normalizeSpeech
-
-Sets every speech clip to the project's speech level (`speechLoudness`,
--20 LUFS unless changed) and clears its gain, as one undo step. Speech is a
-camera's sound, a file with no clearer role, or anything on a take track
-like Voice (an audio track whose ripple mode is `cut`, muted or not). Music
-and sound effects keep their gains; fades, voice isolation, effects and gain
-keyframes stay; locked tracks are left alone with a warning.
-
-```json
-{"normalizeSpeech": {}}
-```
-
-### Markers
-
-#### addMarker
-
-Adds a marker. `kind` is `marker`, `section`, `chapter`, `todo` or
-`comment` (a note Mike left for the next round; see `tandem comments`); a
-`duration` makes it a range. In the app each kind shows in a strip under
-the ruler: Markers (markers, sections, chapters), To-dos and Comments. A
-`todo` is a note for Mike, like a shot to record or find; put what's needed
-in its `note`, which he sees when he hovers over it.
-
-```json
-{"addMarker": {"marker": {"time": 95, "name": "Section 2", "kind": "section"}}}
-```
-
-#### updateMarker
-
-Changes a marker's time, duration, name, kind or note.
-
-```json
-{"updateMarker": {"markerID": "mk_x", "patch": {"name": "Intro"}}}
-```
-
-#### removeMarker
-
-Removes a marker.
-
-```json
-{"removeMarker": {"markerID": "mk_x"}}
-```
-
-## Recipes
+A `--json` result is an object with the project's `revision` in it. Fields
+can be missing (`video`, `audio`, `name`, `linkGroup` on a clip), so read
+them with a default. `timeline --json` has `videoTracks` (bottom to top)
+and `audioTracks`, not one `tracks`. [agents/json-output.md](agents/json-output.md)
+has the shapes of every result you'll read.
+
+## Commands
+
+One line each; `tandem help <command>` has the options and what they do.
+
+| Command | What it's for |
+| --- | --- |
+| `tandem new <path.tandem>` | a project with Mike's tracks and the folder's media (`--portrait` for a short) |
+| `tandem status` | revision, owner, jobs, review state (`--revision` for just the number) |
+| `tandem media` | files, clip counts, analysis state (`--refresh` scans the folder) |
+| `tandem timeline` | the edit as text (`--summary`, `--from`/`--to`, `--words`, `--json`) |
+| `tandem clips` | clip IDs by track, time and media |
+| `tandem transcript` | word timings for a clip, a file or the timeline (`--make`) |
+| `tandem transcribe <id or path>` | a transcript of any file with sound |
+| `tandem wait [transcript\|matte\|proxy\|jobs\|export]` | wait for background work |
+| `tandem search "<phrase>"` | where a phrase is said |
+| `tandem pauses` | silences between words |
+| `tandem tighten` | shorten pauses (`--mike` for Mike's rules; dry run without `--apply`) |
+| `tandem join` | join through-edits (dry run without `--apply`) |
+| `tandem captions` | word-by-word captions (dry run without `--apply`) |
+| `tandem short` | lay out a 9:16 short (`--copy` for its own project) |
+| `tandem cards` | a section card at every section marker |
+| `tandem apply <batch>` | apply edit commands (`--dry-run`, `--expect`, `--label`, `--key`) |
+| `tandem undo`, `tandem redo` | undo or redo (`--count`, `--expect`) |
+| `tandem history` | the undo stack and the edit history |
+| `tandem diff --since <ref>` | what changed since a revision, backup or export |
+| `tandem restore --from <ref>` | put clips back as they were (dry run without `--apply`) |
+| `tandem validate` | check the project for problems |
+| `tandem check` | what Mike would catch in review (`--changed`, `--quick`, `--cuts`) |
+| `tandem sync [<seconds>]` | how late each camera's picture is, or set it |
+| `tandem comments` | Mike's timeline comments (`resolve <id>`) |
+| `tandem frame <time>` | one frame as a PNG |
+| `tandem frames <time>...` | a labelled contact sheet |
+| `tandem screenshot` | the app window (app open only) |
+| `tandem clip <start> <end>` | a review MP4, some tracks, or the sound alone |
+| `tandem export` | the video, loudness matched (`--preset`) |
+| `tandem loudness` | file levels, or the mix over time (`--gains`) |
+| `tandem effects` | effects, transitions, layouts, animatable parameters |
+| `tandem schema` | the edit batch JSON schema |
+| `tandem watch` | print changes as they happen (`--once` waits for one) |
+| `tandem archive` | make the project standalone, or copy it with `--to` |
+| `tandem relink` | find missing media |
+| `tandem import filmora\|edl\|compare` | a Filmora project or EDL as a `.tandem`, or compare two cuts |
+| `tandem assets ...` | the asset library: search, use, show, credits, generate |
+| `tandem segments list\|save\|insert` | reusable bits of timeline in the shared library |
+| `tandem serve` | hold the project and serve the API headless |
+| `tandem mcp` | the MCP server on stdin and stdout |
+| `tandem app`, `tandem url` | open the editor; drive it by link (from the launcher, for work on Tandem itself) |
+
+Edit commands are listed one per line, by group, in
+[agents/edit-commands.md](agents/edit-commands.md#every-command), and
+[agents/operations-and-troubleshooting.md](agents/operations-and-troubleshooting.md#operations)
+maps every command to its HTTP endpoint and MCP tool.
+
+## Recipes and topics
+
+| File | What's in it |
+| --- | --- |
+| [agents/setup.md](agents/setup.md) | installing, what `tandem new` finds, imports, app vs `serve`, background work, MCP, HTTP, SDK |
+| [agents/reading.md](agents/reading.md) | the timeline view, transcripts and words at cuts, search, pauses, clips, frames and contact sheets, render warnings |
+| [agents/json-output.md](agents/json-output.md) | `--json` shapes for timeline, media, transcript, wait, status, history, diff, clips, restore, apply |
+| [agents/edit-commands.md](agents/edit-commands.md) | batches, an index of every edit command, and what help doesn't say: levels, stickers, keyframe values, gain keyframes, crop units, `insertTime`, transitions and sounds, templates, section cards, joins |
+| [agents/cutting.md](agents/cutting.md) | Tighten pauses; Cut a phrase (and rough cuts); Join through-edits; Keep the camera in sync |
+| [agents/broll-and-titles.md](agents/broll-and-titles.md) | Put B-roll over a sentence; Add a title (presets, animations, style); Add a section card |
+| [agents/layout-and-colour.md](agents/layout-and-colour.md) | Set the PiP layout; Zoom into the screen recording; Grade the camera take |
+| [agents/sound.md](agents/sound.md) | Level the voice; Check the sound; Put a swoosh on every push |
+| [agents/shorts.md](agents/shorts.md) | Make a short; Caption a short |
+| [agents/assets.md](agents/assets.md) | the asset library and shared library; Credits for the description; Reuse an intro, an outro or a call to action (segments) |
+| [agents/review-and-history.md](agents/review-and-history.md) | `tandem check` and `--cuts` in full; What changed, and putting it back (diff, history, restore); Do Mike's comments; Export a review clip; Work alongside Mike |
+| [agents/operations-and-troubleshooting.md](agents/operations-and-troubleshooting.md) | every operation's CLI, HTTP and MCP form; Archive a finished video; Relink missing media; Troubleshooting errors |
 
 Each recipe shows the CLI; the MCP tools take the same arguments.
-
-### Do Mike's comments
-
-```bash
-tandem comments                              # what he asked, where, with what's said and playing there
-tandem apply '{"label": "Cut the umm before \"so\" (your comment at 08:40)", "commands": [
-  {"rippleDeleteRange": {"start": 520.1, "end": 520.7}},
-  {"removeMarker": {"markerID": "mk_k3f9x2mq"}}]}'
-tandem comments resolve mk_7hd2p4xa          # one you did in an edit without removing it
-```
-
-While he reviews, Mike leaves comments at moments on the timeline (Add
-comment, Shift-C, or a double-click on an empty stretch in the app): notes
-like "cut the umm here" or "this B-roll is wrong", shown in a Comments
-strip under the ruler. They're markers of kind
-`comment`. When he asks you to look at them, do each one, label the edit
-with what you did (he reads the labels beside your highlighted changes),
-and remove the comment in the same batch, so one undo puts both back.
-Comments move with ripple edits like any marker, so list them again after
-one rather than reusing the times you read first. Leave a comment you
-couldn't do, or weren't sure about, and say why when you hand back.
-
-### Keep the camera in sync
-
-```bash
-tandem sync                                  # how late each file's picture is
-tandem sync 0.08                             # every camera take: picture 80 ms late
-tandem sync 0.05 --media med_screen          # one file
-tandem sync 0.08 --default                   # also what new camera takes get
-```
-
-A webcam's picture lags its microphone (Mike's by about 75 ms), so lips
-and voice drift apart. A file's `pictureDelay` makes every clip of it show
-its picture that much later in the file, in the app, frames, review clips,
-`check` and exports. The sound, the cuts and the transcript's word times
-stay where they are, so nothing else moves. New camera takes get Tandem's
-default (Settings in the app, or `--default`). Never slip clips by hand as
-well, or the delay doubles. `tandem media` shows it as "picture 80 ms
-late, shown in sync". In MCP: `sync {"delay": 0.08}`.
-
-Record It now takes the lag out as it records (its Settings → Camera
-delay) and tags the file `com.mikerosoft.record-it.camera-delay`. Tandem
-reads the tag (`pictureDelayCorrected`, "in sync as recorded" in `tandem
-media`), gives those takes no delay of its own, and `tandem sync` leaves
-them alone.
-
-### Tighten pauses
-
-```bash
-tandem pauses --min 0.5                      # what's there
-tandem tighten --mike                        # the plan, nothing changes
-tandem tighten --mike --protect 2:14.5,5:03 --widen --apply
-tandem clip 0:00 1:00 -o /tmp/review.mp4     # watch the result
-tandem undo                                  # if it's too tight
-```
-
-`--mike` is Mike's rules ("How Mike likes a take cut" in the skill): 0.4 s
-after a sentence, 0.12 s after a comma and 0.08 s for a thinking pause
-mid-sentence, and only pauses of 0.5 s or more change, so breaths and
-natural pauses stay as he said them. What a pause follows comes from the
-punctuation on the word before it: `. ? !` (or `...`) end a sentence,
-`, ; :` are a comma, anything else is mid-sentence. Set or override each
-keep with `--sentence`, `--comma` and `--mid`; a kind with no keep is left
-alone, and a comma without one uses `--mid`. `--min` (default 0.5 here) is
-the shortest sentence pause that changes and `--mid-min` (default 0.5) the
-shortest comma or mid-sentence one. Each cut is as many whole frames as fit,
-centred in the pause, so what's kept is within a frame of the keep.
-
-`--protect` takes timeline times, comma separated (or the option again):
-the pauses containing them are left alone, for the beats Mike wants kept (a
-point landing, a reaction, something animating on screen). The plan lists
-what it protected.
-
-`--widen` also opens up joins that are too tight: where a cut between two
-speech clips leaves less than the keep for what it follows (0.2 s between
-sentences after a retake was cut, say), it brings back silence from the take
-either side with ripple trims, so the camera and screen stay in sync. It
-only takes silence before the take's next transcribed word (less 40 ms) and
-nothing where a word runs through the clip's edge, so it never brings back
-speech the transcript knows about; an "um" the transcript left out can come
-back, so listen to widened joins. It's off unless you ask, and leaves
-through-edits and protected joins alone.
-
-Without any of those, every pause of at least `--min` (0.6) is shortened to
-`--keep` (0.15), cut from the middle so half the kept silence stays after
-the last word and half before the next one, with the cut edges rounded
-inwards to frames.
-
-Word edges come from the voice, so a pause is the real gap between words
-(breaths and clicks in it included), not what's left between the
-transcript's stretched word times. The plan is a batch of
-`rippleDeleteRange` commands (and the widening's `trim`s), latest first so
-every time is in the current timeline's times; `--json` prints it if you'd
-rather adjust it and `apply` it yourself. `--from` and `--to` limit it to
-part of the video. In MCP: `tighten {"mike": true, "protect": [134.5],
-"widen": true}`, then again with `"apply": true, "expectedRevision": <the
-plan's revision>`.
-
-### Join through-edits
-
-Putting cuts back with ripple trims (or cutting the take and changing your
-mind) leaves through-edits: cuts where the same file carries straight on,
-so nothing changes there, but the timeline still looks cut up. Join them
-rather than lifting and trimming clips by hand:
-
-```bash
-tandem join                                  # what it would join, and the cuts it leaves and why
-tandem join --apply                          # one undo step
-tandem join --from 2:00 --to 3:30 --apply    # only cuts in that stretch
-tandem apply '{"join": {"clipID": "clip_k3f9x2mq"}}'   # only the cut after that clip
-```
-
-Each joined clip keeps the first clip's ID and link group and plays exactly
-what the two did; the camera, screen and voice of a take join together,
-and hundreds of cuts join in one go. As nothing Mike would see or hear
-changes, a join (with `join` or by hand) adds nothing to his review, and a
-piece still waiting for it is highlighted in the clip it joined. A cut is
-left, and listed with the reason, when joining would change what plays: a
-transition or a fade on it, clips with different settings (a gain, a crop,
-an effect), animation that wouldn't carry on across it, or a linked clip
-cut somewhere else (a split edit). Take away what's in the way first if
-that cut should go too. In MCP: `join {}`, then `join {"apply": true,
-"expectedRevision": <the plan's revision>}`.
-
-### Caption a short
-
-```bash
-tandem captions --from 0:00 --to 1:30                 # the plan, nothing changes
-tandem captions --from 0:00 --to 1:30 --apply
-tandem frame 0:12 -o /tmp/caption.png --format portrait
-```
-
-Captions come from the transcripts: up to three words at a time (`--max-words`),
-breaking at sentence ends and pauses, with the word being spoken highlighted
-(the `caption` title preset, Tilt Warp with a black outline, which is what
-Mike's shorts use). They go on a "Captions" video track that follows ripple
-edits, so tightening pauses afterwards keeps them in sync. `--y` moves them:
-the default 0.42 sits between the screen and the camera in a 9:16 short;
-use about 0.85 for landscape. Run it again over the same range to redo them
-(it overwrites what's on the track there). After cutting pauses or
-stumbles, a word shows once, on the side of the cut where most of it plays,
-and words that were cut out don't show.
-
-Each caption stores the preset, its words and only what you passed (`--y`
-is its position), so the preset decides the look and a later change to it
-reaches every caption. Tilt Warp doesn't come with macOS: the first time
-captions are applied, Tandem installs it from Fontsource into the project's
-`assets/font/` (the output says so), and the app picks it up. If that can't
-happen (offline), the captions still go in and the output says what to run.
-To restyle them, patch the captions' `style` (see Add a title).
-
-### Make a short
-
-A short is 1080x1920, and there are two ways to make one.
-`tandem export --preset short` renders either.
-
-**Cut from a landscape video.** Make the short a project of its own,
-beside the long one:
-
-```bash
-tandem short --copy                            # the plan, nothing written
-tandem short --copy --apply                    # writes "<Name> Short.tandem"
-tandem app "Decision Models Short.tandem"      # cut it down there
-tandem captions --apply --project "Decision Models Short.tandem"
-tandem export --preset short --project "Decision Models Short.tandem"
-```
-
-Screen, B-roll and graphics fill the top half, the camera fills the bottom
-half with its background, and full-frame camera moments fill the frame.
-Then the copy's canvas becomes 1080x1920 (`adoptFormat`), so the app shows
-the short portrait, as it exports. The long video's project isn't edited,
-and an existing file is never replaced (`-o` names the copy).
-
-Without `--copy`, `tandem short --apply` adds the short to the same
-project as an alternate output format instead, so every edit shows up in
-both videos. The app still shows the landscape canvas then; look at the
-short with `tandem frame 0:30 --format portrait -o /tmp/short.png`.
-
-**Made portrait from the start**, for a short that isn't cut from a long
-video (phone footage, photos). The canvas is the short, so there's no
-portrait format and no `tandem short` step (it refuses, as there's
-nothing to lay out):
-
-```bash
-tandem new "Workbench.tandem" --portrait       # a 1080x1920 canvas
-tandem captions --apply
-tandem frame 0:30 -o /tmp/short.png
-tandem export --preset short                   # exports/Workbench r<revision>.mp4
-```
-
-The `fill` layout makes a landscape photo or clip cover the frame. Presets
-keep the canvas's shape, so plain `tandem export` and `--preset
-youtube1080` make the same 1080x1920 H.264 at 20 Mbps as `--preset short`,
-and `--preset youtube4k` upscales to 2160x3840 with a warning. Every export
-prints the size, codec and bitrate it used; `tandem help export` has the
-presets.
-
-### Cut a phrase
-
-```bash
-tandem search "as I said before"
-```
-
-```
-"as I said before" on the timeline, 1 time:
-  02:14.320-02:15.980  ...so the model [as I said before] picks the...  clips clip_voc7,clip_cam7
-```
-
-Cut that range from the whole take, reaching into the pauses either side so
-no breath is left behind (`tandem pauses --from 2:10 --to 2:20` shows them):
-
-```json
-{"label": "Cut the repeated phrase", "expectedRevision": 57, "commands": [
-  {"rippleDeleteRange": {"range": {"start": 134.2, "end": 136.05}}}
-]}
-```
-
-Then check it with `tandem check --cuts --from 2:10 --to 2:20` (it gives the
-trim if a word got clipped) and listen with `tandem clip 2:08 2:20`.
-
-For several phrases, or a rough cut that drops false starts and retakes,
-list every range as you read it in one `cutRanges` command rather than
-working out the order of ripple deletes. To keep only some stretches,
-cut the gaps between them:
-
-```json
-{"label": "Rough cut: drop the false starts", "expectedRevision": 57, "commands": [
-  {"cutRanges": {"ranges": [{"start": 0, "end": 18.15}, {"start": 25.6, "end": 46.24}, {"start": 134.2, "end": 136.05}]}}
-]}
-```
-
-### Put B-roll over a sentence
-
-Find when the sentence is said, and the B-roll file's media ID:
-
-```bash
-tandem search "our servers handle the load"
-tandem media
-```
-
-Place the shot on the B-roll track for exactly that sentence. `sourceStart`
-picks where in the B-roll file to start. B-roll is silent unless you pass
-`"includeAudio": true`.
-
-```json
-{"label": "B-roll over the servers line", "commands": [
-  {"placeMedia": {"mediaIDs": ["med_servers"], "at": 134.32, "duration": 4.5, "sourceStart": 2}}
-]}
-```
-
-If the B-roll track already has something there, add `"mode": "overwrite"`
-or name another track with `"videoTrackID"`.
-
-### Add a title
-
-Insert a text clip on the Text track (by name, or by the ID on the `V5 Text
-trk_...` line of `tandem timeline`):
-
-```json
-{"label": "Title for tip 1", "commands": [
-  {"insertClip": {"trackID": "Text", "clip": {"content": {"text": {"text": "TIP 1", "preset": "callout", "animationIn": "popIn", "animationOut": "fadeOut"}}, "start": 95, "duration": 3}}}
-]}
-```
-
-Change the words later with
-`{"updateClip": {"clipID": "clip_...", "patch": {"content": {"text": {"text": "TIP 2"}}}}}`.
-
-`animationIn` and `animationOut` take `fade`, `pop`, `slideUp` or
-`typewriter`, and `animationOut` plays them backwards. `fadeIn`, `fadeOut`,
-`popIn` and `popOut` work too. `none` switches off the preset's. Leave them out
-for the preset's, and set `animationDuration` (seconds) for how long each
-takes. Any other name is turned away, since it would draw nothing.
-
-The presets are `label` (a plain label like VS), `callout` (a punchy boxed
-callout like 14 TIPS), `sectionHeader` (a small accent line over a big
-title), `version` (a release video's version number) and `caption` (word
-by word captions); the schema's `preset` field lists them too.
-
-The preset gives the look. A clip's `style` holds only what it changes
-(`font`, `size`, `weight`, `color`, `strokeColor`, `strokeWidth`,
-`backgroundColor`, `alignment`, `uppercase`, `shadow`, `lineSpacing`), and
-each field that's there wins over the preset, even `false` or `0`. So a URL
-on a label stays lower case, and a callout can lose its shadow and outline:
-
-```json
-{"label": "Plain end card", "commands": [
-  {"updateClip": {"clipID": "clip_url", "patch": {"content": {"text": {"style": {"uppercase": false, "strokeWidth": 0, "shadow": false}}}}}}
-]}
-```
-
-`null` for a field in a patch takes it back to the preset's. A
-`backgroundColor` with `"a": 0` switches off a preset's box, and
-`"animationIn": "none"` (or `animationOut`) its animation. `tandem timeline`
-lists what each title sets itself (`style uppercase=false shadow=false`).
-The app's Text inspector shows the values the title is drawn with, marks the
-ones the clip sets itself in amber, and has a button beside each that goes
-back to the preset's.
-
-### Add a section card
-
-Mike's section card is one clip, the built-in `sectionCard` graphic, about
-three seconds between the cold open, the intro and each section. Convex's
-yellow, red and purple bands sweep across to wipe it in; the dark card holds
-a number chip, the title (Anton, upper case) with a yellow text cursor
-blinking after its last letter, a letter-spaced subtitle and progress bars
-(a bar for each section up to six, then one bar in proportion with a count
-like `3 / 14`); and the bands sweep across again to wipe it out, showing the
-next shot. It's as long as its words need to be read, from 4 s for a short
-title and subtitle to 7 s: a longer card holds longer and the wipes stay the
-same.
-
-The usual way is a card at every section marker. Mark where each section
-starts (`addMarker` with `"kind": "section"`, or a marker's Kind menu in the
-app): the marker's name is the card's title and its note, if it has one,
-the subtitle. Then:
-
-```bash
-tandem cards                              # the plan: numbers, titles, where each card goes
-tandem cards --apply                      # just the number in the chip, as Mike likes
-tandem frame 0:33 -o /tmp/card.png        # look at one
-```
-
-The cards go on Graphics, each starting 0.43 s before its marker so the
-card hides the whole frame from the marker on, and each as long as its
-words need: 1.4 s for the wipes and 0.8 s to take it in, then the title,
-subtitle and kicker read at 15 characters a second (a little slower than
-Netflix's 17 for subtitles: Mike found cards at 17 a bit quick), rounded up
-to a tenth of a second, at least 4 s and at most 7. `--duration` makes them
-all one length. Mike prefers no kicker (`SECTION 1 OF 9` beside the number):
-only pass `--kicker` when he asks. The section keeps playing
-under it (Mike's voice too). With `--insert` each marker gets room instead:
-the take moves on by the card's hold, so the card is a pause and its wipes
-show the last shot of one section and the first of the next. A marker at
-0:00 marks the cold open and gets no card. Run `tandem cards` again after
-adding or moving a section: cards already at a marker are renumbered and
-keep their words. `--kicker Tip` suits a list video. It's one undo step,
-and in the app it's Timeline > Add section cards at section markers
-(Option-M).
-
-`--insert` cuts the take in the pause before each section's first word,
-not on it. A marker on the word (where its transcript starts it) or just
-before it moves the cut back into the pause, keeping 0.2 s of silence
-before the word (half the pause, when the pause is under 0.4 s), on a
-frame; one in the second half of a word moves it into the pause after
-that word. Word
-edges come from the voice, as for `pauses`. When that would leave a sliver
-of a clip beside the room (a tightened pause, with its cut in the middle),
-the cut already in that pause is used. The cut moves at most 0.3 s, so the
-card still covers its marker and running `tandem cards` again finds it.
-The plan shows `take cut at` for each card whose cut moved, and warns about
-each marker that sat on a word, one in the middle of a long word (no pause
-near enough, so it's cut there: move the marker) and speech with no
-transcript yet (cut right at the marker). A section marked in the pause
-before its first word needs no move.
-
-A soft whoosh goes with each sweep: two airy swishes made for the card with
-ElevenLabs, kept in the asset library (docs/ASSETS.md). `tandem cards
---apply` copies them into the project's `assets/sfx/` and puts them on SFX,
-linked to their card: one as the card starts, one as the out sweep starts,
-0.88 s before the end. Their gains (-5.4 and -8.3 dB) put their loudest
-moment 15 LU under speech at -20 LUFS, where Mike's own swipes sit; in a
-project whose speech plays elsewhere they move with it (an imported edit at
--28.7 gets -14.1 and -17). A Mac whose library doesn't have them makes
-silent cards and says so; `--no-sounds` leaves them out.
-
-One card by hand, anywhere:
-
-```json
-{"label": "Section card: Results", "commands": [
-  {"insertClip": {"trackID": "trk_graphics", "clip": {"content": {"graphic": {"template": "sectionCard", "props": {"number": "02", "title": "Results", "subtitle": "Finally!", "total": 3}}}, "start": 95, "duration": 4}}}
-]}
-```
-
-Props: `title`, `subtitle`, `number` (what the chip says; a number is
-written `02`), `total` (how many sections, for the progress bars; 0 hides
-them), `kicker` (`Section` or `Tip`, shown as `SECTION 2 OF 3` beside the
-chip; off by default, and Mike prefers it off), `cursor` (`false` turns off the cursor after the title; it's on by
-default), and the colours `accent` (the first band, the chip, the subtitle,
-the lit bars and the cursor), `band2`, `band3` and `background`, as
-`{"r", "g", "b"}` or a hex string like `"#F3B01C"`. A missing word leaves
-that part out; colours default to Convex's. Change them later with a patch, for example
-`{"updateClip": {"clipID": "clip_...", "patch": {"content": {"graphic": {"props": {"subtitle": "Let's keep it fair"}}}}}}`
-(`null` removes one). `tandem frame` shows the result. A card added by hand
-is as long as you make it. After changing its words, the Video tab's Fit to
-text sets the length they need, trimming the card's end and moving its
-whoosh out with the wipe out; by hand that's a `trim` of its end and a
-`moveClips` of the whoosh by the same amount.
-
-### Set the PiP layout
-
-Put the camera in the bottom-right corner with the cutout and shadow, the
-way Mike does:
-
-```json
-{"label": "Camera to PiP", "commands": [
-  {"applyLayout": {"clipIDs": ["clip_cam1", "clip_cam2"], "preset": "pipRight"}}
-]}
-```
-
-`full` puts it back to full frame for a talking-head section, `pipLeft`
-moves it to the other corner when the screen has something important
-bottom right, and `split` puts camera and screen side by side. To fine-tune
-the corner, patch the transform:
-`{"updateClip": {"clipID": "clip_cam1", "patch": {"video": {"transform": {"position": {"x": 0.86, "y": 0.76}}}}}}`.
-
-### Grade the camera take
-
-Mike grades a camera take once, on the file's look (`MediaItem.look`), so
-every clip from it gets the same grade; the Colour tab calls that the whole
-take. A clip's own colour effects go on top of it, for one shot that needs
-more, and they can animate like any effect parameter
-(`video.effects.<effectID>.<param>`). The look can't.
-
-The Colour tab shows a grade as fixed sections, each backed by one effect:
-
-| Section | Effect | Parameters |
-| --- | --- | --- |
-| Light | `colorAdjust` | `exposure` (stops), `contrast`, `highlights`, `shadows`, `blackLevel` |
-| Colour | `colorAdjust` | `temperature`, `tint`, `saturation`, `vibrance` |
-| Colour wheels | `colorWheels` | `shadows`, `midtones` and `highlights`, each with `Hue`, `Amount` and `Brightness` (`shadowsHue`...) |
-| Colour mixer | `hsl` | `red`, `orange`, `yellow`, `green`, `aqua`, `blue`, `purple` and `magenta`, each with `Hue`, `Saturation` and `Luminance` (`redSaturation`...) |
-| Vignette | `vignette` | `amount`, `size`, `feather` |
-| Sharpen | `sharpen` | `amount` |
-| LUT | `lut` | `path`, `intensity` |
-
-Write a grade the way the tab reads it: one effect of each type, with the
-Light and Colour values in the same `colorAdjust`, as Filmora imports have
-them. A section switched off is its effect turned off, so when Mike turns
-Light off while Colour has values the tab splits them into two
-`colorAdjust` effects, Light's first; a section that's reset loses its
-effect (or, when it shares one, its values). Anything the tab can't place,
-like a second `hsl`, shows after the sections as it is.
-
-`colorWheels` grades like lift, gamma and gain: the shadows wheel moves
-black and leaves white alone, highlights the other way round, and midtones
-leaves both. A wheel's hue says which colour it pushes towards (0 red, 60
-yellow, 120 green, 180 cyan, 240 blue, 300 magenta, the same degrees as the
-mixer's ranges) and its amount how far: 10 to 25 is a normal grade, 100 is
-strong, and the hue does nothing while the amount is 0. A wheel changes the
-colour of its range, not its brightness; that's what the wheel's brightness
-(-100 to 100) is for. Teal shadows and warm highlights, on top of Mike's
-usual grade:
-
-```json
-{"label": "Grade the camera", "commands": [
-  {"updateMedia": {"mediaID": "med_camera", "patch": {"look": [
-    {"type": "colorAdjust", "params": {"contrast": 25, "blackLevel": -7, "temperature": -3}},
-    {"type": "colorWheels", "params": {"shadowsHue": 200, "shadowsAmount": 12, "highlightsHue": 35, "highlightsAmount": 10}},
-    {"type": "hsl", "params": {"redSaturation": -8, "orangeSaturation": -8}},
-    {"type": "vignette", "params": {"amount": -30}},
-    {"type": "sharpen", "params": {"amount": 3}}
-  ]}}}
-]}
-```
-
-`look` is replaced as a whole, so read it first (`tandem timeline --json`,
-under `media`) and send it back with your change. Check the result with
-`tandem frame`.
-
-### Zoom into the screen recording
-
-Zoom the screen clip into the top-right quarter at 1:12 and back out at
-1:20:
-
-```json
-{"label": "Zoom on the settings panel", "commands": [
-  {"zoomToRegion": {"clipID": "clip_scr2", "rect": {"x": 0.5, "y": 0, "width": 0.5, "height": 0.5}, "at": 72, "duration": 0.5}},
-  {"zoomToRegion": {"clipID": "clip_scr2", "rect": {"x": 0, "y": 0, "width": 1, "height": 1}, "at": 80, "duration": 0.5}}
-]}
-```
-
-### Level the voice
-
-Speech is levelled per take to the project's speech level, -20 LUFS, and
-export brings the whole mix to the project's `loudnessTarget` (-14 LUFS
-unless set) with true peaks under its `truePeakCeiling` (-1 dBTP), and says
-what it mastered to. So
-the speech level sets how the voice sits against the music and sound
-effects (and how loud the app plays), not how loud the video is. Placing
-media levels new speech by itself; a project imported with its own gains,
-or made before the speech level existed, gets there with one command:
-
-```bash
-tandem loudness                              # each file's loudness, each track's levels
-tandem apply - <<< '{"normalizeSpeech": {}}'
-tandem loudness                              # "Speech is levelled to -20.0 LUFS" and no stragglers
-```
-
-To move the voice for the whole video, change the level (clips normalised
-to the old level follow it), then check a review clip:
-
-```json
-{"label": "Voice a little louder", "commands": [
-  {"updateSettings": {"patch": {"speechLoudness": -18}}}
-]}
-```
-
-A single clip can still differ: `{"updateClip": {"clipID": "clip_voc7",
-"patch": {"audio": {"gainDB": 2}}}}` plays it 2 dB over the rest.
-
-### Export a review clip
-
-```bash
-tandem frame 2:14.5 -o /tmp/frame.png        # one frame
-tandem clip 2:00 2:30 -o /tmp/review.mp4     # 720p review render
-tandem export                                # the full video, loudness matched
-```
-
-Plain `export` picks the preset that fits the canvas: YouTube 1080p for a
-canvas 1080 pixels or less on its short side (1920x1080, 1080x1920),
-YouTube 4K for anything bigger. A preset sets the codec, bitrate and
-resolution class and keeps the canvas's shape, so `--preset youtube1080`
-of a 4K project is 1920x1080 and of a 9:16 one 1080x1920.
-
-`clip` defaults to `exports/review <start>-<end>.mp4` in the project folder
-and `export` to `exports/<name> r<revision>.mp4`. In MCP, `frame` returns
-the picture directly, so you can look at the result of an edit.
-
-### Check the sound
-
-Don't run ffmpeg on a review clip to hear how loud something is. Tandem
-measures the mix itself, through the same composition, gain taps and
-time-pitch as export:
-
-```bash
-tandem loudness --from 1:00 --to 1:30              # the mix, a row every 0.5 s
-tandem loudness --from 1:00 --to 1:30 --tracks Music --step 0.2
-tandem loudness --from 1:00 --to 1:30 --gains      # does the render follow the gain lanes?
-tandem clip 1:00 1:30 --tracks Music --audio-only  # listen to the music bed alone
-tandem assets show elevenlabs:music_2p839smz       # its prompt, licence, loudness and file
-```
-
-Each row has the momentary loudness (the 400 ms centred on its time), the
-short-term (3 s) and the highest sample, with the range's integrated
-loudness, true peak and a sparkline above. They're the levels the timeline
-plays at, before export's master gain, which moves the whole range by the
-same amount, so compare things with each other: a swell 6 dB over the bed
-around it, the bed about 25 LU under the voice, a sound effect's peak
-against the speech. `--tracks` measures only those audio tracks (names or
-IDs); `--json` gives every point.
-
-`--gains` checks the render against the gain lanes (the clips' levelling,
-gain, gain keyframes and fades). It renders each track (the `--tracks`
-ones, or every one that plays there) as it is and again with its gain
-flattened, and compares their difference with the lane 10 ms at a time.
-It says when a change lands late and by how much, and lists where the
-render plays more than 1 dB off the lane. If Mike says a gain change
-plays late, run it before arguing: it checks the render does what the
-lanes say (a lane set in the wrong place is a different problem, which
-`tandem timeline` shows).
-
-### Put a swoosh on every push
-
-A swoosh belongs to its transition: give a push a `sound` and it goes
-where the push goes, and away with it. The light swoosh Mike likes (the
-app's default for push, slide, cut slide and wipe) is
-`elevenlabs:sfx_2ybnc2tu` in his asset library. Copy it into the project
-once, find the pushes that have no sound yet, and give them all one in one
-batch:
-
-```bash
-tandem assets use elevenlabs:sfx_2ybnc2tu     # adds it to the media: med_rgm8r7d7
-tandem timeline --json | jq -r '.project.videoTracks[].transitions[] | select(.type == "push" and .soundClipID == null) | .id'
-# tr_k3f9x2mq
-# tr_p8zq4w2m
-```
-
-```json
-{"label": "Swooshes on the pushes", "commands": [
-  {"updateTransition": {"transitionID": "tr_k3f9x2mq", "patch": {"sound": {"mediaID": "med_rgm8r7d7", "gainDB": -23.3, "offset": -0.39}}}},
-  {"updateTransition": {"transitionID": "tr_p8zq4w2m", "patch": {"sound": {"mediaID": "med_rgm8r7d7", "gainDB": -23.3, "offset": -0.39}}}}
-]}
-```
-
-Each goes on SFX (SFX 2 where SFX is taken) starting 0.39 s before the
-cut, so its loudest moment lands where the push moves fastest. -23.3 dB is
-for speech at Tandem's -20 LUFS: its loudest 400 ms then sits 15 LU under
-the voice, as the section card whooshes do. In a project whose speech
-plays elsewhere (`tandem loudness` says where), move the gain by the
-difference: -32 for speech at -28.7. For another sound, `offset` is minus
-the moment it's loudest, and the gain puts that 15 LU under the speech. A
-push that already has a whoosh placed by hand beside it can keep that one:
-tie it with `{"soundClipID": "clip_..."}` in the patch, and it moves and
-goes with the push from then on.
-
-### Credits for the description
-
-```bash
-tandem assets credits
-```
-
-prints the block to paste into the YouTube description, for example:
-
-```
-Paste into the description:
-
-Credits
-Animated Noto Emoji by Google, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
-
-Before publishing:
-  - No licence on record for "Glitch Hit 02". Add a tandem-licence.json to their import folder, or replace them.
-```
-
-It counts the assets still in the project's media, and any a clip names in
-an `asset:<id>` tag (a saved segment's clips carry them for the library
-assets they came from), so run it last, after removing media the cut no
-longer uses. Sort out everything under "Before
-publishing" first. `--optional` adds courtesy credits nobody requires
-(Pexels creators).
-
-### Reuse an intro, an outro or a call to action (segments)
-
-A segment is a bit of timeline saved to reuse: a group of clips with their
-offsets, settings, effects and keyframes, saved into the shared library's
-`Segments/<name>/` with copies of the files they play. Mike saves them from
-the timeline (Timeline > Save selection as segment…); agents do the same
-from clip IDs or a range:
-
-```bash
-tandem timeline --from 0:00 --to 0:08          # find the intro's clips
-tandem segments save "Intro" --clips clip_card,clip_title,clip_whoosh --field clip_title=Title
-tandem segments save "Outro" --from 10:02 --to 10:15    # every clip wholly inside
-tandem segments list
-```
-
-`--clips` takes exactly those clips (a linked partner isn't added, so name
-the camera's sound too if it should come). `--field clip=Label` makes a
-title's words a field: they're asked for on insert, and the words it has now
-are the default. A `{{key}}` already in a title is a field too.
-Transitions come along when every clip they join is saved: a dissolve
-between two of the clips, a fade at one's head or tail. Saving under a name
-that's taken fails unless `--replace`. Projects the old version went into
-play its files from the library, so the new version keeps every file only
-the old one had, and the rest of the old one goes to the Trash.
-
-Then put one on the timeline, as one undo step:
-
-```bash
-tandem segments insert "Intro" --at 0 --value title="DECISION MODELS"
-tandem segments insert "Like and subscribe" --at 4:12 --mode overwrite
-```
-
-Each clip goes on the track with the same name and kind (made if the
-project hasn't one), at the same offset, linked to the rest. The segment's
-files are added to the project's media where they are in the library (no
-copy), and inserting again reuses them; archiving the project copies them
-in. `--mode` is `place` (the default: fails where a track is taken),
-`overwrite` or `insert` (pushes later clips right). In MCP:
-`segments_insert {"name": "Intro", "at": 0, "values": {"title": "..."}}`.
-
-On disk a segment is plain JSON beside its files:
-
-```
-Tandem Library/Segments/Intro/
-  segment.json      {"version": 1, "name": "Intro", "template": {...}, "media": [...], "savedFrom": "Decision Models", "notes": []}
-  card.mov          the files its clips play, named as they were
-  whoosh.wav
-  warm.cube         and the looks they use
-```
-
-`template` is an `insertTemplate` template whose `mediaPath`s and LUT paths
-are relative to the folder; `media` holds the media items for those files.
-
-### Archive a finished video
-
-When a video's done it moves to Bruce, Mike's other Mac, which keeps the
-archive. A project there has to open with nothing missing, but projects use
-files from outside their folder: stickers, sounds, looks and segments from
-the shared library, an import's absolute paths, a sound from another
-video's folder, a LUT, a font installed only on this Mac. Look first:
-
-```bash
-tandem archive --dry-run
-```
-
-```
-Dry run, nothing changed. Making Decision Models.tandem standalone would bring in 19 files from outside its folder (2.89 GB).
-From outside the folder:
-  media/music/score.wav  192.2 MB  from ~/dev/convex/convex-videos/decision-models/music/score.wav
-  media/main vid/2026-09-24_105434-camera.mov  1.16 GB  from ~/dev/convex/...
-  ...
-Missing, so left as they are (1):
-  /Users/m5-mike/Desktop/old-take.mov  (med_x, 2 clips)
-```
-
-Then either make the project's own folder standalone (the files are copied
-in and the project points at them, as one undo step credited to you):
-
-```bash
-tandem archive
-```
-
-or write a standalone copy of the whole folder somewhere else, leaving the
-original as it is:
-
-```bash
-tandem archive --to "/Volumes/CannMedia/Archive" --dry-run   # the folder by top-level folder, with sizes
-tandem archive --to "/Volumes/CannMedia/Archive"
-```
-
-The copy is `/Volumes/CannMedia/Archive/<project folder name>/`, with every
-path relative, so it opens anywhere. Proxies, mattes, thumbnails and
-isolated voice are left out (Tandem makes them again; `--with-cache` keeps
-them), as are `node_modules` folders; transcripts and the converted copies
-of stickers macOS can't decode always go. Files outside
-the folder land in `media/<the folder they were in>/`, shared library files
-in `media/Tandem Library/<where they were in it>` (a segment's in
-`media/Tandem Library/Segments/<name>/`), a Live Photo's movie beside its
-still, LUTs in `assets/lut/` and fonts in `assets/font/` (the shared
-library's `Fonts/` is looked in too). Other `.tandem` files in the folder
-(versions) get the same treatment.
-
-Every copy is an APFS clone when it can be (instant, no extra space) and is
-checked against the original by SHA-256 when it isn't. A different file with
-the same name is never replaced; the copy goes beside it as `name 2`.
-`archive.json` in the archived folder says where each file came from, with
-its checksum and date. Missing files are listed and left as they are.
-
-A run that stops part way (Ctrl-C, a share that went away) changed nothing in
-the project; run the same command again and it carries on, using what it
-already copied. An archive to the same place later brings that archive up to
-date. With the app closed the project stays locked while it copies, so a big
-archive to a network share is best run when Mike isn't about to open it; with
-the app open, the archive runs in the app.
-
-### Relink missing media
-
-A project opened on another Mac, or a folder tidied by hand, can lose track
-of files. `tandem media` marks them `MISSING FILE` and `tandem validate`
-fails. The app offers to search a folder when it opens such a project; from
-the command line:
-
-```bash
-tandem relink --dry-run                        # what it would find in the project folder
-tandem relink --search "/Volumes/CannMedia/decision-models"
-```
-
-It looks in the project folder and each `--search` folder (subfolders too)
-for a file with the same name, and takes it only when its content matches
-what the project knew (its fingerprint). A file with no fingerprint is taken
-when it's the only one with that name. Then it looks in this Mac's shared
-library for whatever's still missing, so a project that used stickers and
-sounds from the library on another Mac finds them here; there, only a file
-whose content matches is taken. A Live Photo's movie comes back with its
-still when it's beside it. It's one undo step.
-
-### Work alongside Mike
-
-- Read before you write: take the revision from `timeline` or `status` and
-  pass it as `expectedRevision`. On `staleRevision`, read again.
-- Note the revision you hand back at. Next round, `tandem diff --since
-  <it>` says what Mike changed in between, edit by edit, and `tandem
-  restore` brings back anything he took out that he wants again.
-- Try a big batch with `dryRun` first.
-- Give retried batches an `idempotencyKey`.
-- Undo with `expectedRevision` so you only undo your own edit, and with
-  `count` to undo several at once.
-- `tandem watch --once` (MCP `watch`) waits until the project changes, for
-  example after asking Mike to fix something in the app. `tandem watch`
-  prints every change as it happens.
-- Mike reviews your edits in the app rather than watching the whole video
-  again: every batch that changes the timeline and isn't his is
-  highlighted there (the clips it added or changed, a mark where it took
-  something out) until he plays through them (each clears once he's
-  watched all of it) or marks them reviewed, and he steps from one to
-  the next. Label batches with what they do (`"B-roll over the config
-  file"`), since that's what he reads when he hovers one.
-- `tandem status` lists your edits still waiting for him as `waiting for
-  Mike's review` (`reviewPending` in JSON: each edit's label, author, date
-  and the clip IDs it added or changed). It's read-only; only Mike clears
-  it, from the app.
-
-## Operations
-
-| Operation | CLI | HTTP | MCP tool |
-| --- | --- | --- | --- |
-| status | `tandem status [--revision]` | `POST /v1/status` | `status` |
-| media | `tandem media [--refresh]` | `POST /v1/media {"refresh": true}` | `media` |
-| timeline | `tandem timeline [--summary] [--from] [--to] [--words] [--json]` | `POST /v1/timeline {"summary", "from", "to", "words", "format"}` | `timeline` |
-| transcript | `tandem transcript [<id>] [--make]` | `POST /v1/transcript {"id"}` | `transcript` |
-| transcribe | `tandem transcribe <id or path>... [--wait \| --no-wait]` | `POST /v1/transcribe {"media": [...], "wait", "timeout"}` | `transcribe` |
-| wait | `tandem wait [transcript\|matte\|proxy\|jobs\|export] [--media <id>]... [--timeout]` | `POST /v1/wait {"what", "media": [...], "timeout"}` | `wait` |
-| search | `tandem search "<phrase>"` | `POST /v1/search {"phrase"}` | `search` |
-| pauses | `tandem pauses [--min]` | `POST /v1/pauses {"min"}` | `pauses` |
-| tighten | `tandem tighten [--mike] [--sentence] [--comma] [--mid] [--mid-min] [--min] [--keep] [--protect] [--widen] [--apply]` | `POST /v1/tighten {"mike", "sentence", "comma", "mid", "midMin", "min", "keep", "protect", "widen", "apply"}` | `tighten` |
-| join | `tandem join [--from] [--to] [--apply]` | `POST /v1/join {"from", "to", "apply"}` | `join` |
-| captions | `tandem captions [--from] [--to] [--max-words] [--y] [--apply]` | `POST /v1/captions {"from", "to", "words", "y", "apply"}` | `captions` |
-| short | `tandem short [--apply]` | `POST /v1/short {"apply"}` | `short` |
-| cards | `tandem cards [--kicker] [--duration] [--insert] [--no-sounds] [--marker]... [--apply]` | `POST /v1/cards {"markers", "kicker", "duration", "insert", "sounds", "apply"}` | `cards` |
-| apply | `tandem apply <file, - or '<json>'>` | `POST /v1/apply <batch>` | `apply` |
-| undo, redo | `tandem undo [--count N]`, `tandem redo [--count N]` | `POST /v1/undo`, `/v1/redo` `{"count", "expectedRevision"}` | `undo`, `redo` |
-| history | `tandem history` | `POST /v1/history` | `history` |
-| diff | `tandem diff --since <revision, file or export>` | `POST /v1/diff {"since"}` | `diff` |
-| restore | `tandem restore --from <ref> (--clips <ids> \| --from-time --to-time [--track]) [--apply]` | `POST /v1/restore {"from", "clips", "fromTime", "toTime", "track", "apply"}` | `restore` |
-| clips | `tandem clips [--track] [--from] [--to] [--media] [--ids]` | `POST /v1/clips {"track", "from", "to", "media", "ids"}` | `clips` |
-| validate | `tandem validate` | `POST /v1/validate` | `validate` |
-| check | `tandem check [--changed] [--quick \| --cuts]` | `POST /v1/check {"from", "to", "changed", "quick", "cuts"}` | `check` |
-| frame | `tandem frame <time> -o out.png` | `POST /v1/frame {"time", "output"}` | `frame` (image) |
-| frames | `tandem frames <time>... [--every] [--from] [--to] -o sheet.png` | `POST /v1/frames {"times", "every", "from", "to", "width", "output"}` | `frames` (image) |
-| screenshot | | `POST /v1/screenshot` | `screenshot` (app only) |
-| clip | `tandem clip <start> <end> -o out.mp4 [--tracks] [--audio-only]` | `POST /v1/clip {"start", "end", "tracks", "audioOnly"}` | `clip` |
-| export | `tandem export [--preset] -o out.mp4` | `POST /v1/export {"preset", "output"}` | `export` |
-| archive | `tandem archive [<project>] [--to <folder>] [--with-cache] [--dry-run]` | `POST /v1/archive {"to", "withCache", "dryRun"}` | `archive` |
-| relink | `tandem relink [--search <folder>]... [--dry-run]` | `POST /v1/relink {"search": [...], "dryRun"}` | `relink` |
-| loudness | `tandem loudness [--from] [--to] [--step] [--tracks] [--gains]` | `POST /v1/loudness {"mediaID", "from", "to", "step", "tracks", "gains"}` | `loudness` |
-| watch | `tandem watch [--once]` | `GET /v1/watch` (events), `POST /v1/watch` (wait) | `watch` |
-| effects | `tandem effects` | `POST /v1/effects` | `effects` |
-
-Output paths given to the API are absolute or relative to the project
-folder; the CLI makes them absolute from where you run it.
-
-The asset library isn't a project operation, so it has no HTTP endpoint;
-the CLI and MCP open the library themselves, and only `use`, `credits` and
-the segment `save` and `insert` reach the project (through the app's API
-when it's open).
-
-| Asset operation | CLI | MCP tool |
-| --- | --- | --- |
-| providers | `tandem assets providers` | `assets_providers` |
-| search | `tandem assets search "<text>" [--kind] [--provider] [--online]` | `assets_search` |
-| fetch | `tandem assets fetch <id>` | |
-| show | `tandem assets show <id>` | `assets_show` |
-| use | `tandem assets use <id> [--at] [--duration]` | `assets_use` |
-| credits | `tandem assets credits [--optional]` | `assets_credits` |
-| generate | `tandem assets generate sfx or music "<prompt>"` | `assets_generate` |
-| install-starter | `tandem assets install-starter` | |
-| list segments | `tandem segments list` | `segments_list` |
-| save a segment | `tandem segments save "<name>" --clips <ids>` or `--from --to` | `segments_save` |
-| insert a segment | `tandem segments insert "<name>" --at <time>` | `segments_insert` |
-
-## Troubleshooting
-
-- **"is open in the Tandem app, but the app isn't serving its API"**: the
-  app has had the project open for 90 seconds without answering. Restart or
-  update the app.
-- **"busy in another tandem command"**: another command has the project
-  open right now. Commands wait up to 15 seconds for it before giving up.
-- **"isn't built yet, so this doesn't work in this version of Tandem"**:
-  rendering or media analysis isn't in this build.
-- **"has no 9:16 frame for the short"**: `--preset short` (or `--format
-  portrait`) on a project that isn't 9:16 and has no portrait format yet.
-  `tandem short --apply` lays one out; the landscape video exports with
-  plain `tandem export`.
-- **No pauses or search results**: check `tandem media`; transcripts are
-  made in the background after files are added. `tandem wait transcript`
-  waits for them (and makes them, with the app closed).
-- **"has no transcript yet, and nothing is making one"** or **"Tandem only
-  makes them for camera takes..."**: run the `tandem transcribe <id>` it
-  gives.
-- **"Nothing makes a transcript of ..."** from `tandem wait`: the file isn't
-  a camera take or on a speech track. `tandem transcribe <id>` asks for one.
-- **"... isn't installed, so N text clips are drawn in SF Pro instead"**:
-  run the `tandem assets use fontsource:...` it gives. The font goes into
-  the project's `assets/font/`, and the app (if it has the project open)
-  uses it straight away. For a font Fontsource doesn't have, search with
-  `tandem assets search "<name>" --kind font --online`, or pick another
-  font for those titles.
-- **"This project was saved by a newer Tandem (schema 2)"**: an older
-  build opened a project a newer one saved. Update Tandem. Schema 2 is the
-  one where a title's own style always wins over its preset.
-- **"... is QuickTime Animation, which macOS can't decode"**: stock stickers
-  often come as QuickTime Animation or PNG video. Tandem converts them to
-  HEVC with ffmpeg (frames and exports wait for it; `tandem media` shows
-  `converted`). If the warning says ffmpeg is missing, Mike installs it with
-  `brew install ffmpeg`.
-- **"Revision N is older than the edit history"**: the history starts
-  when this version of Tandem first opened the project (or where it was
-  last edited by something that kept none), and there's no backup saved
-  at that revision. Diff against a backup file in `.tandem/backups` or an
-  export (`--since "exports/<name>.mp4"`) instead.
-- **"Nothing to undo" after editing with the app closed**: headless undo
-  history only lasts while nobody else edits the project. `tandem history`
-  shows what can be undone.
-- **"ElevenLabs refused: ... missing the permission sound_generation"**: the
-  key can make music but not sound effects. Mike turns the permission on
-  for the key in ElevenLabs; `tandem assets providers` says when it's fixed.
-- **"No asset ... in the library"**: search for it first (with `--online`
-  for provider assets), then use the ID the search gives.
-- **"There's no folder at /Volumes/... to archive into"**: the share isn't
-  mounted. Mike connects to it in Finder first.
-- **"archive.json ... isn't a Tandem archive manifest"**: a file of that name
-  that Tandem didn't write is in the way; it's never written over. Rename it.
-- **"The copy of ... didn't match the original"**: a copy failed its
-  checksum and was thrown away, and nothing in the project changed. Run it
-  again; if it keeps failing, the destination disk is suspect.
-- **"There's already a segment called ..."**: pick another name, or pass
-  `--replace` (`replace: true`) to save over it; files only the old one had
-  stay, and the rest of it goes to the Trash.
-- **"Several segments are called ..."**: two segment folders give the same
-  name; use the folder's name (`tandem segments list --json` has each
-  `id`).
-- **"... is missing ... from .../Segments/..., so it wasn't inserted"**: a
-  file was deleted from the segment's folder. Put it back, or save the
-  segment again from a project that has it.
-- **"There's no shared library at ... yet"**: the app makes
-  `~/Movies/Tandem Library` the first time it opens after installing, and
-  `tandem segments save` makes it too.

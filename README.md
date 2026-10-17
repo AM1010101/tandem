@@ -84,8 +84,9 @@ claude mcp add tandem -- ~/Applications/Tandem.app/Contents/MacOS/tandem mcp
 Old Filmora projects import with `tandem import filmora "Video v3.wfp"`.
 Agent EDLs import with `tandem import edl edit.json --recipe decision-models`.
 That recipe has paths and settings for my Decision Models video, so change
-it for your footage or add your own. The [agent guide](docs/AGENTS.md) has
-command examples, import options and troubleshooting.
+it for your footage or add your own. The [agent guide](docs/AGENTS.md) is
+the entry point for agents; its topic files in `docs/agents/` have the
+recipes, import options and troubleshooting.
 
 Stickers, graphics, sounds, music, looks, fonts and saved segments that
 every video reuses live in `~/Movies/Tandem Library`, which Tandem makes
@@ -113,7 +114,8 @@ test, which may install a language model and needs macOS 26.
 | --- | --- |
 | `docs/ARCHITECTURE.md` | The contract between the modules: model, ripple modes, transforms, folders |
 | `docs/PLAN.md` | The V1 task list and what's done |
-| `docs/AGENTS.md` | The CLI, MCP and HTTP API for agents, with an example of every edit command |
+| `docs/AGENTS.md` | The entry point for agents: setup, how editing works, and an index of every command, recipe and topic |
+| `docs/agents/` | The agent guide's topic files: edit command semantics, JSON output, recipes, operations and troubleshooting |
 | `docs/MEDIA.md` | Scanning, take pairing and the background analysis jobs |
 | `docs/RENDER.md` | The compositor, transitions, titles, audio mix and export |
 | `docs/ASSETS.md` | The asset library: sources, licences, normalising and credits |

@@ -392,7 +392,8 @@ extension CommandSchema {
         "undecodableCodec": S.string("Set by scanning: the codec macOS can't decode (\"rle \" or \"png \"). Tandem plays a converted copy."),
         "fingerprint": S.string(),
         "look": S.array(S.ref("Effect"), "Colour grade for every clip of the file."),
-        "livePhotoVideo": S.string("Set by scanning on a Live Photo's still: its motion clip (the short .mov beside it), which isn't media of its own.")
+        "livePhotoVideo": S.string("Set by scanning on a Live Photo's still: its motion clip (the short .mov beside it), which isn't media of its own."),
+        "transcribe": S.boolean("Make this file's transcript whatever its role or track. Set by `tandem transcribe`.")
     ], required: ["path"])
 
     static let transitionFields: [String: JSONValue] = [

@@ -15,7 +15,8 @@ import TandemCore
 /// - a cutout matte for media with a clip whose cutout is on (in any format),
 /// - isolated voice for media with a clip using voice isolation,
 /// - a transcript for anything on a speech track (the unmuted `cut` audio
-///   tracks, like Voice).
+///   tracks, like Voice), and for any file someone asked for one of
+///   (`MediaItem.transcribe`, set by `tandem transcribe`).
 ///
 /// Placing a take or turning on its cutout queues the rest.
 public enum AnalysisNeeds {
@@ -64,8 +65,10 @@ public enum AnalysisNeeds {
             for kind in [AnalysisKind.converted, .thumbnails, .waveform, .loudness] where kind.applies(to: item) {
                 needs.append(Need(mediaID: item.id, kind: kind, priority: priority))
             }
-            if AnalysisKind.transcript.applies(to: item) && (item.role == .camera || onSpeech.contains(item.id)) {
-                needs.append(Need(mediaID: item.id, kind: .transcript, priority: priority))
+            let asked = item.transcribe == true
+            if AnalysisKind.transcript.applies(to: item) && (item.role == .camera || onSpeech.contains(item.id) || asked) {
+                // Someone asked for it, so it goes ahead of the folder's idle work.
+                needs.append(Need(mediaID: item.id, kind: .transcript, priority: asked ? max(priority, .timeline) : priority))
             }
             guard used else { continue }
             if AnalysisKind.proxy.applies(to: item), let width = item.width, let height = item.height,

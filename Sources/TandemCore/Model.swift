@@ -202,6 +202,10 @@ public struct MediaItem: Codable, Equatable, Identifiable, Sendable {
     /// `com.mikerosoft.record-it.camera-delay` tag. Tandem doesn't add its
     /// own default delay to such a file.
     public var pictureDelayCorrected: Time?
+    /// Someone asked for this file's transcript (`tandem transcribe`), so
+    /// it's made whatever the file's role or track: a generated clip checked
+    /// for made-up speech, say. Nil until asked.
+    public var transcribe: Bool?
 
     public init(
         id: String = IDs.make("med"),
@@ -223,7 +227,8 @@ public struct MediaItem: Codable, Equatable, Identifiable, Sendable {
         look: [Effect] = [],
         livePhotoVideo: String? = nil,
         pictureDelay: Time? = nil,
-        pictureDelayCorrected: Time? = nil
+        pictureDelayCorrected: Time? = nil,
+        transcribe: Bool? = nil
     ) {
         self.id = id
         self.path = path
@@ -245,6 +250,7 @@ public struct MediaItem: Codable, Equatable, Identifiable, Sendable {
         self.livePhotoVideo = livePhotoVideo
         self.pictureDelay = pictureDelay
         self.pictureDelayCorrected = pictureDelayCorrected
+        self.transcribe = transcribe
     }
 }
 
@@ -1055,6 +1061,7 @@ extension MediaItem {
         livePhotoVideo = try c.decodeIfPresent(String.self, forKey: .livePhotoVideo)
         pictureDelay = try c.decodeIfPresent(Time.self, forKey: .pictureDelay)
         pictureDelayCorrected = try c.decodeIfPresent(Time.self, forKey: .pictureDelayCorrected)
+        transcribe = try c.decodeIfPresent(Bool.self, forKey: .transcribe)
     }
 }
 

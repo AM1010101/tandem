@@ -87,3 +87,28 @@ final class AnalysisNeedsTests: XCTestCase {
         XCTAssertFalse(kinds(AnalysisNeeds.needs(for: p), "med_cam").contains(.matte))
     }
 }
+
+extension AnalysisNeedsTests {
+    /// `tandem transcribe` marks a file so its transcript is made whatever
+    /// its role or track: a generated clip checked for made-up speech.
+    func testATranscriptAskedForIsMadeWhateverTheRole() throws {
+        var p = project()
+        XCTAssertFalse(kinds(AnalysisNeeds.needs(for: p), "med_old").contains(.transcript))
+        let index = try XCTUnwrap(p.media.firstIndex { $0.id == "med_old" })
+        p.media[index].transcribe = true
+        p.media.append(MediaItem(id: "med_mute", path: "broll/mute.mp4", kind: .video, role: .broll, duration: t(5), width: 1920, height: 1080, hasVideo: true, transcribe: true))
+        let needs = AnalysisNeeds.needs(for: p)
+        XCTAssertEqual(kinds(needs, "med_old"), [.thumbnails, .waveform, .loudness, .transcript])
+        // Someone asked, so it goes ahead of the folder's idle work.
+        XCTAssertEqual(needs.first { $0.mediaID == "med_old" && $0.kind == .transcript }?.priority, .timeline)
+        XCTAssertFalse(kinds(needs, "med_mute").contains(.transcript), "no sound, nothing to transcribe")
+    }
+
+    func testTheRequestIsSavedWithTheMedia() throws {
+        var item = MediaItem(id: "med_gen", path: "source/generated/cartoon.mp4", kind: .video, role: .other, hasVideo: true, hasAudio: true)
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(item), as: UTF8.self).contains("transcribe"), "left out until asked for")
+        item.transcribe = true
+        let decoded = try JSONDecoder().decode(MediaItem.self, from: JSONEncoder().encode(item))
+        XCTAssertEqual(decoded.transcribe, true)
+    }
+}

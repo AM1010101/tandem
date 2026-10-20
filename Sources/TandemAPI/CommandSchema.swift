@@ -835,8 +835,13 @@ extension CommandSchema {
         ),
         Entry(
             command: .normalizeSpeech,
-            summary: "Levels every speech clip (camera and voice sound, and anything on a take track like Voice) to the project's speech level (settings.speechLoudness, default -20 LUFS) and clears its clip gain. Music and sound effects keep their gains. Change the level first with updateSettings if you want another.",
-            arguments: S.object([:]),
+            summary: "Levels every speech clip (camera and voice sound, and anything on a take track like Voice) to the project's speech level (settings.speechLoudness, default -20 LUFS) and clears its clip gain. Music and sound effects keep their gains. Change the level first with updateSettings if you want another. A clip that plays whose levelling would put its peaks over settings.truePeakCeiling also gets a compressor and a limiter holding them under it, in its audio effects; the result's warning names those clips.",
+            arguments: S.object([
+                "measured": S.map(S.object([
+                    "integratedLUFS": S.number(),
+                    "truePeakDBTP": S.number()
+                ], required: ["integratedLUFS", "truePeakDBTP"]), "Each file's measured loudness by media ID. Leave it out: Tandem fills it in from its analysis.")
+            ]),
             example: #"{"normalizeSpeech": {}}"#
         ),
         Entry(

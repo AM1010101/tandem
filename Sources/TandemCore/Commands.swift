@@ -221,7 +221,16 @@ public enum EditCommand: Codable, Equatable, Sendable {
     /// (`settings.speechLoudness`) and clears its clip gain, so the voice
     /// sits at one level whatever gains it came with. Music and sound
     /// effects keep theirs. JSON: `{"normalizeSpeech": {}}`.
-    case normalizeSpeech
+    ///
+    /// When levelling would put a clip's peaks over the project's
+    /// `truePeakCeiling`, it keeps the speech at the speech level and adds
+    /// a compressor and a limiter that hold them under it, in the clip's
+    /// audio effects where they can be seen and removed. That needs each
+    /// file's measured loudness and true peak, `measured` by media ID; the
+    /// coordinator fills it in from the media analysis
+    /// (`ProjectCoordinator.measureSound`), so a replay of the journal
+    /// makes the same edit.
+    case normalizeSpeech(measured: [String: MeasuredSound]? = nil)
 
     // MARK: Markers
 

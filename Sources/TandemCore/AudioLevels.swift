@@ -1,5 +1,18 @@
 import Foundation
 
+/// A file's measured loudness, as the media analysis has it: what
+/// `normalizeSpeech` needs to know how far levelling lifts the file's
+/// peaks.
+public struct MeasuredSound: Codable, Equatable, Sendable {
+    public var integratedLUFS: Double
+    public var truePeakDBTP: Double
+
+    public init(integratedLUFS: Double, truePeakDBTP: Double) {
+        self.integratedLUFS = integratedLUFS
+        self.truePeakDBTP = truePeakDBTP
+    }
+}
+
 /// How Tandem levels sound: which clips are speech, the gain a clip's
 /// normalisation adds, and what new clips start with. Placement, the
 /// render, the loudness report and the app's Audio tab all use these, so
@@ -54,6 +67,45 @@ public enum AudioLevels {
         guard let measured = measuredLUFS, measured.isFinite else { return nil }
         let normalise = audio.normalizeTo.flatMap { normalizeGainDB(target: $0, measuredLUFS: measured) } ?? 0
         return measured + normalise + audio.gainDB
+    }
+
+    // MARK: - Peaks
+
+    /// The highest true peak a clip plays at, in dBTP: its file's peak
+    /// lifted by the normalisation and clip gain (not fades or keyframes).
+    /// Nil for a silent file.
+    public static func levelledPeak(_ audio: AudioProperties, measured: MeasuredSound) -> Double? {
+        guard measured.truePeakDBTP.isFinite else { return nil }
+        let normalise = audio.normalizeTo.flatMap { normalizeGainDB(target: $0, measuredLUFS: measured.integratedLUFS) } ?? 0
+        return measured.truePeakDBTP + normalise + audio.gainDB
+    }
+
+    /// Whether a clip has a limiter on, holding its peaks.
+    public static func holdsPeaks(_ audio: AudioProperties) -> Bool {
+        audio.effects.contains { $0.type == "limiter" && $0.enabled }
+    }
+
+    /// How far over the speech level the compressor `normalizeSpeech` adds
+    /// starts, in dB. On Ian's whiteboard mic, levelled, a tenth of the
+    /// 400 ms windows are louder than -14 LUFS, and where he gets louder
+    /// (4:57 to 5:18) they reach 10 dB over it. 3:1 from here leaves his
+    /// normal speech within 0.2 dB and takes most of the work off the
+    /// limiter.
+    public static let compressorHeadroomDB = 6.0
+
+    /// The compressor and limiter `normalizeSpeech` puts on a clip whose
+    /// levelling would put its peaks over the ceiling: the compressor rides
+    /// the passages that get loud, 3:1 from 6 dB over the speech level,
+    /// and the limiter catches what's left (bumps, claps, plosives).
+    public static func peakHolders(speechLevel: Double, ceiling: Double, compressor: Bool, makeID: () -> String) -> [Effect] {
+        var effects: [Effect] = []
+        if compressor {
+            effects.append(Effect(id: makeID(), type: "compressor", params: [
+                "threshold": .number(speechLevel + compressorHeadroomDB), "ratio": .number(3)
+            ]))
+        }
+        effects.append(Effect(id: makeID(), type: "limiter", params: ["ceiling": .number(ceiling)]))
+        return effects
     }
 
     // MARK: - Speech

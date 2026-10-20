@@ -80,7 +80,7 @@ final class LevelTests: XCTestCase {
     func testNormalizeSpeechLevelsEverySpeechClipAsOneUndoStep() throws {
         let c = try imported()
         let before = c.project
-        let result = try c.run("Normalise speech clips", .normalizeSpeech)
+        let result = try c.run("Normalise speech clips", .normalizeSpeech())
         XCTAssertEqual(result.warnings, [])
         for clip in c.clips("Voice") {
             XCTAssertEqual(clip.audio?.normalizeTo, -20, clip.id)
@@ -104,7 +104,7 @@ final class LevelTests: XCTestCase {
         // Levelled clips: -14 (10 s) is the only one; the others have
         // gains but no level, so they don't say.
         XCTAssertEqual(AudioLevels.speechLevel(in: c.project), -14)
-        try c.run("Normalise", .normalizeSpeech)
+        try c.run("Normalise", .normalizeSpeech())
         XCTAssertEqual(AudioLevels.speechLevel(in: c.project), -20)
         // Like the Decision Models import: every take at -28.74.
         for clip in c.clips("Voice") {
@@ -117,10 +117,10 @@ final class LevelTests: XCTestCase {
 
     func testNormalizeSpeechSaysWhenThereIsNothingToDo() throws {
         let c = try imported()
-        try c.run("Once", .normalizeSpeech)
-        XCTAssertEqual(try c.run("Twice", .normalizeSpeech).warnings, ["Every speech clip is already at -20 LUFS with no gain."])
+        try c.run("Once", .normalizeSpeech())
+        XCTAssertEqual(try c.run("Twice", .normalizeSpeech()).warnings, ["Every speech clip is already at -20 LUFS with no gain."])
         let empty = ProjectCoordinator(project: Project.standard(name: "Empty"))
-        XCTAssertEqual(try empty.run("None", .normalizeSpeech).warnings.first?.hasPrefix("There are no speech clips"), true)
+        XCTAssertEqual(try empty.run("None", .normalizeSpeech()).warnings.first?.hasPrefix("There are no speech clips"), true)
     }
 
     func testNormalizeSpeechLeavesLockedTracksAndKeepsGainAnimation() throws {
@@ -134,7 +134,7 @@ final class LevelTests: XCTestCase {
         try c.run("Gain", .updateClip(clipID: c.project.track(locked)!.clips[0].id, patch: .object(["audio": .object(["gainDB": .number(4)])])))
         try c.run("Lock", .updateTrack(trackID: locked, patch: .object(["locked": .bool(true)])))
 
-        let result = try c.run("Normalise speech clips", .normalizeSpeech)
+        let result = try c.run("Normalise speech clips", .normalizeSpeech())
         XCTAssertEqual(result.warnings, [
             "Locked track \"Voice 2\" was left as it was.",
             "1 speech clip keeps its gain animation, which plays on top of the level."
@@ -142,6 +142,110 @@ final class LevelTests: XCTestCase {
         XCTAssertEqual(c.project.track(locked)!.clips[0].audio?.gainDB, 4)
         XCTAssertEqual(c.clips("Voice")[0].keyframes["audio.gainDB"]?.count, 2)
         XCTAssertEqual(c.clips("Voice")[0].audio?.normalizeTo, -20)
+    }
+
+    // MARK: - Peaks
+
+    /// Ian's whiteboard mic: about -43.5 LUFS with its loudest bump right
+    /// at full scale, so levelling lifts it 23.5 dB and the bump to +23.4.
+    /// The screen recording is loud already and keeps its peaks under.
+    let quietMic: [String: MeasuredSound] = [
+        "med_camera": MeasuredSound(integratedLUFS: -43.5, truePeakDBTP: -0.1),
+        "med_screen": MeasuredSound(integratedLUFS: -19, truePeakDBTP: -6)
+    ]
+
+    func testNormalizeSpeechHoldsThePeaksLevellingWouldPushOver() throws {
+        let c = try imported()
+        let before = c.project
+        let result = try c.run("Normalise speech clips", .normalizeSpeech(measured: quietMic))
+        let voice = c.clips("Voice")
+        for clip in voice where clip.mediaID == "med_camera" {
+            XCTAssertEqual(clip.audio?.normalizeTo, -20, "the speech stays at the speech level")
+            XCTAssertEqual(clip.audio?.effects.map(\.type), ["compressor", "limiter"], clip.id)
+            let limiter = try XCTUnwrap(clip.audio?.effects.last)
+            XCTAssertEqual(limiter.params["ceiling"], .number(-1), "the project's true peak ceiling")
+            XCTAssertEqual(clip.audio?.effects.first?.params["threshold"], .number(-14), "6 dB over the speech level")
+        }
+        XCTAssertEqual(voice.last?.audio?.effects, [], "the screen's sound doesn't need holding")
+        XCTAssertEqual(result.warnings, [
+            "Levelled to -20 LUFS, 2 speech clips would peak at up to +23.4 dBTP, over the -1 dBTP ceiling, so they have a compressor and a limiter holding their peaks under -1 dBFS (\(voice[0].id), \(voice[1].id)). They're in each clip's audio effects: remove them to hear it as it was."
+        ])
+        assertValid(c.project)
+        c.undo()
+        XCTAssertEqual(c.project, before, "one undo takes them off again")
+    }
+
+    func testPeaksHeldOnceStayHeldAndALimiterTurnedOffStaysOff() throws {
+        let c = try imported()
+        try c.run("Normalise", .normalizeSpeech(measured: quietMic))
+        let held = c.clips("Voice")
+        // Mike turns the second clip's limiter off and takes the compressor away.
+        let second = held[1]
+        try c.run("Off", .updateEffect(clipID: second.id, effectID: second.audio!.effects[1].id, patch: .object(["enabled": .bool(false)])),
+                  .removeEffect(clipID: second.id, effectID: second.audio!.effects[0].id))
+        let result = try c.run("Again", .normalizeSpeech(measured: quietMic))
+        XCTAssertEqual(result.warnings, ["Every speech clip is already at -20 LUFS with no gain."])
+        XCTAssertEqual(c.clips("Voice")[0].audio?.effects, held[0].audio?.effects, "no second limiter")
+        XCTAssertEqual(c.clips("Voice")[1].audio?.effects.map(\.type), ["limiter"])
+        XCTAssertEqual(c.clips("Voice")[1].audio?.effects.first?.enabled, false)
+    }
+
+    /// Like Ian's project, where the camera's own sound sits muted under
+    /// the mic: it's levelled, ready for unmuting, but nothing it doesn't
+    /// play needs holding.
+    func testSoundThatDoesntPlayIsLevelledButNotHeld() throws {
+        let c = try imported()
+        let voice = c.clips("Voice")
+        try c.run("Mute", .updateClip(clipID: voice[0].id, patch: .object(["audio": .object(["muted": .bool(true)])])))
+        let result = try c.run("Normalise", .normalizeSpeech(measured: quietMic))
+        XCTAssertEqual(c.clips("Voice")[0].audio?.normalizeTo, -20)
+        XCTAssertEqual(c.clips("Voice")[0].audio?.effects, [], "a muted clip")
+        XCTAssertEqual(c.clips("Voice")[1].audio?.effects.count, 2)
+        XCTAssertTrue(result.warnings.first?.contains("1 speech clip would peak at +23.4 dBTP") == true, "\(result.warnings)")
+
+        try c.run("Mute Voice", .updateTrack(trackID: c.project.track(named: "Voice")!.id, patch: .object(["muted": .bool(true)])))
+        try c.run("Unhold", .removeEffect(clipID: voice[1].id, effectID: c.clips("Voice")[1].audio!.effects[1].id))
+        try c.run("Again", .normalizeSpeech(measured: quietMic))
+        XCTAssertEqual(c.clips("Voice")[1].audio?.effects.map(\.type), ["compressor"], "a muted track")
+    }
+
+    func testTheLevelledPeakIsTheFilesPeakPlusTheLift() {
+        let measured = MeasuredSound(integratedLUFS: -43.5, truePeakDBTP: -0.1)
+        XCTAssertEqual(AudioLevels.levelledPeak(AudioProperties(normalizeTo: -20), measured: measured)!, 23.4, accuracy: 1e-9)
+        XCTAssertEqual(AudioLevels.levelledPeak(AudioProperties(gainDB: -3, normalizeTo: -20), measured: measured)!, 20.4, accuracy: 1e-9)
+        XCTAssertEqual(AudioLevels.levelledPeak(AudioProperties(gainDB: 2), measured: measured)!, 1.9, accuracy: 1e-9)
+        XCTAssertNil(AudioLevels.levelledPeak(AudioProperties(), measured: MeasuredSound(integratedLUFS: -.infinity, truePeakDBTP: -.infinity)), "silence")
+        var limited = AudioProperties()
+        XCTAssertFalse(AudioLevels.holdsPeaks(limited))
+        limited.effects = [Effect(type: "limiter", enabled: false)]
+        XCTAssertFalse(AudioLevels.holdsPeaks(limited), "a limiter turned off holds nothing")
+        limited.effects[0].enabled = true
+        XCTAssertTrue(AudioLevels.holdsPeaks(limited))
+    }
+
+    /// Commands don't measure files, so the session fills in what the
+    /// analysis measured before the batch runs, and the journal keeps it:
+    /// a replay after a crash makes the same edit without the analysis.
+    func testTheCoordinatorFillsInTheMeasurementsAndTheJournalKeepsThem() throws {
+        let built = try imported()
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let journal = ProjectJournal(url: folder.appendingPathComponent("j.jsonl"))
+        let c = ProjectCoordinator(project: built.project, revision: built.revision, journal: journal)
+        let mic = quietMic
+        c.measureSound = { project in mic.filter { id, _ in project.media(id) != nil } }
+        try c.run("Normalise speech clips", .normalizeSpeech())
+        XCTAssertEqual(c.clips("Voice")[0].audio?.effects.map(\.type), ["compressor", "limiter"])
+        let recovered = journal.recover(project: built.project, revision: built.revision)
+        XCTAssertEqual(recovered?.project, c.project)
+    }
+
+    func testMeasurementsTravelInTheCommandsJSON() throws {
+        let command = EditCommand.normalizeSpeech(measured: ["med_camera": MeasuredSound(integratedLUFS: -43.5, truePeakDBTP: -0.1)])
+        let data = try JSONEncoder().encode(command)
+        XCTAssertEqual(try JSONDecoder().decode(EditCommand.self, from: data), command)
+        XCTAssertEqual(try JSONDecoder().decode(EditCommand.self, from: Data(#"{"normalizeSpeech": {}}"#.utf8)), .normalizeSpeech())
     }
 
     func testSpeechClipsAreCameraAndVoiceSoundAndTakeTracks() throws {
@@ -158,7 +262,7 @@ final class LevelTests: XCTestCase {
 
     func testChangingTheSpeechLevelMovesTheClipsAtTheOldLevel() throws {
         let c = try imported()
-        try c.run("Normalise", .normalizeSpeech)
+        try c.run("Normalise", .normalizeSpeech())
         let voice = c.clips("Voice")
         try c.run("Own level", .updateClip(clipID: voice[1].id, patch: .object(["audio": .object(["normalizeTo": .number(-24)])])))
         try c.run("Gain", .updateClip(clipID: voice[2].id, patch: .object(["audio": .object(["gainDB": .number(2)])])))

@@ -589,6 +589,10 @@ struct AudioInspector: View {
                 SliderRow(label: "Amount", value: audio.voiceIsolation * 100, range: 0...100, format: { "\(Int($0.rounded()))%" },
                           defaultValue: 0, help: "How much of the isolated voice (room noise and music taken out) replaces the original sound. 0% is the original.",
                           onCommit: { value in model.apply(InspectorEdits.audio(ids, ["voiceIsolation": .number(value / 100)], label: "Voice isolation")) })
+                if let cleanUp = InspectorEdits.cleanUpVoice(targets) {
+                    OutlineButton(title: "Clean up voice") { model.apply(cleanUp) }
+                        .tip("Takes the room out of the voice: isolates it in full and adds Voice clean-up, a high-pass for rumble and an expander that turns the room down between words, as one undo step. macOS has no de-reverb, and isolation is the closest it comes.")
+                }
             }
             EffectStack(model: model, clip: first, domain: .audio, excludeCategories: [])
         } else {

@@ -1086,6 +1086,14 @@ public struct ClipLevel: Codable, Sendable {
     /// Speech (camera or voice sound, or on a take track): what
     /// `normalizeSpeech` levels.
     public var speech: Bool
+    /// The highest true peak it plays at, in dBTP, once its file is
+    /// measured: the file's peak plus levelling and clip gain (before any
+    /// limiter, fades or gain keyframes).
+    public var peakDBTP: Double?
+    /// The ceiling of the limiter holding its peaks, when it has one on.
+    public var limiterCeiling: Double?
+    /// The clip or its track is muted, so it isn't heard.
+    public var muted: Bool
 }
 
 public struct LoudnessResult: Codable, Sendable {

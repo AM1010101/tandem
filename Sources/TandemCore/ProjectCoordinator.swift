@@ -87,12 +87,38 @@ public final class ProjectCoordinator: @unchecked Sendable {
         return (expected..<revision).allSatisfy { mediaScanRevisions.contains($0 + 1) }
     }
 
+    /// The files' measured loudness by media ID, from whoever owns the
+    /// media analysis (the session). A `normalizeSpeech` without
+    /// measurements gets these before its batch runs, and the journal
+    /// records the batch with them, so replaying it doesn't need the
+    /// analysis. Called off the coordinator's queue.
+    public var measureSound: (@Sendable (Project) -> [String: MeasuredSound])? {
+        get { measureLock.withLock { _measureSound } }
+        set { measureLock.withLock { _measureSound = newValue } }
+    }
+    private var _measureSound: (@Sendable (Project) -> [String: MeasuredSound])?
+    private let measureLock = NSLock()
+
+    /// `batch` with the measurements filled in where a command wants them.
+    private func measuring(_ batch: EditBatch) -> EditBatch {
+        guard batch.commands.contains(where: { if case .normalizeSpeech(nil) = $0 { return true } else { return false } }),
+              let measure = measureSound else { return batch }
+        let measured = measure(project)
+        var filled = batch
+        filled.commands = batch.commands.map { command in
+            if case .normalizeSpeech(nil) = command { return .normalizeSpeech(measured: measured) }
+            return command
+        }
+        return filled
+    }
+
     public var undoLabel: String? { queue.sync { undoStack.last?.label } }
     public var redoLabel: String? { queue.sync { redoStack.last?.label } }
 
     @discardableResult
-    public func apply(_ batch: EditBatch) throws -> CommitResult {
-        try queue.sync {
+    public func apply(_ submitted: EditBatch) throws -> CommitResult {
+        let batch = measuring(submitted)
+        return try queue.sync {
             if let key = batch.idempotencyKey, let previous = idempotencyResults[key] {
                 return previous
             }

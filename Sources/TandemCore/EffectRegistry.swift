@@ -295,6 +295,52 @@ public struct EffectRegistry: Sendable {
             params: [
                 ParamDefinition("semitones", "Semitones", default: .number(0), min: -12, max: 12, step: 0.5)
             ]
+        ),
+        // The dynamics effects. Their levels are dBFS as the clip plays,
+        // after its levelling and gain (the peaks `tandem loudness` shows),
+        // so a limiter at -1 holds a quiet mic lifted 24 dB under -1. They
+        // render ahead of time over the whole file, so none animate.
+        EffectDefinition(
+            type: "compressor",
+            name: "Compressor",
+            category: "Audio",
+            domain: .audio,
+            summary: "Turns down sound that goes over the threshold, by the ratio: at 3:1 a passage 9 dB over comes out 3 dB over. The defaults ride a voice that gets louder without touching normal speech at -20 LUFS. Levels are as the clip plays, after levelling and gain.",
+            params: [
+                ParamDefinition("threshold", "Threshold", default: .number(-14), min: -60, max: 0, step: 0.5, unit: "dBFS", animatable: false),
+                ParamDefinition("ratio", "Ratio", default: .number(3), min: 1, max: 20, step: 0.1, unit: ":1", animatable: false),
+                ParamDefinition("attack", "Attack", default: .number(10), min: 0.1, max: 200, step: 0.5, unit: "ms", animatable: false),
+                ParamDefinition("release", "Release", default: .number(200), min: 10, max: 2000, step: 5, unit: "ms", animatable: false),
+                ParamDefinition("knee", "Knee", default: .number(6), min: 0, max: 24, step: 0.5, unit: "dB", animatable: false),
+                ParamDefinition("makeup", "Makeup gain", default: .number(0), min: -12, max: 24, step: 0.5, unit: "dB", animatable: false)
+            ]
+        ),
+        EffectDefinition(
+            type: "limiter",
+            name: "Limiter",
+            category: "Audio",
+            domain: .audio,
+            summary: "Holds true peaks under the ceiling, looking 5 ms ahead so nothing gets through, and lets go over the release. For a mic whose levelling would put bumps and shouts over full scale. Levels are as the clip plays, after levelling and gain.",
+            params: [
+                ParamDefinition("ceiling", "Ceiling", default: .number(-1), min: -24, max: 0, step: 0.1, unit: "dBTP", animatable: false),
+                ParamDefinition("release", "Release", default: .number(100), min: 10, max: 1000, step: 5, unit: "ms", animatable: false)
+            ]
+        ),
+        EffectDefinition(
+            type: "voiceCleanup",
+            name: "Voice clean-up",
+            category: "Audio",
+            domain: .audio,
+            summary: "A high-pass for rumble and boom, and a gentle expander that turns down the room between words. Put the expander's threshold a few dB over the noise floor, as the clip plays. Goes with voice isolation for a roomy, noisy mic.",
+            params: [
+                ParamDefinition("highPass", "High-pass", default: .number(80), min: 0, max: 300, step: 5, unit: "Hz", animatable: false),
+                ParamDefinition("expanderThreshold", "Expander threshold", default: .number(-40), min: -90, max: -20, step: 1, unit: "dBFS", animatable: false),
+                ParamDefinition("expanderRange", "Expander range", default: .number(10), min: 0, max: 40, step: 1, unit: "dB", animatable: false)
+            ]
         )
     ]
+
+    /// The audio effects that render through `AudioEffectChain` (the
+    /// dynamics), as opposed to the pitch shift.
+    public static let dynamicsTypes: Set<String> = ["compressor", "limiter", "voiceCleanup"]
 }

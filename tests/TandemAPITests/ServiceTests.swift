@@ -266,11 +266,32 @@ final class ServiceTests: XCTestCase {
         XCTAssertEqual(try h.service.loudness(mediaID: "med_camera").clips.first?.normalizeGainDB, 0)
     }
 
+    /// A quiet mic with a bump at full scale: levelling would put it 23 dB
+    /// over, so normalising holds it, and the loudness report says which
+    /// clips a limiter holds and which nothing holds yet.
+    func testNormalizeSpeechHoldsAQuietMicsPeaksAndLoudnessSaysSo() throws {
+        let h = try ServiceHarness()
+        defer { h.close() }
+        h.analysis.measured["med_camera"] = Loudness(integratedLUFS: -43.5, truePeakDBTP: -0.1, loudnessRange: 7)
+        var report = try h.service.loudness(mediaID: nil)
+        XCTAssertEqual(report.clips.first { $0.clipID == "clip_voc1" }?.peakDBTP ?? 0, 29.4, accuracy: 1e-9, "at the fixture's old -14 LUFS")
+        XCTAssertTrue(report.readableText.contains("2 speech clips peak over the -1.0 dBTP ceiling once levelled (up to +29.4 dBTP), which export's limiter squashes; normalizeSpeech holds them with a compressor and a limiter."), report.readableText)
+
+        let result = try h.apply(try CommandJSON.decode(try json(#"{"normalizeSpeech": {}}"#)))
+        XCTAssertTrue(result.warnings.contains { $0.hasPrefix("Levelled to -20 LUFS, 2 speech clips would peak at up to +23.4 dBTP") }, "\(result.warnings)")
+        let voice = try XCTUnwrap(h.service.coordinator.project.clip("clip_voc1")?.audio)
+        XCTAssertEqual(voice.effects.map(\.type), ["compressor", "limiter"])
+        report = try h.service.loudness(mediaID: nil)
+        XCTAssertEqual(report.clips.first { $0.clipID == "clip_voc1" }?.limiterCeiling, -1)
+        XCTAssertTrue(report.readableText.contains("Limiters hold 2 clips on Voice (they'd peak at up to +23.4 dBTP) under -1.0 dBFS."), report.readableText)
+        XCTAssertFalse(report.readableText.contains("normalizeSpeech holds them"), report.readableText)
+    }
+
     func testNormalizeSpeechFromJSONLevelsTheVoiceAndLeavesTheMusic() throws {
         let h = try ServiceHarness()
         defer { h.close() }
         let command = try CommandJSON.decode(try json(#"{"normalizeSpeech": {}}"#))
-        XCTAssertEqual(command, .normalizeSpeech)
+        XCTAssertEqual(command, .normalizeSpeech())
         let result = try h.apply(command)
         XCTAssertEqual(result.label, "Normalise speech clips")
         XCTAssertEqual(Set(result.changed), ["clip_voc1", "clip_voc2"])

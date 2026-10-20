@@ -270,9 +270,32 @@ enum CompositionAssembler {
             }
             var sound = Sound(segment: planned, file: u.lastPathComponent, sourceTrack: assetTrack, available: source.audioRange, sourceStart: planned.sourceStart)
             sound.segment.format = source.audioFormat
+            // Dynamics first, over the whole file, then any pitch shift
+            // from what they made.
+            var playing = (url: u, segment: planned)
+            let dynamics = audioClips[planned.clipID].map { AudioEffects.effects(of: $0, registry: context.effects) } ?? []
+            if !planned.freeze, !dynamics.isEmpty {
+                do {
+                    let processed = try await AudioEffects.file(source: u, levelDB: planned.levelDB, effects: dynamics, registry: context.effects)
+                    let loaded = try await SourceCache.shared.source(for: processed)
+                    if let processedTrack = loaded.audio {
+                        // The processed file starts where the source's sound does.
+                        let start = Time(cmTime: loaded.audioRange.start) + planned.sourceStart - Time(cmTime: source.audioRange.start)
+                        sound.sourceTrack = processedTrack
+                        sound.available = loaded.audioRange
+                        sound.sourceStart = start
+                        sound.segment.format = loaded.audioFormat
+                        playing = (processed, planned)
+                        playing.segment.sourceStart = start
+                    }
+                } catch {
+                    let names = dynamics.compactMap { context.effects.definition($0.type)?.name.lowercased() }
+                    warnings.add("Couldn't run the \(names.joined(separator: " and ")) on clip \(planned.clipID), playing it as it is: \(error)")
+                }
+            }
             if !planned.freeze, let clip = audioClips[planned.clipID], let effect = PitchShift.effect(of: clip, registry: context.effects) {
                 do {
-                    let pitched = try await PitchShift.file(for: planned, clip: clip, effect: effect, source: u, registry: context.effects)
+                    let pitched = try await PitchShift.file(for: playing.segment, clip: clip, effect: effect, source: playing.url, registry: context.effects)
                     let shifted = try await SourceCache.shared.source(for: pitched)
                     if let shiftedTrack = shifted.audio {
                         sound.sourceTrack = shiftedTrack

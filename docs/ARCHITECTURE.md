@@ -371,6 +371,21 @@ Audio rules:
   effects (-15 dB) keep plain gains set against that voice. RENDER.md has
   why -20.
 - `voiceIsolation` mixes the cached isolated voice with the original.
+- The dynamics effects (compressor, limiter, voice clean-up) are Tandem's
+  own DSP (`AudioDynamics`, the limiter is the master's
+  `TruePeakLimiter`), run ahead of time over the whole file into a cached
+  Apple Lossless copy that the composition plays instead
+  (`AudioEffects`), so the viewer, review clips, `tandem loudness` and
+  export hear the same thing. They run at the clip's steady level
+  (levelling plus clip gain), so their thresholds are dBFS as the
+  timeline plays; fades and gain keyframes come after. The limiter's
+  lookahead is taken back out, so the copy lines up sample for sample.
+  A pitch shift renders from that copy.
+- `normalizeSpeech` holds the peaks its levelling would push over the
+  true-peak ceiling with a compressor and limiter on those clips. Edit
+  commands don't read the analysis, so the coordinator fills in the
+  files' measurements first (`ProjectCoordinator.measureSound`) and the
+  journal records them.
 - Every hard cut on an audio track gets a 3 ms micro-fade so nothing clicks.
 - Export measures the mix and applies gain to hit the project's master
   loudness target (-14 LUFS unless set) under its true-peak ceiling (-1

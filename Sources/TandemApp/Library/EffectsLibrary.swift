@@ -196,8 +196,8 @@ private struct EffectPreview: View {
         switch definition.type {
         case "dropShadow", "border", "roundedCorners":
             styled
-        case "pitchShift":
-            Image(systemName: "waveform.path")
+        case _ where definition.domain == .audio:
+            Image(systemName: Icons.effect(definition.type))
                 .font(.system(size: 18))
                 .foregroundStyle(Theme.sfxClip.detail.color)
         default:

@@ -990,6 +990,34 @@ final class EditorBehaviourTests: XCTestCase {
         XCTAssertEqual(editor.model.inspectorTab, .video)
     }
 
+    // MARK: - Sound
+
+    func testACompressorDroppedOnTheVoiceGoesInItsAudioEffects() throws {
+        let voice = editor.clip("Voice")
+        editor.drop("tandem-effect:compressor", at: editor.point(of: voice.id))
+        editor.wait(for: "the compressor on the voice") { editor.clip("Voice").audio?.effects.isEmpty == false }
+        XCTAssertEqual(editor.clip("Voice").audio?.effects.map(\.type), ["compressor"])
+        XCTAssertEqual(editor.clip("Camera").video?.effects ?? [], [], "not on the picture")
+    }
+
+    /// The one button for a roomy, noisy mic: the voice isolated in full
+    /// and the clean-up effect, in one undo step, and then it goes away.
+    func testCleanUpVoiceIsolatesTheVoiceAndAddsTheCleanUpInOneStep() throws {
+        let voice = editor.clip("Voice")
+        editor.click(editor.point(of: voice.id))
+        XCTAssertEqual(editor.model.inspectorTab, .audio)
+        editor.settle()
+        let button = try XCTUnwrap(editor.point(ofTip: "Takes the room out of the voice"))
+        editor.click(button)
+        editor.settle()
+        XCTAssertEqual(editor.clip("Voice").audio?.voiceIsolation, 1)
+        XCTAssertEqual(editor.clip("Voice").audio?.effects.map(\.type), ["voiceCleanup"])
+        XCTAssertNil(editor.point(ofTip: "Takes the room out of the voice"), "done, so the button goes")
+        editor.press("cmd+z")
+        XCTAssertEqual(editor.clip("Voice").audio?.voiceIsolation ?? 0, voice.audio?.voiceIsolation ?? 0)
+        XCTAssertEqual(editor.clip("Voice").audio?.effects ?? [], [])
+    }
+
     // MARK: - Reviewing an agent's edits
 
     func testAnAgentsEditsWaitForReviewAndTheKeysStepThroughThem() throws {

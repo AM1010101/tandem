@@ -287,7 +287,7 @@ extension FilmoraRun {
             let low = gains.min() ?? 0, high = gains.max() ?? 0
             let filmora = low == high ? String(format: "%+.1f dB", low) : String(format: "%+.1f to %+.1f dB", low, high)
             let level = AudioLevels.number(builder.project.settings.speechLoudness)
-            builder.apply("Level speech", [ProjectBuilder.Step(.normalizeSpeech, "speech clips")])
+            builder.apply("Level speech", [ProjectBuilder.Step(.normalizeSpeech(), "speech clips")])
             builder.report.add(.note, "audio", "\(speech.count) speech clips were normalised to \(level) LUFS, the project's speech level, with no gain instead of Filmora's \(filmora). Import with --keep-levels to keep Filmora's.")
         }
         let autoNormalized = builder.project.audioTracks.flatMap(\.clips).filter { $0.audio?.normalizeTo == Self.autoNormalizationLUFS }

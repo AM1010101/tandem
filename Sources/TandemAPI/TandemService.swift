@@ -99,6 +99,10 @@ public final class TandemService: @unchecked Sendable {
         self.analysis = analysis ?? MediaAnalysisSource(session.analysis)
         self.renderer = renderer
         self.history = HeadlessHistory(projectURL: session.fileURL)
+        // Level speech by what this service's analysis measured.
+        session.coordinator.measureSound = { [analysis = self.analysis] project in
+            ProjectSession.measuredSound(in: project) { analysis.loudness(for: $0) }
+        }
         // Observers run inside the coordinator's queue, so they must not
         // call back into the coordinator. They only record the event.
         coordinatorToken = session.coordinator.observe { [weak self] change in
@@ -998,10 +1002,17 @@ public final class TandemService: @unchecked Sendable {
                 let normalizeGain = audio.normalizeTo.flatMap {
                     AudioLevels.normalizeGainDB(target: $0, measuredLUFS: measured[id]?.integratedLUFS)
                 }
+                let peak = measured[id].flatMap { loudness in
+                    AudioLevels.levelledPeak(audio, measured: MeasuredSound(integratedLUFS: loudness.integratedLUFS, truePeakDBTP: loudness.truePeakDBTP))
+                }
+                let ceiling = audio.effects.filter { $0.type == "limiter" && $0.enabled }.compactMap { limiter in
+                    EffectRegistry.standard.definition("limiter")?.resolvedParams(limiter)["ceiling"]?.number
+                }.min()
                 clips.append(ClipLevel(
                     clipID: clip.id, mediaID: id, track: track.name, gainDB: audio.gainDB,
                     normalizeTo: audio.normalizeTo, normalizeGainDB: normalizeGain,
-                    speech: AudioLevels.isSpeech(clip, on: track, in: project)
+                    speech: AudioLevels.isSpeech(clip, on: track, in: project),
+                    peakDBTP: peak, limiterCeiling: ceiling, muted: track.muted || audio.muted
                 ))
             }
         }

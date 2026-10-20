@@ -26,6 +26,25 @@ enum InspectorEdits {
         return EditBatch(label: label, commands: clipIDs.map { .updateClip(clipID: $0, patch: .object(["audio": .object(fields)])) })
     }
 
+    /// Clean up voice, for a roomy, noisy mic: the isolated voice in full
+    /// and the Voice clean-up effect (a high-pass and an expander under the
+    /// room) on each clip that hasn't got them, as one undo step. Nil when
+    /// they all have.
+    static func cleanUpVoice(_ clips: [Clip]) -> EditBatch? {
+        var commands: [EditCommand] = []
+        for clip in clips {
+            let audio = clip.audio ?? AudioProperties()
+            if audio.voiceIsolation < 1 {
+                commands.append(.updateClip(clipID: clip.id, patch: .object(["audio": .object(["voiceIsolation": .number(1)])])))
+            }
+            if !audio.effects.contains(where: { $0.type == "voiceCleanup" }) {
+                // First, so the compressor and limiter after it see the cleaned voice.
+                commands.append(.addEffect(clipID: clip.id, effect: Effect(type: "voiceCleanup"), index: 0))
+            }
+        }
+        return commands.isEmpty ? nil : EditBatch(label: "Clean up voice", commands: commands)
+    }
+
     /// Transform fields as a patch. Changing the transform by hand clears
     /// the layout preset name, since it no longer describes the clip.
     static func transform(_ clipID: String, _ transform: Transform, label: String) -> EditBatch {

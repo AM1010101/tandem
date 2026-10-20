@@ -35,6 +35,8 @@ final class LevelTextTests: XCTestCase {
         XCTAssertEqual(AudioLevelText.speechStatus(speech: 1, unlevelled: 0, level: -18), "The speech clip is at −18 LUFS.")
         XCTAssertEqual(AudioLevelText.speechStatus(speech: 1, unlevelled: 1, level: -18), "The speech clip has its own gain or level.")
         XCTAssertEqual(AudioLevelText.speechStatus(speech: 0, unlevelled: 0, level: -20), "No speech clips on the timeline yet.")
+        XCTAssertEqual(AudioLevelText.peakStatus(unheld: 1, ceiling: -1), "1 speech clip would peak over −1 dBTP once levelled.")
+        XCTAssertEqual(AudioLevelText.peakStatus(unheld: 3, ceiling: -1.5), "3 speech clips would peak over −1.5 dBTP once levelled.")
     }
 
     func testTheNoteSaysHowGainAndNormaliseCombine() {

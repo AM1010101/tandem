@@ -158,6 +158,7 @@ enum ParamFormatting {
         case "degrees": return number + "°"
         case "stops": return (value > 0 ? "+" : "") + number
         case "px@1080": return number + " px"
+        case ":1": return number + ":1"
         case let unit?: return "\(number) \(unit)"
         case nil: return (param.min ?? 0) < 0 && value > 0 ? "+" + number : number
         }
@@ -316,6 +317,17 @@ enum ParamHelp {
         "roundedCorners.radius": "How round the corners are, in pixels at 1080p.",
         "blur.radius": "How blurred the picture is, in pixels at 1080p.",
         "pixelate.scale": "How big the blocks are, in pixels at 1080p. Big enough to hide keys and emails.",
-        "pitchShift.semitones": "Moves the pitch up or down without changing the speed. 12 is an octave."
+        "pitchShift.semitones": "Moves the pitch up or down without changing the speed. 12 is an octave.",
+        "compressor.threshold": "Where it starts turning the sound down, in dBFS as the clip plays (after its levelling). Speech at −20 LUFS gets loud around −14.",
+        "compressor.ratio": "How hard it turns down what goes over: at 3:1, 9 dB over comes out 3 dB over.",
+        "compressor.attack": "How quickly it turns down a sound that goes over.",
+        "compressor.release": "How quickly it lets go once the sound drops back. Longer is smoother on a voice.",
+        "compressor.knee": "How gently it starts: over this many dB around the threshold rather than all at once.",
+        "compressor.makeup": "Gain after the compressor, to win back level it took. Speech levelling usually wants 0.",
+        "limiter.ceiling": "The highest the sound may go, in true peak dB as the clip plays. It looks 5 ms ahead, so nothing gets past.",
+        "limiter.release": "How quickly it lets go after a peak. Too short flutters; too long ducks the words after a bump.",
+        "voiceCleanup.highPass": "Takes out what's under this frequency: rumble, handling and the boom a room adds. 80 Hz suits most voices; 0 turns it off.",
+        "voiceCleanup.expanderThreshold": "Under this level, in dBFS as the clip plays, the room is turned down between words. Put it a few dB over the noise between sentences.",
+        "voiceCleanup.expanderRange": "The most it turns the room down. 10 dB is gentle; 0 turns the expander off."
     ]
 }

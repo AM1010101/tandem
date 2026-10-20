@@ -84,6 +84,25 @@ struct SpeechLevelSection: View {
         let level = project.settings.speechLoudness
         let speech = AudioLevels.speechClips(in: project)
         let unlevelled = speech.filter { !AudioLevels.isLevelled($0.clip, at: level) }.count
+        let ceiling = project.settings.truePeakCeiling
+        // Clips whose loudest moment levelling would put over the ceiling
+        // with nothing holding it, which Normalise speech clips holds.
+        // A take has hundreds of pieces, so each file is looked up once.
+        var measured: [String: MeasuredSound?] = [:]
+        let unheld = speech.filter { item in
+            var audio = item.clip.audio ?? AudioProperties()
+            guard !item.track.locked, !item.track.muted, !audio.muted, !audio.effects.contains(where: { $0.type == "limiter" }),
+                  let media = model.media(for: item.clip) else { return false }
+            if measured[media.id] == nil {
+                measured[media.id] = model.session.analysis.loudness(for: media).map {
+                    MeasuredSound(integratedLUFS: $0.integratedLUFS, truePeakDBTP: $0.truePeakDBTP)
+                }
+            }
+            guard let sound = measured[media.id] ?? nil else { return false }
+            audio.normalizeTo = level
+            audio.gainDB = 0
+            return (AudioLevels.levelledPeak(audio, measured: sound) ?? -.infinity) > ceiling
+        }.count
         return InspectorSection(title: "Project speech level", icon: Icons.speechLevel) {
             SliderRow(label: "Level", value: level, range: AudioLevels.speechLoudnessRange, valueWidth: 70,
                       format: { AudioLevelText.lufs(($0 * 2).rounded() / 2) },
@@ -99,16 +118,25 @@ struct SpeechLevelSection: View {
                           ))
                       })
             // Only when there's something to do: all levelled is the norm.
-            if unlevelled > 0 {
-                Text(AudioLevelText.speechStatus(speech: speech.count, unlevelled: unlevelled, level: level))
-                    .font(.ui(11.5))
-                    .foregroundStyle(Theme.textMuted.color)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .tip("Speech clips are the camera's sound, voice files, and anything on a take track like Voice.")
-                OutlineButton(title: "Normalise speech clips") {
-                    model.apply(EditBatch(label: "Normalise speech clips", commands: [.normalizeSpeech]))
+            if unlevelled > 0 || unheld > 0 {
+                if unlevelled > 0 {
+                    Text(AudioLevelText.speechStatus(speech: speech.count, unlevelled: unlevelled, level: level))
+                        .font(.ui(11.5))
+                        .foregroundStyle(Theme.textMuted.color)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .tip("Speech clips are the camera's sound, voice files, and anything on a take track like Voice.")
                 }
-                .tip("Sets every speech clip to \(AudioLevelText.lufs(level)) with no gain, as one undo step. Music and sound effects keep their gains.")
+                if unheld > 0 {
+                    Text(AudioLevelText.peakStatus(unheld: unheld, ceiling: ceiling))
+                        .font(.ui(11.5))
+                        .foregroundStyle(Theme.textMuted.color)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .tip("A quiet mic lifted to the speech level lifts its bumps and shouts with it, and export's limiter squashes whatever goes over.")
+                }
+                OutlineButton(title: "Normalise speech clips") {
+                    model.apply(EditBatch(label: "Normalise speech clips", commands: [.normalizeSpeech()]))
+                }
+                .tip("Sets every speech clip to \(AudioLevelText.lufs(level)) with no gain, as one undo step. Music and sound effects keep their gains. A clip whose peaks that would put over \(AudioLevelText.minus(AudioLevels.number(ceiling))) dBTP also gets a compressor and a limiter to hold them.")
             }
         }
     }
@@ -167,6 +195,12 @@ enum AudioLevelText {
 
     /// "All 229 speech clips are at −20 LUFS." or "96 of 229 speech clips
     /// have their own gain or level."
+    /// "1 speech clip would peak over −1 dBTP once levelled."
+    static func peakStatus(unheld: Int, ceiling: Double) -> String {
+        let clips = unheld == 1 ? "1 speech clip would peak" : "\(unheld) speech clips would peak"
+        return "\(clips) over \(minus(AudioLevels.number(ceiling))) dBTP once levelled."
+    }
+
     static func speechStatus(speech: Int, unlevelled: Int, level: Double) -> String {
         if speech == 0 { return "No speech clips on the timeline yet." }
         if unlevelled == 0 {

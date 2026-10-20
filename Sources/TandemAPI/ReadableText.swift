@@ -457,6 +457,7 @@ extension LoudnessResult: ReadableResult {
         if !speech.isEmpty && unlevelled > 0 {
             lines.append("\(unlevelled) of \(speech.count) speech clips aren't at the speech level; normalizeSpeech sets them.")
         }
+        lines += peakLines(speech: speech)
         if !groups.isEmpty {
             lines.append("Clip levels by track (clip gain is added after levelling):")
             let width = groups.map(\.track.count).max() ?? 0
@@ -479,6 +480,34 @@ extension LoudnessResult: ReadableResult {
 }
 
 extension LoudnessResult {
+    /// Where levelling lifts speech over the true peak ceiling: the clips
+    /// a limiter holds, by track, and the ones nothing holds yet.
+    func peakLines(speech: [ClipLevel]) -> [String] {
+        func level(_ value: Double) -> String { String(format: "%+.1f", value) }
+        var lines: [String] = []
+        var tracks: [String] = []
+        for clip in clips where clip.limiterCeiling != nil && !tracks.contains(clip.track) { tracks.append(clip.track) }
+        for track in tracks {
+            let held = clips.filter { $0.track == track && $0.limiterCeiling != nil }
+            let ceiling = held.compactMap(\.limiterCeiling).max()!
+            let under = String(format: "%.1f dBFS", ceiling)
+            let peaks = held.compactMap(\.peakDBTP)
+            if held.count == 1 {
+                let would = peaks.first.map { ", which would peak at \(level($0)) dBTP," } ?? ""
+                lines.append("A limiter holds the 1 clip on \(track)\(would) under \(under).")
+            } else {
+                let would = peaks.max().map { " (they'd peak at up to \(level($0)) dBTP)" } ?? ""
+                lines.append("Limiters hold \(held.count) clips on \(track)\(would) under \(under).")
+            }
+        }
+        let over = speech.filter { !$0.muted && $0.limiterCeiling == nil && ($0.peakDBTP ?? -.infinity) > truePeakCeiling }
+        if let loudest = over.compactMap(\.peakDBTP).max() {
+            let clips = over.count == 1 ? "1 speech clip peaks" : "\(over.count) speech clips peak"
+            lines.append("\(clips) over the \(String(format: "%.1f", truePeakCeiling)) dBTP ceiling once levelled (up to \(level(loudest)) dBTP), which export's limiter squashes; normalizeSpeech holds them with a compressor and a limiter.")
+        }
+        return lines
+    }
+
     /// "+3.9 dB", or "+0.4 to +5.8 dB (99 at +0.4 dB)" for a spread.
     static func spread(_ values: [Double]) -> String {
         let rounded = values.map { ($0 * 10).rounded() / 10 }

@@ -1,6 +1,6 @@
 # Sound
 
-Recipes for levelling the voice, measuring the mix instead of guessing (loudness over time, checking gain lanes), and putting a swoosh on every push. Gain keyframes and clip gain are in [edit-commands.md](edit-commands.md#keyframes).
+Recipes for levelling the voice, holding a quiet mic's peaks, cleaning up a roomy mic, measuring the mix instead of guessing (loudness over time, checking gain lanes), and putting a swoosh on every push. Gain keyframes and clip gain are in [edit-commands.md](edit-commands.md#keyframes).
 
 ## Level the voice
 
@@ -30,6 +30,64 @@ to the old level follow it), then check a review clip:
 
 A single clip can still differ: `{"updateClip": {"clipID": "clip_voc7",
 "patch": {"audio": {"gainDB": 2}}}}` plays it 2 dB over the rest.
+
+## Tame the peaks on a quiet mic
+
+A separate mic recorded quietly gets lifted a long way to reach the speech
+level, and its bumps, claps and shouts come up with it: Ian's whiteboard
+mic is lifted 23.5 dB, which puts a knock at 0:14.8 at +23.5 dBFS.
+Export's limiter would squash all of that, which sounds artificial.
+`tandem loudness` says when it's coming:
+
+```bash
+tandem loudness
+# 1 speech clip peaks over the -1.0 dBTP ceiling once levelled (up to +23.5 dBTP) ...
+tandem apply - <<< '{"normalizeSpeech": {}}'
+# Warning: ... it has a compressor and a limiter holding its peaks under -1 dBFS (clip_mic1) ...
+```
+
+The speech stays at the speech level. The compressor rides the passages
+where the speaker gets louder and the limiter catches what's left, both in
+the clip's audio effects, where `tandem timeline` shows them as
+`fx compressor,limiter`. Their levels are dBFS as the clip plays (after
+levelling), the numbers `tandem loudness --tracks Voice` shows. To set
+them by hand, or on a clip of music, add them yourself; `tandem effects
+compressor` and `tandem effects limiter` list the parameters:
+
+```json
+{"label": "Hold the voice's peaks", "commands": [
+  {"addEffect": {"clipID": "clip_mic1", "effect": {"type": "compressor", "params": {"threshold": -14, "ratio": 3}}}},
+  {"addEffect": {"clipID": "clip_mic1", "effect": {"type": "limiter", "params": {"ceiling": -1}}}}
+]}
+```
+
+They render ahead of time over the whole file (a few seconds for a long
+take), and then every cut of that take shares the render. Check them with
+`tandem loudness --from 4:50 --to 5:20 --tracks Voice --step 0.4`: no
+peaks over the ceiling, and the normal speech where it was.
+
+## Clean up a roomy mic
+
+For a mic that hears the room (echo, hum, air conditioning), isolate the
+voice and add Voice clean-up, a high-pass for rumble and boom and a gentle
+expander that turns the room down between words. The app's Audio tab does
+both with Clean up voice; as a batch:
+
+```json
+{"label": "Clean up the voice", "commands": [
+  {"updateClip": {"clipID": "clip_mic1", "patch": {"audio": {"voiceIsolation": 1}}}},
+  {"addEffect": {"clipID": "clip_mic1", "effect": {"type": "voiceCleanup", "params": {"expanderThreshold": -35}}, "index": 0}}
+]}
+```
+
+Isolation is Apple's voice isolation (`AUSoundIsolation`), run over the
+file in the background. It's made for noise and takes some of the echo
+with it, but it isn't a de-reverb, and macOS doesn't ship one. Put the expander's
+threshold a few dB over the quiet between sentences as the clip plays:
+`tandem loudness --tracks Voice --step 0.1` over a pause shows it. Ian's
+mic sits around -38 there, so -35; the default, -40, suits a quieter
+room. Keep the clean-up first in the effects, so the compressor and
+limiter work on the cleaned voice.
 
 ## Check the sound
 

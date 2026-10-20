@@ -41,6 +41,9 @@ enum Icons {
         case "blur": return "drop.halffull"
         case "pixelate": return "square.grid.3x3.fill"
         case "pitchShift": return "tuningfork"
+        case "compressor": return "arrow.down.right.and.arrow.up.left"
+        case "limiter": return "arrow.down.to.line"
+        case "voiceCleanup": return "wand.and.stars"
         default: return "sparkles"
         }
     }

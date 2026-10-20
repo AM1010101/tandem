@@ -330,7 +330,7 @@ maps every command to its HTTP endpoint and MCP tool.
 | [agents/cutting.md](agents/cutting.md) | Tighten pauses; Cut a phrase (and rough cuts); Join through-edits; Keep the camera in sync |
 | [agents/broll-and-titles.md](agents/broll-and-titles.md) | Put B-roll over a sentence; Add a title (presets, animations, style); Add a section card |
 | [agents/layout-and-colour.md](agents/layout-and-colour.md) | Set the PiP layout; Zoom into the screen recording; Grade the camera take |
-| [agents/sound.md](agents/sound.md) | Level the voice; Check the sound; Put a swoosh on every push |
+| [agents/sound.md](agents/sound.md) | Level the voice; Tame the peaks on a quiet mic; Clean up a roomy mic; Check the sound; Put a swoosh on every push |
 | [agents/shorts.md](agents/shorts.md) | Make a short; Caption a short |
 | [agents/assets.md](agents/assets.md) | the asset library and shared library; Credits for the description; Reuse an intro, an outro or a call to action (segments) |
 | [agents/review-and-history.md](agents/review-and-history.md) | `tandem check` and `--cuts` in full; What changed, and putting it back (diff, history, restore); Do Mike's comments; Export a review clip; Work alongside Mike |

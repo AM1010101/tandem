@@ -42,6 +42,9 @@ struct PlannedSegment: Equatable {
     /// the assembler fills in once it has opened it. Segments in different
     /// formats never share a composition track (see `assignTracks`).
     var format = ""
+    /// Sound only: the clip's steady level in dB, its levelling plus its
+    /// clip gain, which its dynamics effects run at (`AudioEffectChain`).
+    var levelDB = 0.0
 }
 
 struct GainPoint: Equatable {
@@ -253,10 +256,12 @@ enum RenderPlanner {
                 // the envelope. The viewer, review clips and export all take
                 // their sound from this plan, so they level the same.
                 var constant = 1.0
+                var levelDB = audio.gainDB
                 if let target = audio.normalizeTo {
                     let measured = assets?.loudness(for: item)?.integratedLUFS
                     if let gain = AudioLevels.normalizeGainDB(target: target, measuredLUFS: measured) {
                         constant *= AudioEnvelope.gain(dB: gain)
+                        levelDB += gain
                     } else {
                         warnings.add("No loudness measurement for \(item.path) yet, so it isn't normalised.")
                     }
@@ -276,7 +281,8 @@ enum RenderPlanner {
                 let original = PlannedSegment(
                     clipID: clip.id, mediaID: item.id, role: .sound, timeline: timeline,
                     sourceStart: sourceStart, speed: clip.speed, freeze: clip.freezeFrame,
-                    envelope: AudioEnvelope.points(shape, constantGain: constant * (isolated ? 1 - isolation : 1))
+                    envelope: AudioEnvelope.points(shape, constantGain: constant * (isolated ? 1 - isolation : 1)),
+                    levelDB: levelDB
                 )
                 if !isolated || isolation < 1 {
                     audioSegments.append(original)
@@ -347,6 +353,7 @@ enum RenderPlanner {
         let x = a.audio ?? AudioProperties()
         let y = b.audio ?? AudioProperties()
         return x.gainDB == y.gainDB && x.normalizeTo == y.normalizeTo && x.voiceIsolation == y.voiceIsolation
+            && x.effects.map(\.withoutID) == y.effects.map(\.withoutID)
             && x.fadeOut == .zero && y.fadeIn == .zero
             && a.keyframes["audio.gainDB"] == nil && b.keyframes["audio.gainDB"] == nil
     }
@@ -432,5 +439,15 @@ enum RenderPlanner {
         mutating func add(_ message: String) {
             if seen.insert(message).inserted { list.append(message) }
         }
+    }
+}
+
+extension Effect {
+    /// The effect with its ID blanked, to compare what two clips' effects
+    /// do (a split gives the halves their own IDs).
+    var withoutID: Effect {
+        var copy = self
+        copy.id = ""
+        return copy
     }
 }

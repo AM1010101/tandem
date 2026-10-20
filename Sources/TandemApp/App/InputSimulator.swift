@@ -5,6 +5,14 @@ import SwiftUI
 private protocol NSHostingViewMarker {}
 extension NSHostingView: NSHostingViewMarker {}
 
+/// True for a view SwiftUI draws with: a hosting view, or one of the
+/// containers SwiftUI puts inside it (a button deep in the inspector hits
+/// a `PlatformGroupContainer`, not the hosting view). Views an app or
+/// AppKit puts there, like the timeline, aren't.
+private func isSwiftUI(_ view: NSView) -> Bool {
+    view is NSHostingViewMarker || Bundle(for: type(of: view)) == Bundle(for: NSHostingView<EmptyView>.self)
+}
+
 /// Replays mouse gestures into a window through the same `mouseDown`,
 /// `mouseDragged` and `mouseUp` calls AppKit makes, so smoke tests and
 /// agents can drive the timeline and viewer without screen control:
@@ -209,7 +217,7 @@ enum InputSimulator {
                 // SwiftUI follows a press through the window's own events
                 // (a button acts as the press comes up over it); AppKit
                 // views take theirs straight.
-                if target is NSHostingViewMarker {
+                if isSwiftUI(target) {
                     window.sendEvent(down)
                     window.sendEvent(up)
                 } else {

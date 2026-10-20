@@ -472,6 +472,9 @@ final class SmallPieceTests: XCTestCase {
         let colour = EffectRegistry.standard.definition("colorAdjust")!
         XCTAssertEqual(ParamFormatting.format(0.1, colour.param("exposure")!), "+0.10")
         XCTAssertEqual(ParamFormatting.format(-8, colour.param("contrast")!), "−8")
+        let compressor = EffectRegistry.standard.definition("compressor")!
+        XCTAssertEqual(ParamFormatting.format(3, compressor.param("ratio")!), "3.0:1")
+        XCTAssertEqual(ParamFormatting.format(-14, compressor.param("threshold")!), "−14.0 dBFS")
     }
 
     func testLowercasedFirstKeepsAcronyms() {

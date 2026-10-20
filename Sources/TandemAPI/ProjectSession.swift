@@ -79,9 +79,26 @@ public final class ProjectSession: @unchecked Sendable {
         self.review = ReviewRecorder(coordinator: coordinator, url: ProjectFile.reviewURL(for: fileURL))
         self.history = HistoryRecorder(coordinator: coordinator, url: ProjectFile.historyURL(for: fileURL), replayed: replays)
         self.analysis = MediaAnalysis(folder: folder)
+        // Levelling speech holds the peaks it would push over the ceiling,
+        // which takes each file's measured loudness and peak.
+        coordinator.measureSound = { [analysis] project in
+            Self.measuredSound(in: project) { analysis.loudness(for: $0) }
+        }
         self.owner = owner
         self.savedRevision = recovered ? -1 : revision
         self.recoveredEdits = recovered
+    }
+
+    /// Each file's measured loudness and true peak, for levelling speech
+    /// (`ProjectCoordinator.measureSound`). Silent and unmeasured files are
+    /// left out.
+    static func measuredSound(in project: Project, loudness: (MediaItem) -> Loudness?) -> [String: MeasuredSound] {
+        var measured: [String: MeasuredSound] = [:]
+        for item in project.media where item.hasAudio {
+            guard let found = loudness(item), found.integratedLUFS.isFinite, found.truePeakDBTP.isFinite else { continue }
+            measured[item.id] = MeasuredSound(integratedLUFS: found.integratedLUFS, truePeakDBTP: found.truePeakDBTP)
+        }
+        return measured
     }
 
     deinit {

@@ -111,8 +111,8 @@ public enum Editing {
             try moveEffect(&project, clipID, effectID, index)
         case .setKeyframes(let clipID, let parameter, let keyframes):
             try setKeyframes(&project, clipID, parameter, keyframes, &context)
-        case .normalizeSpeech:
-            try normalizeSpeech(&project, &context)
+        case .normalizeSpeech(let measured):
+            try normalizeSpeech(&project, measured: measured, &context)
         case .addMarker(let marker):
             try addMarker(&project, marker, &context)
         case .updateMarker(let markerID, let patch):
@@ -283,20 +283,28 @@ public enum Editing {
     /// speech level with no clip gain. Fades, mutes, voice isolation,
     /// effects and gain keyframes stay; music and sound effects aren't
     /// touched. Locked tracks are left as they are, with a warning.
-    static func normalizeSpeech(_ p: inout Project, _ context: inout EditContext) throws {
+    ///
+    /// With the files' measurements, a speech clip that plays (not muted,
+    /// nor its track) whose levelling puts its peaks over the project's
+    /// true peak ceiling also gets a compressor
+    /// and a limiter (`AudioLevels.peakHolders`), unless it has a limiter
+    /// already, on or off: the speech stays at the speech level rather
+    /// than being turned down for its loudest bump.
+    static func normalizeSpeech(_ p: inout Project, measured: [String: MeasuredSound]?, _ context: inout EditContext) throws {
         let level = p.settings.speechLoudness
+        let ceiling = p.settings.truePeakCeiling
         var speech = 0
         var changed = 0
         var animated = 0
+        var held: [(clipID: String, peak: Double)] = []
         for location in p.trackLocations where location.kind == .audio {
             var track = p[location]
             let indices = track.clips.indices.filter { AudioLevels.isSpeech(track.clips[$0], on: track, in: p) }
             speech += indices.count
             let unlevelled = indices.filter { !AudioLevels.isLevelled(track.clips[$0], at: level) }
             animated += indices.filter { track.clips[$0].keyframes["audio.gainDB"]?.isEmpty == false }.count
-            guard !unlevelled.isEmpty else { continue }
             if track.locked {
-                context.warn("Locked track \"\(track.name)\" was left as it was.")
+                if !unlevelled.isEmpty { context.warn("Locked track \"\(track.name)\" was left as it was.") }
                 continue
             }
             for i in unlevelled {
@@ -306,12 +314,32 @@ public enum Editing {
                 track.clips[i].audio = audio
             }
             changed += unlevelled.count
+            // Only what plays: a muted clip or track is levelled, ready to
+            // unmute, but has no peaks to hold.
+            for i in indices where !track.muted {
+                guard let measured, let mediaID = track.clips[i].mediaID, let sound = measured[mediaID] else { continue }
+                var audio = track.clips[i].audio ?? AudioProperties()
+                guard !audio.muted, let peak = AudioLevels.levelledPeak(audio, measured: sound), peak > ceiling,
+                      !audio.effects.contains(where: { $0.type == "limiter" }) else { continue }
+                let compressor = !audio.effects.contains { $0.type == "compressor" }
+                audio.effects += AudioLevels.peakHolders(speechLevel: level, ceiling: ceiling, compressor: compressor) { context.makeID("fx") }
+                track.clips[i].audio = audio
+                held.append((track.clips[i].id, peak))
+            }
             p[location] = track
         }
         if speech == 0 {
             context.warn("There are no speech clips to normalise: camera or voice sound, or clips on a take track like Voice.")
-        } else if changed == 0 {
+        } else if changed == 0 && held.isEmpty {
             context.warn("Every speech clip is already at \(AudioLevels.number(level)) LUFS with no gain.")
+        }
+        if !held.isEmpty {
+            let peak = held.map(\.peak).max()!
+            let loudest = (peak >= 0 ? "+" : "") + String(format: "%.1f", peak)
+            let ids = held.map(\.clipID).joined(separator: ", ")
+            let clips = held.count == 1 ? "1 speech clip would peak at \(loudest) dBTP" : "\(held.count) speech clips would peak at up to \(loudest) dBTP"
+            let they = held.count == 1 ? "it has a compressor and a limiter holding its peaks" : "they have a compressor and a limiter holding their peaks"
+            context.warn("Levelled to \(AudioLevels.number(level)) LUFS, \(clips), over the \(AudioLevels.number(ceiling)) dBTP ceiling, so \(they) under \(AudioLevels.number(ceiling)) dBFS (\(ids)). They're in each clip's audio effects: remove them to hear it as it was.")
         }
         if animated > 0 {
             context.warn("\(animated == 1 ? "1 speech clip keeps its" : "\(animated) speech clips keep their") gain animation, which plays on top of the level.")

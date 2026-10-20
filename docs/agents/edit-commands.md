@@ -373,6 +373,16 @@ take track like Voice (an audio track whose ripple mode is `cut`, muted or
 not). Fades, voice isolation, effects and gain keyframes stay; locked
 tracks are left alone with a warning.
 
+It keeps the speech at the speech level even when that lifts a quiet
+mic's bumps and shouts over full scale: a clip that plays (it and its
+track unmuted) whose file's true peak, plus its levelling, would go over
+the project's `truePeakCeiling` gets a compressor (3:1 from 6 dB over the
+speech level) and a limiter at the ceiling, at the end of its audio
+effects, and the warning names it. A clip with a limiter already, on or
+off, is left as it is, so removing or turning one off sticks until you
+add it back. Tandem fills in `measured` (each file's loudness and peak)
+from its analysis, and the journal keeps it, so leave it out.
+
 ## Markers
 
 In the app each kind shows in a strip under the ruler: Markers (markers,

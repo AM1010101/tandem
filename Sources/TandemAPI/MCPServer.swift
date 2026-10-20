@@ -820,7 +820,7 @@ enum MCPTools {
         ),
         Tool(
             name: "loudness", title: "Loudness",
-            description: "Measured loudness of each file with sound, the project's speech level (-20 LUFS unless changed) and master target (-14 LUFS), the gain each levelled clip gets, and how many speech clips aren't at the speech level (apply normalizeSpeech to level them). With from, to, step or tracks it renders the mix instead and gives its loudness over time (momentary and short-term LUFS and peak at each step, as the timeline plays it, before export's master gain): use it for music swells, fades and sound effects against the voice. gains also checks each track's render against its gain lane and says where a gain change lands late or not at all. over lists where the mix peaks over a level, as stretches.",
+            description: "Measured loudness of each file with sound, the project's speech level (-20 LUFS unless changed) and master target (-14 LUFS), the gain each levelled clip gets, and how many speech clips aren't at the speech level, and which ones a limiter holds or would peak over the true peak ceiling once levelled (apply normalizeSpeech to level them and hold those peaks). With from, to, step or tracks it renders the mix instead and gives its loudness over time (momentary and short-term LUFS and peak at each step, as the timeline plays it, before export's master gain): use it for music swells, fades and sound effects against the voice. gains also checks each track's render against its gain lane and says where a gain change lands late or not at all. over lists where the mix peaks over a level, as stretches.",
             operation: .loudness,
             properties: [
                 "mediaID": S.string("Just this file."),

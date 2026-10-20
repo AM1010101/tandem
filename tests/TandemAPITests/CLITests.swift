@@ -693,6 +693,36 @@ final class NewProjectCLITests: XCTestCase {
         XCTAssertEqual(talk.role, .other)
         XCTAssertTrue(none.stdout.contains("No camera take: "), none.stdout)
         XCTAssertTrue(none.stdout.contains(#"tandem apply '{"updateMedia": {"mediaID": "\#(talk.id)", "patch": {"role": "camera"}}}'"#), none.stdout)
+
+        // Mike's usual 30 fps take leaves the project at 30, and says nothing.
+        XCTAssertEqual(project.settings.frameRate, FrameRate(30))
+        XCTAssertFalse(result.stdout.contains("Frame rate:"), result.stdout)
+    }
+
+    func testANewProjectTakesItsCameraTakesFrameRate() throws {
+        try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: CLITests.binary.path), "tandem isn't built")
+        guard let ffmpeg = FFmpeg.locate() else { throw XCTSkip("ffmpeg isn't installed") }
+        func movie(_ path: String, rate: String, in folder: TempFolder) throws {
+            try FileManager.default.createDirectory(at: folder.file(path).deletingLastPathComponent(), withIntermediateDirectories: true)
+            try ffmpeg.run(["-y", "-v", "error", "-f", "lavfi", "-i", "color=c=0x806040:s=320x240:d=2:r=\(rate)", "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+                            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", folder.file(path).path])
+        }
+        // Ian's interview was shot at 23.976 and came in as a 30 fps project.
+        let film = TempFolder()
+        try movie("source/ian-camera.mov", rate: "24000/1001", in: film)
+        try movie("source/ian-screen.mov", rate: "30", in: film)
+        let made = try CLITests().tandem("new", "Ian.tandem", in: film.url)
+        XCTAssertEqual(made.status, 0, made.stderr)
+        XCTAssertEqual(try ProjectFile.load(from: film.file("Ian.tandem")).project.settings.frameRate, FrameRate(24_000, 1001))
+        XCTAssertTrue(made.stdout.contains("Frame rate: 23.976 fps, the camera take's."), made.stdout)
+
+        // A 60 fps webcam keeps Mike's usual 30.
+        let fast = TempFolder()
+        try movie("source/t1-camera.mov", rate: "60", in: fast)
+        let sixty = try CLITests().tandem("new", "Fast.tandem", in: fast.url)
+        XCTAssertEqual(sixty.status, 0, sixty.stderr)
+        XCTAssertEqual(try ProjectFile.load(from: fast.file("Fast.tandem")).project.settings.frameRate, FrameRate(30))
+        XCTAssertFalse(sixty.stdout.contains("Frame rate:"), sixty.stdout)
     }
 }
 

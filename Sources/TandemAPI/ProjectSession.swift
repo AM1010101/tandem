@@ -57,6 +57,10 @@ public final class ProjectSession: @unchecked Sendable {
     private var analysisObserver: UUID?
     private var analysisWork: DispatchWorkItem?
     private var _saveProblem: String?
+    /// Set on a project this session created, until a refresh finds its
+    /// camera take: the project then takes the take's frame rate
+    /// (`cameraFrameRate`).
+    private var _takesCameraFrameRate = false
     public var autosaveDelay: TimeInterval = 1
     /// How soon an autosave that failed tries again, so fixing the cause (a
     /// full disk, a folder back where it was) is enough.
@@ -140,7 +144,29 @@ public final class ProjectSession: @unchecked Sendable {
         // history; opening would replay it over the new project.
         ProjectFile.forgetHistory(of: url)
         try ProjectFile.save(project, revision: 0, to: url)
-        return try open(url, owner: owner)
+        let session = try open(url, owner: owner)
+        session.queue.sync { session._takesCameraFrameRate = true }
+        return session
+    }
+
+    /// The frame rate a new project takes from its camera takes: the
+    /// longest one with a picture. A rate up to 30 is taken as it is, so
+    /// a RED take at 23.976 makes a 23.976 project and Mike's 30 fps
+    /// webcam keeps 30. A faster one is divided down to the fastest rate
+    /// up to 30 that drops whole frames (60 to 30, 59.94 to 29.97, 50 to
+    /// 25), so a 60 fps webcam keeps his usual 30 too. Nil, keeping the
+    /// default, when there's no such take, it's variable (a screen
+    /// recording's timing says little) or slower than 23.976.
+    static func cameraFrameRate(_ media: [MediaItem]) -> FrameRate? {
+        let takes = media.filter { $0.role == .camera && $0.kind == .video && $0.hasVideo }
+        guard let take = takes.max(by: { ($0.duration ?? .zero) < ($1.duration ?? .zero) }),
+              let rate = take.frameRate, !take.variableFrameRate, rate.numerator > 0, rate.denominator > 0 else { return nil }
+        var divisor: Int64 = 1
+        while rate.framesPerSecond / Double(divisor) > 30.01 { divisor += 1 }
+        var result = FrameRate(rate.numerator, rate.denominator * divisor)
+        if result.numerator % divisor == 0 { result = FrameRate(rate.numerator / divisor, rate.denominator) }
+        guard result.framesPerSecond > 23.9 else { return nil }
+        return result
     }
 
     public var isDirty: Bool { coordinator.revision != savedRevision }
@@ -277,16 +303,29 @@ public final class ProjectSession: @unchecked Sendable {
         while true {
             attempt += 1
             let (current, revision) = coordinator.snapshot()
-            let (commands, added) = Self.refreshCommands(report.items, scannedFrom: project, into: current, folder: folder)
+            var (commands, added) = Self.refreshCommands(report.items, scannedFrom: project, into: current, folder: folder)
             guard !commands.isEmpty else { return MediaRefresh(added: [], cameraTakes: []) }
+            // A new project takes its camera take's frame rate, in the same
+            // undo step as the media.
+            let ids = Set(added)
+            let addedItems = report.items.filter { ids.contains($0.id) }
+            let foundTake = addedItems.contains { $0.role == .camera && $0.kind == .video && $0.hasVideo }
+            var frameRate: FrameRate?
+            if foundTake, queue.sync(execute: { _takesCameraFrameRate }), let rate = Self.cameraFrameRate(addedItems), rate != current.settings.frameRate {
+                commands.append(.updateSettings(patch: .object(["frameRate": try JSONValue.from(rate)])))
+                frameRate = rate
+            }
             do {
                 try coordinator.apply(EditBatch(label: EditBatch.mediaScanLabel, author: EditAuthor.system, commands: commands, expectedRevision: revision))
             } catch EditError.staleRevision where attempt < 20 {
                 continue
             }
+            if foundTake { queue.sync { _takesCameraFrameRate = false } }
             analysis.requestNeeded(for: coordinator.project)
-            let ids = Set(added)
-            return MediaRefresh(added: added, cameraTakes: report.cameraTakes.filter { ids.contains($0.mediaID) })
+            return MediaRefresh(
+                added: added, cameraTakes: report.cameraTakes.filter { ids.contains($0.mediaID) },
+                angles: report.angles.filter { ids.contains($0.mediaID) }, frameRate: frameRate
+            )
         }
     }
 
@@ -513,9 +552,16 @@ public struct MediaRefresh: Sendable {
     public var added: [String]
     /// The camera takes among them, and why each is one.
     public var cameraTakes: [CameraTakeNote]
+    /// Videos among them from a second camera, made b-roll, and why.
+    public var angles: [CameraTakeNote]
+    /// The frame rate a new project took from its camera take, when it
+    /// changed.
+    public var frameRate: FrameRate?
 
-    public init(added: [String], cameraTakes: [CameraTakeNote]) {
+    public init(added: [String], cameraTakes: [CameraTakeNote], angles: [CameraTakeNote] = [], frameRate: FrameRate? = nil) {
         self.added = added
         self.cameraTakes = cameraTakes
+        self.angles = angles
+        self.frameRate = frameRate
     }
 }

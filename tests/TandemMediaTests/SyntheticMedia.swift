@@ -44,6 +44,9 @@ enum SyntheticMedia {
         /// QuickTime metadata strings, like a phone's make and model or a
         /// Live Photo's content identifier.
         var metadata: [AVMetadataIdentifier: String] = [:]
+        /// Adds a timecode track starting at this frame, as cinema cameras
+        /// (and REDline's renders of their clips) write. MOV only.
+        var timecodeFrame: Int32?
     }
 
     /// Writes a movie of solid colour frames (the colour steps each frame)
@@ -88,6 +91,21 @@ enum SyntheticMedia {
             input.expectsMediaDataInRealTime = false
             writer.add(input)
             audioInput = input
+        }
+
+        var timecodeInput: AVAssetWriterInput?
+        var timecodeFormat: CMTimeCodeFormatDescription?
+        if spec.timecodeFrame != nil {
+            CMTimeCodeFormatDescriptionCreate(
+                allocator: nil, timeCodeFormatType: kCMTimeCodeFormatType_TimeCode32,
+                frameDuration: CMTime(value: 1, timescale: CMTimeScale(spec.fps)), frameQuanta: UInt32(spec.fps),
+                flags: kCMTimeCodeFlag_24HourMax, extensions: nil, formatDescriptionOut: &timecodeFormat
+            )
+            let input = AVAssetWriterInput(mediaType: .timecode, outputSettings: nil, sourceFormatHint: timecodeFormat)
+            input.expectsMediaDataInRealTime = false
+            writer.add(input)
+            videoInput.addTrackAssociation(withTrackOf: input, type: AVAssetTrack.AssociationType.timecode.rawValue)
+            timecodeInput = input
         }
 
         var metadata: [AVMetadataItem] = []
@@ -158,6 +176,21 @@ enum SyntheticMedia {
         }
         try await videoDone.value
         try await audioDone.value
+        if let timecodeInput, let timecodeFormat, let frame = spec.timecodeFrame {
+            // One sample, the first frame's number, lasting the whole movie.
+            var number = frame.bigEndian
+            var block: CMBlockBuffer?
+            CMBlockBufferCreateWithMemoryBlock(allocator: nil, memoryBlock: nil, blockLength: 4, blockAllocator: nil, customBlockSource: nil, offsetToData: 0, dataLength: 4, flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block)
+            guard let block else { throw TestMediaError("no timecode block") }
+            CMBlockBufferReplaceDataBytes(with: &number, blockBuffer: block, offsetIntoDestination: 0, dataLength: 4)
+            var timing = CMSampleTimingInfo(duration: CMTime(seconds: endTime, preferredTimescale: 600_000), presentationTimeStamp: .zero, decodeTimeStamp: .invalid)
+            var size = 4
+            var sample: CMSampleBuffer?
+            CMSampleBufferCreate(allocator: nil, dataBuffer: block, dataReady: true, makeDataReadyCallback: nil, refcon: nil, formatDescription: timecodeFormat, sampleCount: 1, sampleTimingEntryCount: 1, sampleTimingArray: &timing, sampleSizeEntryCount: 1, sampleSizeArray: &size, sampleBufferOut: &sample)
+            while !timecodeInput.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 1_000_000) }
+            guard let sample, timecodeInput.append(sample) else { throw writer.error ?? TestMediaError("timecode append failed") }
+            timecodeInput.markAsFinished()
+        }
         writer.endSession(atSourceTime: CMTime(seconds: endTime, preferredTimescale: 600_000))
         await writer.finishWriting()
         if writer.status != .completed { throw writer.error ?? TestMediaError("writer ended as \(writer.status.rawValue)") }

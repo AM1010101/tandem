@@ -37,7 +37,7 @@ public enum MediaScanner {
     /// for a rename, when a new file has the same content (size and hash of
     /// both ends). Unchanged files (same size and modification time) are not
     /// probed again, so rescanning a big folder is cheap.
-    /// New camera takes get the camera picture delay from `settings`.
+    /// New webcam takes get the camera picture delay from `settings`.
     public static func scanReport(_ folder: ProjectFolder, known: [MediaItem], settings: TandemSettings = .load()) async throws -> ScanReport {
         let files = mediaFiles(in: folder)
         var report = ScanReport()
@@ -132,21 +132,24 @@ public enum MediaScanner {
         report.livePhotos = await LivePhotos.pair(&items, folder: folder) { new.contains($0.id) }
         LivePhotos.forgetMissingMotionClips(&items, folder: folder)
 
-        report.cameraTakes = await findCameraTakes(&items, new: new, folder: folder)
+        (report.cameraTakes, report.angles) = await findCameraTakes(&items, new: new, folder: folder)
         // A webcam's picture lags its mic: new takes play in sync from the
-        // start (`TandemSettings.cameraPictureDelay`).
+        // start (`TandemSettings.cameraPictureDelay`). A camera's don't.
+        let shotOnCamera = Set(probed.filter(\.shotOnCamera).map(\.item.id))
         for index in items.indices where new.contains(items[index].id) && items[index].pictureDelay == nil {
-            items[index].pictureDelay = settings.pictureDelay(for: items[index])
+            items[index].pictureDelay = settings.pictureDelay(for: items[index], shotOnCamera: shotOnCamera.contains(items[index].id))
         }
         report.items = items
         return report
     }
 
-    /// Gives new videos nothing else explains a look and a listen, making
-    /// the ones with a voice and a face camera takes (`CameraTakes`), and
-    /// says why each new camera take is one.
-    static func findCameraTakes(_ items: inout [MediaItem], new: Set<String>, folder: ProjectFolder) async -> [CameraTakeNote] {
-        let candidates = items.indices.filter { new.contains(items[$0].id) && CameraTakes.isCandidate(items[$0]) }
+    /// Gives new videos and sound files nothing else explains a look and a
+    /// listen, making the videos with a voice and a face camera takes and
+    /// the speech recordings voice takes (`CameraTakes`), and says why each
+    /// new camera take is one. A second camera's angle on the same take is
+    /// b-roll rather than a second camera take (`CameraTakes.separateAngles`).
+    static func findCameraTakes(_ items: inout [MediaItem], new: Set<String>, folder: ProjectFolder) async -> (takes: [CameraTakeNote], angles: [CameraTakeNote]) {
+        let candidates = items.indices.filter { new.contains(items[$0].id) && (CameraTakes.isCandidate(items[$0]) || CameraTakes.isVoiceCandidate(items[$0])) }
         var reasons: [String: String] = [:]
         // A few at a time: each reads audio and decodes frames.
         await withTaskGroup(of: (String, String?).self) { group in
@@ -155,7 +158,10 @@ public enum MediaScanner {
                 guard next < candidates.count else { return }
                 let item = items[candidates[next]]
                 next += 1
-                group.addTask { (item.id, await CameraTakes.reason(for: item, at: folder.url(for: item))) }
+                group.addTask {
+                    let url = folder.url(for: item)
+                    return (item.id, item.kind == .audio ? await CameraTakes.voiceReason(for: item, at: url) : await CameraTakes.reason(for: item, at: url))
+                }
             }
             for _ in 0..<3 { add() }
             while let (id, reason) = await group.next() {
@@ -170,7 +176,9 @@ public enum MediaScanner {
             let reason = reasons[items[index].id] ?? cameraReason(forPath: items[index].path)
             notes.append(CameraTakeNote(mediaID: items[index].id, path: items[index].path, reason: reason))
         }
-        return notes
+        let angles = CameraTakes.separateAngles(&items, new: new)
+        let angleIDs = Set(angles.map(\.mediaID))
+        return (notes.filter { !angleIDs.contains($0.mediaID) }, angles)
     }
 
     /// Why a file's name makes it a camera take.
@@ -342,7 +350,7 @@ public enum MediaScanner {
                 item.role = role(forPath: path, kind: probe.kind, duration: probe.duration)
             }
             item.fingerprint = fingerprint.description
-            return .ready(ProbedFile(item: item, fingerprint: fingerprint, creationDate: probe.creationDate, known: known))
+            return .ready(ProbedFile(item: item, fingerprint: fingerprint, creationDate: probe.creationDate, known: known, shotOnCamera: probe.shotOnCamera))
         } catch {
             return .skipped(path: path, reason: (error as? LocalizedError)?.errorDescription ?? "\(error)", known: known)
         }
@@ -382,9 +390,10 @@ public enum MediaScanner {
         var item = MediaItem(id: id ?? IDs.make("med"), path: path, kind: probe.kind, role: .other)
         probe.apply(to: &item)
         item.role = role(forPath: path, kind: probe.kind, duration: probe.duration)
-        if await CameraTakes.reason(for: item, at: url) != nil { item.role = .camera }
+        let reason = item.kind == .audio ? await CameraTakes.voiceReason(for: item, at: url) : await CameraTakes.reason(for: item, at: url)
+        if reason != nil { item.role = .camera }
         item.fingerprint = try Fingerprint.compute(for: url).description
-        item.pictureDelay = settings.pictureDelay(for: item)
+        item.pictureDelay = settings.pictureDelay(for: item, shotOnCamera: probe.shotOnCamera)
         return item
     }
 }
@@ -404,6 +413,9 @@ public struct ScanReport: Sendable {
     public var notes: [String] = []
     /// New files taken for camera takes, and why, so `tandem new` can say.
     public var cameraTakes: [CameraTakeNote] = []
+    /// New videos from a second camera on a camera take (camera B's angle
+    /// on camera A's take), made b-roll rather than camera takes.
+    public var angles: [CameraTakeNote] = []
     /// How many Live Photo motion clips this scan put with their stills.
     public var livePhotos = 0
 
@@ -443,6 +455,8 @@ struct ProbedFile: Sendable {
     /// From the file's metadata, when it was probed in this scan.
     var creationDate: Date?
     var known: MediaItem?
+    /// From the probe: a camera made it, not a webcam (`MediaProbe.shotOnCamera`).
+    var shotOnCamera = false
 }
 
 extension MediaItem {

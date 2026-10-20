@@ -1022,20 +1022,23 @@ public struct LoudnessRequest: ServiceCall {
     /// reporting each file: from `from` (0) to `to` (the end) every `step`
     /// (picked to give about 50 rows), playing only `tracks` (names or
     /// IDs) when given. `gains` also checks each track's render against
-    /// its gain lane.
+    /// its gain lane. `over` lists the windows whose peak is over that
+    /// many dBFS, merged into stretches (`peaks`).
     public var from: Time?
     public var to: Time?
     public var step: Time?
     public var tracks: [String]?
     public var gains: Bool?
+    public var over: Double?
 
-    public init(mediaID: String? = nil, from: Time? = nil, to: Time? = nil, step: Time? = nil, tracks: [String]? = nil, gains: Bool? = nil) {
+    public init(mediaID: String? = nil, from: Time? = nil, to: Time? = nil, step: Time? = nil, tracks: [String]? = nil, gains: Bool? = nil, over: Double? = nil) {
         self.mediaID = mediaID
         self.from = from
         self.to = to
         self.step = step
         self.tracks = tracks
         self.gains = gains
+        self.over = over
     }
 
     public init(from decoder: Decoder) throws {
@@ -1046,11 +1049,12 @@ public struct LoudnessRequest: ServiceCall {
         step = try c.decodeTime(.step)
         tracks = try c.decodeList(.tracks)
         gains = try c.decodeIfPresent(Bool.self, forKey: .gains)
+        over = try c.decodeIfPresent(Double.self, forKey: .over)
     }
 
     /// True when this asks about the rendered mix rather than the files.
     var overTime: Bool {
-        from != nil || to != nil || step != nil || !(tracks ?? []).isEmpty || gains == true
+        from != nil || to != nil || step != nil || !(tracks ?? []).isEmpty || gains == true || over != nil
     }
 
     public func run(on service: TandemService, context: CallContext) async throws -> LoudnessResult {
@@ -1099,6 +1103,28 @@ public struct LoudnessResult: Codable, Sendable {
     public var tracks: [String]?
     /// Each track's render against its gain lane, when asked.
     public var gains: [GainFollow]?
+    /// Where the mix peaks over the level asked for (`over`).
+    public var peaks: LoudnessPeaks?
+}
+
+/// The windows of a loudness curve whose peak is over a level, merged into
+/// stretches: the direct answer to "where does this clip".
+public struct LoudnessPeaks: Codable, Equatable, Sendable {
+    /// The level, in dBFS.
+    public var threshold: Double
+    /// How many windows peak over it.
+    public var windows: Int
+    public var stretches: [PeakStretch]
+}
+
+/// Neighbouring windows over the level, from the first one's start to the
+/// last one's end (each window is the 400 ms centred on its time).
+public struct PeakStretch: Codable, Equatable, Sendable {
+    public var start: Time
+    public var end: Time
+    /// The highest sample in the stretch.
+    public var peakDBFS: Double
+    public var windows: Int
 }
 
 public struct WatchRequest: ServiceCall {

@@ -271,6 +271,15 @@ final class ProbeTests: TempFolderTestCase {
             return Int64(ticks.rounded())
         }
         XCTAssertEqual(FrameTiming(presentationTimes: ntsc, timescale: 600).rate, FrameRate(30_000, 1001))
+        // The exact NTSC rates are 0.1% off the whole ones, which used to be
+        // close enough to round: a RED camera's 23.976 came in as 24.
+        XCTAssertEqual(FrameTiming.snap(framesPerSecond: 24_000.0 / 1001), FrameRate(24_000, 1001))
+        XCTAssertEqual(FrameTiming.snap(framesPerSecond: 30_000.0 / 1001), FrameRate(30_000, 1001))
+        XCTAssertEqual(FrameTiming.snap(framesPerSecond: 60_000.0 / 1001), FrameRate(60_000, 1001))
+        let red = (0..<240).map { Int64($0) * 1001 }
+        XCTAssertEqual(FrameTiming(presentationTimes: red, timescale: 24_000).rate, FrameRate(24_000, 1001))
+        // A webcam a little off 30 is still 30.
+        XCTAssertEqual(FrameTiming.snap(framesPerSecond: 29.99), FrameRate(30))
     }
 
     func testRotationIsApplied() async throws {

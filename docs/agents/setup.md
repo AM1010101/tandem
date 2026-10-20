@@ -51,9 +51,27 @@ names, like a phone's `IMG_0151.MOV`, becomes the camera take when it's a
 recording with a voice and a face: shot by a phone or camera (its metadata
 names it) or sitting in `source/`, with speech in its sound and a face in
 its frames. A render of an edit has both too, so one anywhere else in the
-folder stays `other`. Only files new to the project get a role this way.
-`tandem new` says which file it took for the camera, why, and how to change
-it:
+folder stays `other`. A sound file nothing names, which would be music,
+becomes a voice take (a camera take with no picture, like Record It's
+`-audio` take: Voice track, transcript straight away) when it's mono or in
+`source/` and the same listen hears speech in it, so an interview's mic
+WAV isn't music. A stereo file outside `source/` isn't listened to.
+
+Cinema cameras name clips with a camera letter (RED's `A004_C002_0904XF`,
+ARRI's `A001C002_210101_R1AB`, Blackmagic's `A001_08011234_C001`). When
+camera takes in one folder come from different cameras, the longest is the
+take and the other cameras' clips are its angles: `broll`, so a close-up
+can't be mistaken for the main take. They aren't lined up with the take;
+sync them by sound and place them on a track of their own. Clips from the
+same camera stay camera takes.
+
+New webcam takes get the camera picture delay (Tandem's setting, 80 ms on
+Mike's Mac) unless Record It already took it out. A take a camera made, with
+a timecode track (cinema cameras, and REDline's renders of their clips) or a
+make and model in its metadata (phones), records in step and gets none.
+
+Only files new to the project get a role this way. `tandem new` says which
+file it took for the camera, why, and how to change it:
 
 ```
 Added 16 media files from the folder.
@@ -61,6 +79,15 @@ Added 16 media files from the folder.
 Camera take: source/IMG_0151.MOV (med_yccfihfs), an Apple iPhone XS Max video with speech and a face in it.
 Not the camera? tandem apply '{"updateMedia": {"mediaID": "med_yccfihfs", "patch": {"role": "other"}}}'
 ```
+
+A new project takes its frame rate from its camera take (the longest one
+with a picture), so a RED take at 23.976 makes a 23.976 project, and says
+so (`Frame rate: 23.976 fps, the camera take's.`). A rate over 30 is
+divided down to the fastest whole fraction up to 30 (60 to 30, 59.94 to
+29.97, 50 to 25), so Mike's 30 or 60 fps webcam keeps 30. With no camera
+take, a variable one or one under 23.976, it stays 30. The size stays
+3840x2160 unless `--size` or `--portrait` says otherwise: screen recordings
+and graphics are made for it, and a 1080p camera scales up.
 
 A Live Photo exported from Photos is a still and a movie of a few seconds
 with the same name (`IMG_0130.HEIC`, `IMG_0130.mov`). The still is the

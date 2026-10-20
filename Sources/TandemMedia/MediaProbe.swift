@@ -25,6 +25,13 @@ struct MediaProbe: Sendable {
     var frameCount: Int?
     /// The picture lag the recorder already took out (Record It's tag).
     var pictureDelayCorrected: Time?
+    /// True when a camera made the file rather than a webcam: it has a
+    /// timecode track (cinema cameras, and REDline's renders of their
+    /// clips) or its metadata names a make or model (phones and cameras).
+    /// Mike's webcam and Record It write neither. Camera takes like these
+    /// record picture and sound in step, so they don't get the webcam's
+    /// picture delay.
+    var shotOnCamera = false
 
     /// Record It's tag for the camera delay it took out of the picture, in
     /// seconds (QuickTime metadata).
@@ -91,6 +98,11 @@ struct MediaProbe: Sendable {
         probe.hasAudio = !audioTracks.isEmpty
         probe.hasVideo = !videoTracks.isEmpty
         if let creation { probe.creationDate = try? await creation.load(.dateValue) }
+        if tracks.contains(where: { $0.mediaType == .timecode }) {
+            probe.shotOnCamera = true
+        } else if !videoTracks.isEmpty {
+            probe.shotOnCamera = await CameraTakes.cameraName(of: url) != nil
+        }
         let cameraDelay = AVMetadataItem.identifier(forKey: cameraDelayKey, keySpace: .quickTimeMetadata)
         if let tag = metadata.first(where: { $0.identifier == cameraDelay }),
            let text = try? await tag.load(.stringValue), let seconds = Double(text) {
@@ -208,11 +220,13 @@ struct FrameTiming: Equatable, Sendable {
     }
 
     /// An exact fraction for a measured rate: integer rates and the NTSC
-    /// 1000/1001 rates snap, anything else keeps two decimals.
+    /// 1000/1001 rates snap, anything else keeps two decimals. An NTSC rate
+    /// is 0.1% off the whole one, so a whole rate is within half that:
+    /// at 0.1% a RED camera's 23.976 snapped to 24 on rounding noise.
     static func snap(framesPerSecond fps: Double) -> FrameRate? {
         guard fps.isFinite, fps > 0 else { return nil }
         let whole = fps.rounded()
-        if abs(fps - whole) / fps < 0.001 { return FrameRate(Int64(whole)) }
+        if abs(fps - whole) / fps < 0.0005 { return FrameRate(Int64(whole)) }
         let ntsc = (fps * 1.001).rounded()
         if abs(fps - ntsc * 1000 / 1001) / fps < 0.0005 { return FrameRate(Int64(ntsc) * 1000, 1001) }
         let hundredths = Int64((fps * 100).rounded())

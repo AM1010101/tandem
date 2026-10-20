@@ -164,6 +164,97 @@ final class CameraTakeTests: TempFolderTestCase {
         XCTAssertEqual(reason, "a video in source/ with speech and a face in it")
     }
 
+    /// A sound file of `seconds`: the speech or music, then silence, in
+    /// one or two channels.
+    func writeSound(_ path: String, sound: Sound, seconds: Double, channels: Int) async throws {
+        let sounds = try await soundFolder()
+        let source = try SyntheticMedia.readInterleaved(sounds.appendingPathComponent(sound == .music ? "music.wav" : "speech.wav"))
+        let format = AVAudioFormat(standardFormatWithSampleRate: source.sampleRate, channels: AVAudioChannelCount(channels))!
+        let frames = Int(seconds * source.sampleRate)
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames))!
+        buffer.frameLength = AVAudioFrameCount(frames)
+        let available = sound == .silence ? 0 : min(frames, source.samples.count / source.channels)
+        for channel in 0..<channels {
+            let data = buffer.floatChannelData![channel]
+            for frame in 0..<frames {
+                data[frame] = frame < available ? source.samples[frame * source.channels + min(channel, source.channels - 1)] : 0
+            }
+        }
+        let url = file(path)
+        let output = try AVAudioFile(forWriting: url, settings: [
+            AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: source.sampleRate, AVNumberOfChannelsKey: channels,
+            AVLinearPCMBitDepthKey: 24, AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false
+        ], commonFormat: .pcmFormatFloat32, interleaved: false)
+        try output.write(from: buffer)
+    }
+
+    func testASpeechRecordingIsAVoiceTakeNotMusic() async throws {
+        // Ian's interview: the mic's mono WAV beside the camera files.
+        try await writeSound("source/Ian mic - B047_C002_0101QF.wav", sound: .speech, seconds: 12, channels: 1)
+        // A mono voice memo anywhere, and one that's stereo but in source/.
+        try await writeSound("memo.wav", sound: .speech, seconds: 12, channels: 1)
+        try await writeSound("source/dub.wav", sound: .speech, seconds: 12, channels: 2)
+        // Still music: stereo speech outside source/ isn't even listened to,
+        // a stereo bed in source/ has no voice, and a folder or a short file
+        // says what it is.
+        try await writeSound("talk.wav", sound: .speech, seconds: 12, channels: 2)
+        try await writeSound("source/bed.wav", sound: .music, seconds: 12, channels: 2)
+        try await writeSound("music/voiceover.wav", sound: .speech, seconds: 12, channels: 1)
+        try await writeSound("source/hello.wav", sound: .speech, seconds: 5, channels: 1)
+
+        let report = try await MediaScanner.scanReport(folder, known: [])
+        let roles = Dictionary(uniqueKeysWithValues: report.items.map { ($0.path, $0.role) })
+        XCTAssertEqual(roles, [
+            "source/Ian mic - B047_C002_0101QF.wav": .camera, "memo.wav": .camera, "source/dub.wav": .camera,
+            "talk.wav": .music, "source/bed.wav": .music, "music/voiceover.wav": .music, "source/hello.wav": .sfx
+        ])
+        let why = Dictionary(uniqueKeysWithValues: report.cameraTakes.map { ($0.path, $0.reason) })
+        XCTAssertEqual(why, [
+            "source/Ian mic - B047_C002_0101QF.wav": "a mono recording in source/ with speech in it",
+            "memo.wav": "a mono recording with speech in it",
+            "source/dub.wav": "a recording in source/ with speech in it"
+        ])
+        XCTAssertTrue(report.items.allSatisfy { $0.pictureDelay == nil }, "no picture to delay")
+
+        // One file dropped in from Finder is heard the same way.
+        let dropped = try await MediaScanner.probe(file("memo.wav"), folder: folder)
+        XCTAssertEqual(dropped.role, .camera)
+    }
+
+    func testAnotherCamerasAngleIsBrollNotASecondTake() async throws {
+        // Ian's whiteboard interview: camera A's wide take and camera B's
+        // close-up, both RED clips with a voice and a face, plus a second
+        // clip from camera A.
+        try await writeTake("source/Ian - A004_A002_0904XF.mov", sound: .speech, face: true)
+        var shorter = SyntheticMedia.Video(width: 320, height: 240, duration: 6)
+        shorter.audioFile = try await soundFolder().appendingPathComponent("speech.wav")
+        guard let picture = SyntheticMedia.face() else { throw XCTSkip("Vision doesn't see a face in the emoji on this Mac") }
+        shorter.picture = picture
+        try await SyntheticMedia.writeMovie(to: file("source/Ian close-up - B047_C002_0101QF.mov"), shorter)
+        try await SyntheticMedia.writeMovie(to: file("source/A004_C003_0904AB.mov"), shorter)
+
+        let report = try await MediaScanner.scanReport(folder, known: [])
+        let roles = Dictionary(uniqueKeysWithValues: report.items.map { ($0.path, $0.role) })
+        XCTAssertEqual(roles, [
+            "source/Ian - A004_A002_0904XF.mov": .camera,
+            "source/Ian close-up - B047_C002_0101QF.mov": .broll,
+            "source/A004_C003_0904AB.mov": .camera
+        ])
+        XCTAssertEqual(Set(report.cameraTakes.map(\.path)), ["source/Ian - A004_A002_0904XF.mov", "source/A004_C003_0904AB.mov"])
+        XCTAssertEqual(report.angles.map(\.path), ["source/Ian close-up - B047_C002_0101QF.mov"])
+        XCTAssertEqual(report.angles.first?.reason, "camera B's angle on camera A's take, source/Ian - A004_A002_0904XF.mov")
+    }
+
+    func testCameraLettersInClipNames() {
+        XCTAssertEqual(CameraTakes.cameraLetter(inPath: "source/Ian - A004_A002_0904XF.mov"), "A")
+        XCTAssertEqual(CameraTakes.cameraLetter(inPath: "source/Ian close-up - B047_C002_0101QF.mov"), "B")
+        XCTAssertEqual(CameraTakes.cameraLetter(inPath: "C001C002_210101_R1AB.mov"), "C", "ARRI")
+        XCTAssertEqual(CameraTakes.cameraLetter(inPath: "B001_08011234_C001.mov"), "B", "Blackmagic")
+        XCTAssertNil(CameraTakes.cameraLetter(inPath: "source/2026-10-02_122619-camera.mov"))
+        XCTAssertNil(CameraTakes.cameraLetter(inPath: "IMG_0151.MOV"))
+        XCTAssertNil(CameraTakes.cameraLetter(inPath: "XA004_A002_0904XF.mov"), "part of a longer word")
+    }
+
     func testRecordItCameraFilesSayWhy() async throws {
         try await SyntheticMedia.writeMovie(to: file("source/t1-camera.mov"), .init(duration: 1))
         try await SyntheticMedia.writeMovie(to: file("source/t1-screen.mov"), .init(duration: 1))

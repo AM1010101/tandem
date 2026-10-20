@@ -41,6 +41,7 @@ time-pitch as export:
 tandem loudness --from 1:00 --to 1:30              # the mix, a row every 0.5 s
 tandem loudness --from 1:00 --to 1:30 --tracks Music --step 0.2
 tandem loudness --from 1:00 --to 1:30 --gains      # does the render follow the gain lanes?
+tandem loudness --from 0 --to 18:00 --tracks Voice --over 0   # where does the voice clip?
 tandem clip 1:00 1:30 --tracks Music --audio-only  # listen to the music bed alone
 tandem assets show elevenlabs:music_2p839smz       # its prompt, licence, loudness and file
 ```
@@ -52,7 +53,13 @@ plays at, before export's master gain, which moves the whole range by the
 same amount, so compare things with each other: a swell 6 dB over the bed
 around it, the bed about 25 LU under the voice, a sound effect's peak
 against the speech. `--tracks` measures only those audio tracks (names or
-IDs); `--json` gives every point.
+IDs); `--json` gives every point. A long range at a small step reads as
+the summary without the rows; the JSON still has them.
+
+`--over <dBFS>` lists only the windows whose highest sample is over that
+level, merged into stretches with their peak: the direct answer to "where
+does this clip" (`--over 0`) or "what touches the ceiling" (`--over -1`).
+Without `--step` it measures every 0.4 s, so the windows cover the range.
 
 `--gains` checks the render against the gain lanes (the clips' levelling,
 gain, gain keyframes and fades). It renders each track (the `--tracks`

@@ -47,6 +47,39 @@ final class PictureDelayTests: TempFolderTestCase {
         XCTAssertEqual(older.pictureDelay, Time(seconds: 0.08), "a take from before Record It corrected them still gets Tandem's")
     }
 
+    func testOnlyWebcamTakesGetTheDelay() async throws {
+        // A cinema camera's clip (a REDline render keeps its timecode track)
+        // and a phone or camera's (its make and model) record in step.
+        var red = SyntheticMedia.Video(width: 320, height: 180, fps: 24, duration: 1)
+        red.timecodeFrame = 1_185_018
+        try await SyntheticMedia.writeMovie(to: file("source/interview-camera.mov"), red)
+        var phone = SyntheticMedia.Video(width: 320, height: 180, duration: 1)
+        phone.metadata = [.quickTimeMetadataMake: "Apple", .quickTimeMetadataModel: "iPhone 16 Pro"]
+        try await SyntheticMedia.writeMovie(to: file("source/phone-camera.mov"), phone)
+        // Mike's webcam through Record It writes neither.
+        try await SyntheticMedia.writeMovie(to: file("source/2026-10-02_122619-camera.mov"), .init(width: 320, height: 180, duration: 1))
+
+        let settings = TandemSettings(cameraPictureDelay: 0.08)
+        let report = try await MediaScanner.scanReport(folder, known: [], settings: settings)
+        func item(_ path: String) throws -> MediaItem { try XCTUnwrap(report.items.first { $0.path == path }, path) }
+        XCTAssertEqual(try item("source/interview-camera.mov").role, .camera)
+        XCTAssertNil(try item("source/interview-camera.mov").pictureDelay, "a timecode track: a camera, not the webcam")
+        XCTAssertNil(try item("source/phone-camera.mov").pictureDelay, "a phone names itself")
+        XCTAssertEqual(try item("source/2026-10-02_122619-camera.mov").pictureDelay, Time(seconds: 0.08))
+
+        let dropped = try await MediaScanner.probe(file("source/interview-camera.mov"), folder: folder, settings: settings)
+        XCTAssertNil(dropped.pictureDelay, "a file dropped in is judged the same way")
+
+        let probe = try await MediaProbe.probe(file("source/interview-camera.mov"))
+        XCTAssertTrue(probe.shotOnCamera)
+        XCTAssertEqual(probe.frameRate, FrameRate(24), "the timecode track isn't taken for the picture")
+        let webcam = try await MediaProbe.probe(file("source/2026-10-02_122619-camera.mov"))
+        XCTAssertFalse(webcam.shotOnCamera)
+        XCTAssertNil(TandemSettings(cameraPictureDelay: 0.08).pictureDelay(
+            for: MediaItem(path: "a.mov", kind: .video, role: .camera, hasVideo: true, hasAudio: true), shotOnCamera: true
+        ))
+    }
+
     func testTheSettingsFileReadsBackAndToleratesItsAbsence() throws {
         let url = file("settings/settings.json")
         XCTAssertEqual(TandemSettings.load(from: url), TandemSettings(), "no file: the defaults")

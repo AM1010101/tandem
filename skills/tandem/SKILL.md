@@ -474,9 +474,9 @@ scripts and the speaker tracker are in
   speaker's name ("James Cowling, Convex CTO, at Abstract") stays up longer,
   until the first jump cut (about 7 s), moved up above his head on the
   close-up: Mike asked for it longer. Captions at `--y 0.70`.
-- **A pro-filmed edit has no webcam lag.** `tandem new` gives a camera file
-  in `source/` the 80 ms picture delay; clear it with
-  `tandem sync 0 --media <id>`.
+- **A pro-filmed edit has no webcam lag.** `tandem new` leaves the 80 ms
+  picture delay off takes a camera made (a timecode track, or a make and
+  model); if a take still has it, clear it with `tandem sync 0 --media <id>`.
 - **Cutting a speaker's "right?"s:** only where there's a gap after it.
   Where it runs straight into the next word ("economy, right? And..."),
   leave it. The transcript's word times ran about 0.2 s early on this

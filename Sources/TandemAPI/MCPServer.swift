@@ -820,7 +820,7 @@ enum MCPTools {
         ),
         Tool(
             name: "loudness", title: "Loudness",
-            description: "Measured loudness of each file with sound, the project's speech level (-20 LUFS unless changed) and master target (-14 LUFS), the gain each levelled clip gets, and how many speech clips aren't at the speech level (apply normalizeSpeech to level them). With from, to, step or tracks it renders the mix instead and gives its loudness over time (momentary and short-term LUFS and peak at each step, as the timeline plays it, before export's master gain): use it for music swells, fades and sound effects against the voice. gains also checks each track's render against its gain lane and says where a gain change lands late or not at all.",
+            description: "Measured loudness of each file with sound, the project's speech level (-20 LUFS unless changed) and master target (-14 LUFS), the gain each levelled clip gets, and how many speech clips aren't at the speech level (apply normalizeSpeech to level them). With from, to, step or tracks it renders the mix instead and gives its loudness over time (momentary and short-term LUFS and peak at each step, as the timeline plays it, before export's master gain): use it for music swells, fades and sound effects against the voice. gains also checks each track's render against its gain lane and says where a gain change lands late or not at all. over lists where the mix peaks over a level, as stretches.",
             operation: .loudness,
             properties: [
                 "mediaID": S.string("Just this file."),
@@ -828,7 +828,8 @@ enum MCPTools {
                 "to": time("...to here. Default: the end."),
                 "step": time("A row every this many seconds (at least 0.1). Default: about 50 rows."),
                 "tracks": S.array(S.string(), "Only these audio tracks play, by name or ID, like [\"Music\", \"SFX\"]."),
-                "gains": S.boolean("Also check each track's render follows its gain lane (the tracks given, or every one that plays).")
+                "gains": S.boolean("Also check each track's render follows its gain lane (the tracks given, or every one that plays)."),
+                "over": S.number("List only the 400 ms windows whose highest sample is over this many dBFS, merged into stretches (0 for clipping, -1 for the true peak ceiling). Without step it measures every 0.4 s so nothing is missed.")
             ],
             readOnly: true, idempotent: true
         ),

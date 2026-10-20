@@ -22,7 +22,9 @@ extension TandemService {
         guard start >= .zero else { throw ServiceError(.badRequest, "--from can't be before 0.") }
         guard end > start else { throw ServiceError(.badRequest, "The range is empty (\(start) to \(end)).") }
         let range = TimeRange(start: start, end: end)
-        let step = try Self.loudnessStep(request.step, over: range.duration)
+        // Looking for peaks, the 400 ms windows tile the range unless a step
+        // says otherwise, so no sample goes unchecked.
+        let step = try Self.loudnessStep(request.step ?? (request.over != nil ? Self.peakWindow : nil), over: range.duration)
         var tracks: [Track]?
         if let names = request.tracks, !names.isEmpty {
             tracks = try audioTracks(named: names, in: project)
@@ -34,12 +36,19 @@ extension TandemService {
         }
         result.curve = try await renderer.loudness(context: context, range: range, step: step)
         result.tracks = tracks?.map(\.name)
+        if let over = request.over, let curve = result.curve { result.peaks = Self.peaks(in: curve, over: over) }
         if request.gains == true {
             let ids = tracks?.map(\.id) ?? Self.playingTracks(project, in: range)
             result.gains = try await renderer.checkGains(context: whole, range: range, trackIDs: ids)
         }
         return result
     }
+
+    /// The window a point's peak is measured over.
+    static let peakWindow = Time(seconds: 0.4)
+    /// Rows a curve can have: a whole 46 minute take at 0.4 s is about
+    /// 7,000, and the plain text sums up anything over `SoundText.readableRows`.
+    static let maximumRows = 100_000.0
 
     /// The step asked for, or the shortest of a few round ones that gives
     /// at most 60 rows. Steps are whole tenths of a second, the meter's
@@ -49,13 +58,39 @@ extension TandemService {
         if let asked {
             guard asked.seconds >= 0.1 else { throw ServiceError(.badRequest, "--step is at least 0.1 s, the meter's block.") }
             let rounded = (asked.seconds * 10).rounded() / 10
-            guard seconds / rounded <= 2000 else {
-                throw ServiceError(.badRequest, "That's more than 2000 rows. Use a bigger --step or a shorter range.")
+            guard seconds / rounded <= maximumRows else {
+                throw ServiceError(.badRequest, "That's more than \(Int(maximumRows)) rows. Use a bigger --step or a shorter range.")
             }
             return Time(seconds: rounded)
         }
         let steps = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300]
         return Time(seconds: steps.first { seconds / $0 <= 60 } ?? 600)
+    }
+
+    /// The windows that peak over `threshold` dBFS, neighbours merged into
+    /// stretches that run from the first window's start to the last one's
+    /// end, inside the range.
+    static func peaks(in curve: MixLoudness, over threshold: Double) -> LoudnessPeaks {
+        let half = Time(seconds: peakWindow.seconds / 2)
+        var stretches: [PeakStretch] = []
+        var previous: Time?
+        var windows = 0
+        for point in curve.points {
+            guard let peak = point.peakDBFS, peak > threshold else { continue }
+            windows += 1
+            let start = max(curve.start, point.time - half)
+            let end = min(curve.end, point.time + half)
+            if let previous, var last = stretches.last, point.time - previous <= curve.step {
+                last.end = end
+                last.peakDBFS = max(last.peakDBFS, peak)
+                last.windows += 1
+                stretches[stretches.count - 1] = last
+            } else {
+                stretches.append(PeakStretch(start: start, end: end, peakDBFS: peak, windows: 1))
+            }
+            previous = point.time
+        }
+        return LoudnessPeaks(threshold: threshold, windows: windows, stretches: stretches)
     }
 
     /// Audio tracks by name (any case) or ID, in timeline order, explaining
@@ -104,9 +139,16 @@ enum SoundText {
     }
 
     /// One character a point, ▁ for -60 LUFS or quieter up to █ for -10 or
-    /// louder, and · for silence.
-    static func sparkline(_ values: [Double?]) -> String {
+    /// louder, and · for silence. Past `width` points each character is
+    /// the loudest of its share of them.
+    static func sparkline(_ values: [Double?], width: Int = 200) -> String {
         let bars = Array("▁▂▃▄▅▆▇█")
+        var values = values
+        if values.count > width {
+            values = (0..<width).map { index in
+                values[(index * values.count / width)..<((index + 1) * values.count / width)].compactMap { $0 }.max()
+            }
+        }
         return String(values.map { value -> Character in
             guard let value else { return "·" }
             let index = Int(((value + 60) / 50 * Double(bars.count - 1)).rounded())
@@ -114,7 +156,12 @@ enum SoundText {
         })
     }
 
-    static func curve(_ curve: MixLoudness, tracks: [String]?) -> [String] {
+    /// More rows than this read as a summary; the JSON has every point.
+    static let readableRows = 2000
+    /// Stretches listed before the rest are left to the JSON.
+    static let readableStretches = 200
+
+    static func curve(_ curve: MixLoudness, tracks: [String]?, peaks: LoudnessPeaks? = nil) -> [String] {
         let what = tracks.map(list) ?? "The mix"
         var lines = ["\(what) from \(curve.start) to \(curve.end), every \(seconds(curve.step)) s, as the timeline plays it (export's master gain moves it all by the same amount)."]
         var summary = "Integrated \(level(curve.integratedLUFS, "LUFS")), true peak \(level(curve.truePeakDBTP, "dBTP"))."
@@ -123,6 +170,11 @@ enum SoundText {
         }
         lines.append(summary)
         lines.append("Short-term: " + sparkline(curve.points.map(\.shortTermLUFS)))
+        if let peaks { return lines + self.peaks(peaks) }
+        guard curve.points.count <= readableRows else {
+            lines.append("\(curve.points.count) rows: --json gives every one, and --over <dBFS> lists the stretches that peak over a level.")
+            return lines
+        }
         lines.append("  time        momentary   short-term  peak")
         for point in curve.points {
             let cells = [level(point.momentaryLUFS, "LUFS"), level(point.shortTermLUFS, "LUFS")].map { $0.padding(toLength: 10, withPad: " ", startingAt: 0) }
@@ -130,6 +182,20 @@ enum SoundText {
                 .replacingOccurrences(of: "\\s+$", with: "", options: .regularExpression))
         }
         lines.append("Momentary is the 400 ms centred on each time, short-term the 3 s, peak the highest sample in the 400 ms.")
+        return lines
+    }
+
+    /// "98 windows peak over 0.0 dBFS, in 23 stretches:" and the stretches.
+    static func peaks(_ peaks: LoudnessPeaks) -> [String] {
+        let level = String(format: "%.1f dBFS", peaks.threshold)
+        guard peaks.windows > 0 else { return ["No window peaks over \(level)."] }
+        let count = peaks.stretches.count
+        var lines = ["\(peaks.windows) window\(peaks.windows == 1 ? "" : "s") peak\(peaks.windows == 1 ? "s" : "") over \(level), in \(count) stretch\(count == 1 ? "" : "es"):"]
+        for stretch in peaks.stretches.prefix(readableStretches) {
+            lines.append(String(format: "  %@-%@  peak %.1f dBFS (%d window%@)", stretch.start.description, stretch.end.description, stretch.peakDBFS, stretch.windows, stretch.windows == 1 ? "" : "s"))
+        }
+        if count > readableStretches { lines.append("And \(count - readableStretches) more; --json lists them all.") }
+        lines.append("A window is the 400 ms centred on a row; its peak is its highest sample.")
         return lines
     }
 

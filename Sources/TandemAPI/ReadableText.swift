@@ -412,7 +412,7 @@ extension ExportOutcome: ReadableResult {
 extension LoudnessResult: ReadableResult {
     public var readableText: String {
         if let curve {
-            var lines = SoundText.curve(curve, tracks: tracks)
+            var lines = SoundText.curve(curve, tracks: tracks, peaks: peaks)
             if let gains { lines += SoundText.gains(gains, start: curve.start, end: curve.end) }
             return lines.joined(separator: "\n")
         }

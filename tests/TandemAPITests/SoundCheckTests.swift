@@ -77,6 +77,58 @@ final class SoundCheckTests: XCTestCase {
         XCTAssertTrue(report.readableText.hasPrefix("Speech is levelled to"), report.readableText)
     }
 
+    func testLongRangesAreMeasuredAndReadAsASummary() async throws {
+        // A 46 minute take at 0.4 s used to be refused past 2,000 rows.
+        XCTAssertEqual(try TandemService.loudnessStep(t(0.4), over: t(2760)), t(0.4))
+        XCTAssertThrowsError(try TandemService.loudnessStep(t(0.1), over: t(4 * 3600))) { error in
+            XCTAssertTrue((error as? ServiceError)?.message.contains("100000 rows") == true, "\(error)")
+        }
+
+        let renderer = FakeRenderer()
+        let h = try ServiceHarness(renderer: renderer)
+        defer { h.close() }
+        let long = try await h.service.loudness(LoudnessRequest(from: t(0), to: t(1080), step: t(0.4)))
+        XCTAssertEqual(long.curve?.points.count, 2701, "--json still has every point")
+        let text = long.readableText
+        XCTAssertTrue(text.contains("Integrated -30.5 LUFS"), text)
+        XCTAssertFalse(text.contains("  time        momentary"), "2,701 rows is too many to read")
+        XCTAssertTrue(text.contains("2701 rows: --json gives every one, and --over <dBFS> lists the stretches that peak over a level."), text)
+        let sparkline = try XCTUnwrap(text.split(separator: "\n").first { $0.hasPrefix("Short-term: ") })
+        XCTAssertLessThanOrEqual(sparkline.count, 12 + 200, "the sparkline keeps to a readable width")
+    }
+
+    func testOverListsTheWindowsThatPeakOverALevelAsStretches() async throws {
+        let points = [-3.0, 0.5, 1.2, -2, 0.1, nil, 2].enumerated().map { index, peak in
+            LoudnessPoint(time: t(Double(index) * 0.4), momentaryLUFS: -20, shortTermLUFS: -20, peakDBFS: peak)
+        }
+        let curve = MixLoudness(start: t(0), end: t(2.4), step: t(0.4), points: points, integratedLUFS: -20, truePeakDBTP: 2.3)
+        let peaks = TandemService.peaks(in: curve, over: 0)
+        XCTAssertEqual(peaks.threshold, 0)
+        XCTAssertEqual(peaks.windows, 4)
+        // Neighbouring windows merge; each stretch runs edge to edge of its
+        // 400 ms windows, kept inside the range.
+        XCTAssertEqual(peaks.stretches.map(\.start), [t(0.2), t(1.4), t(2.2)])
+        XCTAssertEqual(peaks.stretches.map(\.end), [t(1.0), t(1.8), t(2.4)])
+        XCTAssertEqual(peaks.stretches.map(\.peakDBFS), [1.2, 0.1, 2])
+        XCTAssertEqual(peaks.stretches.map(\.windows), [2, 1, 1])
+
+        let renderer = FakeRenderer()
+        let h = try ServiceHarness(renderer: renderer)
+        defer { h.close() }
+        let result = try await h.service.loudness(LoudnessRequest(from: t(0), to: t(10), over: -20))
+        XCTAssertEqual(renderer.measures.all.last?.step, t(0.4), "without --step the windows tile the range, so no sample goes unchecked")
+        let found = try XCTUnwrap(result.peaks)
+        XCTAssertEqual(found.windows, 25)
+        XCTAssertEqual(found.stretches.count, 1)
+        let text = result.readableText
+        XCTAssertTrue(text.contains("25 windows peak over -20.0 dBFS, in 1 stretch:"), text)
+        XCTAssertTrue(text.contains("  00:00.000-00:09.800  peak -12.0 dBFS (25 windows)"), text)
+        XCTAssertFalse(text.contains("  time        momentary"), "the stretches are the answer")
+
+        let quiet = try await h.service.loudness(LoudnessRequest(from: t(0), to: t(10), over: -1))
+        XCTAssertTrue(quiet.readableText.contains("No window peaks over -1.0 dBFS."), quiet.readableText)
+    }
+
     func testGainsCompareEachPlayingTrackWithItsLane() async throws {
         var renderer = FakeRenderer()
         renderer.gainChecks = [
@@ -173,7 +225,7 @@ final class SoundCheckTests: XCTestCase {
         func properties(_ name: String) -> JSONValue? {
             tools.first { $0[json: "name"] == .string(name) }?[json: "inputSchema"]?[json: "properties"]
         }
-        for key in ["from", "to", "step", "tracks", "gains"] {
+        for key in ["from", "to", "step", "tracks", "gains", "over"] {
             XCTAssertNotNil(properties("loudness")?[json: key], key)
         }
         XCTAssertNotNil(properties("clip")?[json: "tracks"])
@@ -206,6 +258,12 @@ final class SoundCheckCLITests: XCTestCase {
         let result = try ServiceJSON.decoder().decode(LoudnessResult.self, from: Data(gains.stdout.utf8))
         XCTAssertEqual(result.gains?.map(\.track), ["Voice", "Music"])
         XCTAssertEqual(result.curve?.points.count, 11)
+
+        let over = try cli.tandem("loudness", "--from", "0", "--to", "0:02", "--over", "-1", in: folder.url)
+        XCTAssertEqual(over.status, 0, over.stderr)
+        XCTAssertTrue(over.stdout.contains("No window peaks over -1.0 dBFS."), over.stdout)
+        let badLevel = try cli.tandem("loudness", "--over", "loud", in: folder.url)
+        XCTAssertEqual(badLevel.status, 2, badLevel.stderr)
 
         let wrong = try cli.tandem("loudness", "--tracks", "Musik", in: folder.url)
         XCTAssertEqual(wrong.status, 1)

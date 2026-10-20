@@ -339,7 +339,8 @@ struct CLI {
             try args.expectPositionals(atMost: 1, command: name)
             let request = LoudnessRequest(
                 mediaID: args.positionals.first, from: try time(args, "from"), to: try time(args, "to"), step: try time(args, "step"),
-                tracks: AssetNames.split(args.options["tracks"]).nilIfEmpty, gains: args.has("gains") ? true : nil
+                tracks: AssetNames.split(args.options["tracks"]).nilIfEmpty, gains: args.has("gains") ? true : nil,
+                over: try args.number("over")
             )
             return show(try await client().call(request), json: json)
         case "relink":
@@ -412,7 +413,11 @@ struct CLI {
         let takes = refresh.cameraTakes
         if !takes.isEmpty {
             let shown = 5
-            for take in takes.prefix(shown) { lines.append("Camera take: \(take.path) (\(take.mediaID)), \(take.reason).") }
+            for take in takes.prefix(shown) {
+                // A speech recording is a camera take with no picture.
+                let label = project.media(take.mediaID)?.kind == .audio ? "Voice take" : "Camera take"
+                lines.append("\(label): \(take.path) (\(take.mediaID)), \(take.reason).")
+            }
             if takes.count > shown { lines.append("And \(takes.count - shown) more camera takes; `tandem media` lists them.") }
             lines.append("Not the camera? \(command(takes.count == 1 ? takes[0].mediaID : "<id>", role: .other))")
         } else if added.contains(where: { $0.kind == .video }) {
@@ -422,6 +427,12 @@ struct CLI {
             var line = "No camera take: no video is named like one, or is a recording (from a phone or camera, or in source/) with speech and a face in it. To make one the camera: \(command(likely?.id ?? "<id>", role: .camera))"
             if let likely { line += " (\(likely.id) is \((likely.path as NSString).lastPathComponent), the longest video with sound)." }
             lines.append(line)
+        }
+        for angle in refresh.angles {
+            lines.append("Another angle: \(angle.path) (\(angle.mediaID)), \(angle.reason), so it's b-roll rather than a second camera take. To make it a camera take: \(command(angle.mediaID, role: .camera))")
+        }
+        if let rate = refresh.frameRate {
+            lines.append("Frame rate: \(String(format: "%g", rate.framesPerSecond)) fps, the camera take's. To change it: tandem apply '{\"updateSettings\": {\"patch\": {\"frameRate\": {\"numerator\": 30, \"denominator\": 1}}}}'")
         }
         return lines
     }

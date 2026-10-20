@@ -129,8 +129,9 @@ A webcam's picture lags its microphone (Mike's by about 75 ms), so lips
 and voice drift apart. A file's `pictureDelay` makes every clip of it show
 its picture that much later in the file, in the app, frames, review clips,
 `check` and exports. The sound, the cuts and the transcript's word times
-stay where they are, so nothing else moves. New camera takes get Tandem's
-default (Settings in the app, or `--default`). Never slip clips by hand as
+stay where they are, so nothing else moves. New webcam takes get Tandem's
+default (Settings in the app, or `--default`); a camera's take (a timecode
+track, or a phone's make and model) records in step and gets none. Never slip clips by hand as
 well, or the delay doubles. `tandem media` shows it as "picture 80 ms
 late, shown in sync". In MCP: `sync {"delay": 0.08}`.
 

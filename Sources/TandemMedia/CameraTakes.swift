@@ -23,6 +23,22 @@ import Vision
 /// - It shows a face: Vision finds one at least a tenth of the frame high
 ///   in two of six frames. That keeps out narrated screen recordings and
 ///   phone footage of hands at work with a voice over it.
+///
+/// A sound file nothing names, which would otherwise be music, becomes a
+/// voice take (a camera take with no picture, like Record It's `-audio`
+/// take: Voice track, transcript straight away) when it's a recording and
+/// it has a voice:
+///
+/// - It's in `source/` or it's mono. A mic recording is usually mono and
+///   sits with the takes; a music bed is stereo and lives elsewhere, so
+///   those aren't even listened to.
+/// - The same listen as a camera take hears speech in it.
+///
+/// Cinema cameras name clips with a camera letter (RED's
+/// `A004_C002_0904XF`, ARRI's `A001C002_210101_R1AB`). When camera takes
+/// in one folder come from different cameras, the longest is the take and
+/// the other cameras' clips are its angles: b-roll, not more camera takes
+/// that could be mistaken for the main one (`separateAngles`).
 public enum CameraTakes {
     /// Shorter videos aren't takes (a Live Photo's movie is about 3 s).
     static let minimumDuration = 4.0
@@ -39,6 +55,8 @@ public enum CameraTakes {
     /// Smaller faces are a webcam bubble in a screen recording, or someone
     /// in the background.
     static let minimumFaceHeight = 0.1
+    /// Shorter sound files are sound effects (`MediaScanner.role`).
+    static let minimumVoiceDuration = 10.0
 
     /// Why `item`, a file just found, is a camera take, or nil when it isn't
     /// one (or its name or folder already said what it is).
@@ -62,6 +80,71 @@ public enum CameraTakes {
     static func isCandidate(_ item: MediaItem) -> Bool {
         item.kind == .video && item.role == .other && item.hasVideo && item.hasAudio
             && item.undecodableCodec == nil && (item.duration?.seconds ?? 0) >= minimumDuration
+    }
+
+    /// Why `item`, a sound file just found, is a voice take, or nil when it
+    /// isn't one (or its name or folder already said what it is).
+    public static func voiceReason(for item: MediaItem, at url: URL) async -> String? {
+        guard isVoiceCandidate(item), let duration = item.duration?.seconds else { return nil }
+        let mono = await channelCount(of: url) == 1
+        let inSource = isInTakesFolder(item.path)
+        guard mono || inSource else { return nil }
+        guard let confidences = try? await speechConfidences(in: url, duration: duration), heardSpeech(confidences) else { return nil }
+        return "\(mono ? "a mono recording" : "a recording")\(inSource ? " in source/" : "") with speech in it"
+    }
+
+    /// Sound files worth a listen: music only because nothing about their
+    /// name or folder said otherwise, and long enough not to be an effect.
+    static func isVoiceCandidate(_ item: MediaItem) -> Bool {
+        item.kind == .audio && item.role == .music && item.hasAudio && (item.duration?.seconds ?? 0) >= minimumVoiceDuration
+            && !MediaScanner.roleGuess(forPath: item.path).fromName
+    }
+
+    /// The first sound track's channel count.
+    static func channelCount(of url: URL) async -> Int? {
+        guard let track = try? await AVURLAsset(url: url).loadTracks(withMediaType: .audio).first,
+              let format = try? await track.load(.formatDescriptions).first,
+              let description = CMAudioFormatDescriptionGetStreamBasicDescription(format) else { return nil }
+        return Int(description.pointee.mChannelsPerFrame)
+    }
+
+    // MARK: - Angles
+
+    /// Cinema cameras' clip names: RED (`A004_C002_0904XF`), ARRI
+    /// (`A001C002_210101_R1AB`) and Blackmagic (`A001_08011234_C001`). The
+    /// first letter is the camera.
+    private static let clipName = try! NSRegularExpression(
+        pattern: #"(?<![A-Za-z0-9])([A-Z])\d{3}(?:_[A-Z]\d{3}_\d{4}[A-Z0-9]{2}|C\d{3}_\d{6}_[A-Z0-9]{4}|_\d{8}_C\d{3})(?![A-Za-z0-9])"#
+    )
+
+    /// The camera letter in a cinema camera's clip name anywhere in the
+    /// file name ("Ian close-up - B047_C002_0101QF.mov" is camera B).
+    static func cameraLetter(inPath path: String) -> String? {
+        let stem = ((path as NSString).lastPathComponent as NSString).deletingPathExtension
+        guard let match = clipName.firstMatch(in: stem, range: NSRange(stem.startIndex..., in: stem)),
+              let range = Range(match.range(at: 1), in: stem) else { return nil }
+        return String(stem[range])
+    }
+
+    /// Makes new camera takes that are another camera's angle on a take
+    /// b-roll: among the camera takes with a picture in one folder, the
+    /// longest one's camera letter is the take's, and new clips from other
+    /// cameras are its angles. Clips from the same camera are separate
+    /// takes and stay camera takes. Returns what it changed, and why.
+    static func separateAngles(_ items: inout [MediaItem], new: Set<String>) -> [CameraTakeNote] {
+        let cameras = items.indices.filter { items[$0].role == .camera && items[$0].kind == .video && items[$0].hasVideo }
+        let folders = Dictionary(grouping: cameras) { (items[$0].path as NSString).deletingLastPathComponent }
+        var notes: [CameraTakeNote] = []
+        for indices in folders.values {
+            let lettered = indices.compactMap { index in cameraLetter(inPath: items[index].path).map { (index: index, letter: $0) } }
+            guard let take = lettered.max(by: { (items[$0.index].duration ?? .zero) < (items[$1.index].duration ?? .zero) }) else { continue }
+            for clip in lettered where clip.letter != take.letter && new.contains(items[clip.index].id) {
+                items[clip.index].role = .broll
+                let reason = "camera \(clip.letter)'s angle on camera \(take.letter)'s take, \(items[take.index].path)"
+                notes.append(CameraTakeNote(mediaID: items[clip.index].id, path: items[clip.index].path, reason: reason))
+            }
+        }
+        return notes.sorted { $0.path < $1.path }
     }
 
     /// True for a path in the project folder's `source/`, where record-it

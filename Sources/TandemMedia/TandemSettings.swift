@@ -49,11 +49,13 @@ public struct TandemSettings: Codable, Equatable, Sendable {
         try encoder.encode(self).write(to: url, options: .atomic)
     }
 
-    /// The delay a new file gets: the camera picture delay for a camera
+    /// The delay a new file gets: the camera picture delay for a webcam
     /// take's video, unless its recorder already took the lag out (Record
-    /// It's Camera delay); nothing otherwise.
-    public func pictureDelay(for item: MediaItem) -> Time? {
-        guard item.role == .camera, item.kind == .video, item.hasVideo, item.pictureDelayCorrected == nil, cameraPictureDelay != 0 else { return nil }
+    /// It's Camera delay); nothing otherwise. The delay is the webcam's, so
+    /// a take `shotOnCamera` (a timecode track, or a phone or camera's make
+    /// and model in its metadata) doesn't get it.
+    public func pictureDelay(for item: MediaItem, shotOnCamera: Bool = false) -> Time? {
+        guard item.role == .camera, item.kind == .video, item.hasVideo, item.pictureDelayCorrected == nil, !shotOnCamera, cameraPictureDelay != 0 else { return nil }
         return Time(seconds: cameraPictureDelay)
     }
 }

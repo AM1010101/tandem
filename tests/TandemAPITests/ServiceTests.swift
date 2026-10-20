@@ -2,6 +2,7 @@ import XCTest
 @testable import TandemAPI
 @testable import TandemCore
 import TandemMedia
+import TandemRender
 
 final class ServiceTests: XCTestCase {
     func testStatusDescribesTheProject() throws {
@@ -616,5 +617,15 @@ final class ServiceTests: XCTestCase {
             XCTAssertEqual(error.code, "badRequest")
             XCTAssertTrue(error.message.contains("commands[0].blade: unknown field \"att\" (did you mean \"at\"?)"), error.message)
         }
+    }
+
+    /// Frames, clips, checks and exports render the project as it's saved,
+    /// never the app viewer's drag previews, even when the app hosts the
+    /// API: the context they're all built from carries none (issue #60).
+    func testRendersNeverUseTheViewersLivePreviews() throws {
+        let h = try ServiceHarness()
+        defer { h.close() }
+        let context = try h.service.renderContext(h.service.coordinator.project, format: nil)
+        XCTAssertNil(context.liveOverrides)
     }
 }

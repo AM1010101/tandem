@@ -76,6 +76,9 @@ final class PlaybackController {
     /// it is on screen, so the picture doesn't jump back meanwhile.
     @ObservationIgnored private var overridesEnding = false
     @ObservationIgnored private var overrideClear: DispatchWorkItem?
+    /// The same for a look dragged in the Colour tab (`endLookPreview`).
+    @ObservationIgnored private var looksEnding = false
+    @ObservationIgnored private var lookClear: DispatchWorkItem?
     @ObservationIgnored private var redrawing = false
     @ObservationIgnored private var redrawAgain = false
 
@@ -339,6 +342,11 @@ final class PlaybackController {
             overrideClear?.cancel()
             liveOverrides.set([:])
         }
+        if looksEnding {
+            looksEnding = false
+            lookClear?.cancel()
+            liveOverrides.clearLooks()
+        }
         DrawTiming.record("new cut on screen", ProcessInfo.processInfo.systemUptime - loadStarted)
         let old = front
         let wasShowing = hasComposition
@@ -503,6 +511,42 @@ final class PlaybackController {
         guard overridesEnding else { return }
         overridesEnding = false
         liveOverrides.set([:])
+        guard hasComposition, rate == 0 else { return }
+        redrawFrame()
+        scheduleStill()
+    }
+
+    /// Draws `look` on every clip of `media` in place of its own while the
+    /// Colour tab's whole take is dragged. The clips' properties go through
+    /// `previewVideo` alongside, which redraws the frame.
+    func previewLook(_ look: [Effect], over media: MediaItem) {
+        lookClear?.cancel()
+        looksEnding = false
+        liveOverrides.setLook(look, over: media)
+    }
+
+    /// Ends a look preview, whatever else is being dragged. Like
+    /// `previewVideo([:])`, the look stays until the composition with the
+    /// committed look is on screen, or a moment for a drag that changed
+    /// nothing. It doesn't wait for every clip's preview to end as well,
+    /// so a look never outlives its drag to win over the file's later
+    /// looks (#60).
+    func endLookPreview() {
+        lookClear?.cancel()
+        guard liveOverrides.hasLooks else { return }
+        looksEnding = true
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.endLooks() }
+        }
+        lookClear = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+    }
+
+    private func endLooks() {
+        lookClear = nil
+        guard looksEnding else { return }
+        looksEnding = false
+        liveOverrides.clearLooks()
         guard hasComposition, rate == 0 else { return }
         redrawFrame()
         scheduleStill()

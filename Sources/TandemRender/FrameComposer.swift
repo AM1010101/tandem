@@ -43,11 +43,13 @@ struct SceneClip {
 /// until the edit is committed. The player reads them on every frame, so a
 /// picture-in-picture moves under the pointer instead of only its outline.
 /// Looks dragged in the Colour tab's whole take stand in for files' own the
-/// same way (`setLooks`).
+/// same way (`setLook`).
 public final class LiveVideoOverrides: @unchecked Sendable {
     private let lock = NSLock()
     private var values: [String: VideoProperties] = [:]
-    private var looks: [String: [Effect]] = [:]
+    /// By media ID: the look shown, and the file's own look it was dragged
+    /// from.
+    private var looks: [String: (look: [Effect], base: [Effect])] = [:]
 
     public init() {}
 
@@ -60,21 +62,37 @@ public final class LiveVideoOverrides: @unchecked Sendable {
         }
     }
 
-    /// Files' looks by media ID, while the Colour tab's whole take is
-    /// dragged. They stand in for every clip of the file, and go with the
-    /// next `set([:])`, once the committed look is on screen.
-    public func setLooks(_ overrides: [String: [Effect]]) {
-        lock.withLock { looks = overrides }
+    /// Shows `look` on every clip of `media` while the Colour tab's whole
+    /// take is dragged, in place of any other file's preview. It's only
+    /// used while the file's look is still the one it was dragged from
+    /// (`look(for:)`), and goes with `clearLooks` or the next `set([:])`.
+    public func setLook(_ look: [Effect], over media: MediaItem) {
+        lock.withLock { looks = [media.id: (look, media.look)] }
+    }
+
+    public func clearLooks() {
+        lock.withLock { looks = [:] }
     }
 
     public var isEmpty: Bool { lock.withLock { values.isEmpty && looks.isEmpty } }
+
+    public var hasLooks: Bool { lock.withLock { !looks.isEmpty } }
 
     public func video(for clipID: String) -> VideoProperties? {
         lock.withLock { values[clipID] }
     }
 
-    public func look(for mediaID: String) -> [Effect]? {
-        lock.withLock { looks[mediaID] }
+    /// The look to draw `media` with, or nil for its own. A preview of a
+    /// look the file no longer has never wins: once an edit from anywhere
+    /// (an agent's `updateMedia`, an undo) changes it, the file's own
+    /// shows (issue #60). It's ignored rather than dropped, since a drag
+    /// can run ahead of the composition: it's dragged from the project's
+    /// latest look while the cut on screen still has the one before.
+    public func look(for media: MediaItem) -> [Effect]? {
+        lock.withLock {
+            guard let entry = looks[media.id], entry.base == media.look else { return nil }
+            return entry.look
+        }
     }
 }
 
@@ -211,7 +229,7 @@ struct FrameComposer {
         // whatever the layer's scale.
         let unit = scene.pixelScale / total
         let env = EffectEnvironment(registry: scene.registry, folder: scene.folder, pixelsPerUnit: unit)
-        let look = sceneClip.media.flatMap { scene.overrides?.look(for: $0.id) } ?? sceneClip.media?.look ?? []
+        let look = sceneClip.media.flatMap { scene.overrides?.look(for: $0) } ?? sceneClip.media?.look ?? []
         image = EffectRenderer.apply(look + video.effects, to: image, env)
 
         if !video.crop.isIdentity {

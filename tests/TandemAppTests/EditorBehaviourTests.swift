@@ -1050,6 +1050,48 @@ final class EditorBehaviourTests: XCTestCase {
         XCTAssertEqual(editor.model.inspectorTab, .video)
     }
 
+    /// Issue #60: a look dragged in the Colour tab's whole take outlived
+    /// its drag, and the viewer kept drawing it over the looks an agent
+    /// gave the file afterwards until the app restarted.
+    func testALookPreviewEndsWithItsDragAndNeverHidesAnAgentsLook() {
+        let camera = editor.clip("Camera")
+        editor.click(editor.point(of: camera.id, at: 5))
+        editor.model.inspectorTab = .colour
+        editor.settle()
+        // What the whole take's sliders do while they're dragged.
+        let take = ColourEditor(model: editor.model, clipID: camera.id, target: .take)
+        let overrides = editor.model.playback.liveOverrides
+        func drawn() -> [Effect]? { overrides.look(for: editor.model.media(for: camera)!) }
+
+        take.preview(.colour, ["temperature": .number(40)])
+        editor.settle()
+        XCTAssertEqual(drawn()?.first?.params["temperature"], .number(40), "the viewer draws the dragged look")
+        // Something else in the viewer is still being previewed, which
+        // used to keep the look alive too.
+        editor.model.videoPreview["clip_elsewhere"] = VideoProperties()
+        // Let go where it started: nothing's committed.
+        take.preview(.colour, nil)
+        editor.wait(for: "the look preview to end", timeout: 4) { !overrides.hasLooks }
+        editor.model.videoPreview["clip_elsewhere"] = nil
+
+        // An agent grades the file, through a batch like any edit.
+        let graded = [Effect(id: "fx_agent", type: "colorAdjust", params: ["saturation": .number(-50)])]
+        editor.model.apply(InspectorEdits.look("med_camera", graded, label: "Agent look")!)
+        editor.settle()
+        XCTAssertEqual(editor.model.media(for: camera)?.look, graded)
+        XCTAssertNil(drawn(), "the viewer draws the file's own look, the agent's")
+
+        // An agent's look that lands mid-drag shows at once, not the drag's.
+        take.preview(.colour, ["temperature": .number(-20)])
+        editor.settle()
+        XCTAssertNotNil(drawn())
+        let regraded = [Effect(id: "fx_agent", type: "colorAdjust", params: ["saturation": .number(20)])]
+        editor.model.apply(InspectorEdits.look("med_camera", regraded, label: "Agent look")!)
+        editor.settle()
+        XCTAssertNil(drawn(), "a preview of the look before never wins")
+        take.preview(.colour, nil)
+    }
+
     // MARK: - Sound
 
     func testACompressorDroppedOnTheVoiceGoesInItsAudioEffects() throws {

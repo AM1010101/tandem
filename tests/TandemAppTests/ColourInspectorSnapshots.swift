@@ -279,7 +279,7 @@ final class ColourEditorTests: XCTestCase {
         // clip's own properties, unchanged, carry to the viewer.
         let before = model.revision
         editor(.take).preview(.colour, ["temperature": .number(40)])
-        XCTAssertEqual(model.playback.liveOverrides.look(for: "med_camera")?.first?.params["temperature"], .number(40))
+        XCTAssertEqual(model.playback.liveOverrides.look(for: model.media(for: clip)!)?.first?.params["temperature"], .number(40))
         XCTAssertEqual(model.videoPreview[clip.id]?.effects, clip.video?.effects)
         XCTAssertEqual(model.revision, before)
         editor(.take).preview(.colour, nil)

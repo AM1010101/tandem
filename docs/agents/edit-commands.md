@@ -45,6 +45,7 @@ removes a field. A range is always an object under its own key (`"range":
 | | `insertTemplate` | a template or saved segment as linked clips ([below](#inserttemplate)) |
 | | `addSectionCards` | a numbered card at every section marker ([below](#addsectioncards)) |
 | | `fitSectionCards` | cards as long as their words need ([below](#fitsectioncards)) |
+| | `placeSynced` | a file synced by sound (another angle, an external mic) beside the take ([recipe](cutting.md#add-another-angle-or-an-external-mic)) |
 | Removing | `removeClips` | lift, or ripple delete with `ripple` ([below](#removeclips)) |
 | | `rippleDeleteRange` | cut a stretch of time from the take |
 | | `cutRanges` | cut many stretches, all in the times you read |
@@ -62,6 +63,7 @@ removes a field. A range is always an object under its own key (`"range":
 | Clips | `moveClips` | move in time or to another track |
 | | `updateClip` | any clip setting ([below](#updateclip)) |
 | | `link`, `unlink` | link group membership |
+| | `showAngle` | which angle of a synced take shows over a range ([recipe](cutting.md#add-another-angle-or-an-external-mic)) |
 | | `applyLayout` | full, PiP, split or fill ([below](#applylayout-zoomtoregion-addmotion)) |
 | | `zoomToRegion` | zoom into a rectangle of the source |
 | | `addMotion` | Ken Burns zoom or pan for stills |

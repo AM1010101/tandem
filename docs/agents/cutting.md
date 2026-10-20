@@ -1,6 +1,6 @@
 # Cutting the take
 
-Recipes for tightening pauses, cutting a phrase or a rough cut, joining through-edits back up, and keeping the camera's picture in sync with its sound.
+Recipes for tightening pauses, cutting a phrase or a rough cut, joining through-edits back up, keeping the camera's picture in sync with its sound, and adding another camera angle or an external mic.
 
 ## Tighten pauses
 
@@ -140,3 +140,56 @@ delay) and tags the file `com.mikerosoft.record-it.camera-delay`. Tandem
 reads the tag (`pictureDelayCorrected`, "in sync as recorded" in `tandem
 media`), gives those takes no delay of its own, and `tandem sync` leaves
 them alone.
+
+## Add another angle or an external mic
+
+A second camera or a separate recorder starts at its own moment, so line
+it up with the camera take by sound rather than by hand:
+
+```bash
+tandem sync "source/Ian close-up.mov" "source/Ian mic.wav"   # measure, set their take, place them
+tandem apply '{"showAngle": {"range": {"start": "4:57", "end": "5:18"}, "trackID": "Angle 2"}}'
+tandem clip 4:50 5:25 -o /tmp/angle.mp4                       # watch and listen
+```
+
+```
+Lined up with source/Ian.mov by sound (how much further into each file the same moment is):
+  med_uqkd2zsq  source/Ian close-up.mov  +2.856 s, drift 6 ms over 17:56.954, confidence 54. On "Angle 2".
+  med_z7q5wmz7  source/Ian mic.wav  +2.856 s, drift 6 ms over 17:56.933, confidence 54. On "Voice".
+Applied "Sync 2 files to Ian by sound" by claude as revision 9.
+```
+
+The offset is how much further into the file the same moment is (here
+the close-up and mic started 2.856 s before the camera), measured at the
+middle of where they overlap; the file can cover any part of the take.
+Drift is how far the two clocks part over the overlap. It's good to a
+couple of milliseconds, since someone walking between the cameras moves
+their sound about 3 ms a metre, and it warns when it's over half a frame.
+Unrelated sound scores under 10 for confidence, and under 15 is refused
+with nothing changed, so check the file before trying again.
+
+In one undo step each file joins the camera's take (`takeID`,
+`takeOffset`, shown by `tandem media`) and goes beside the take's clips,
+linked one clip a track, so ripple cuts, trims and moves keep it in step.
+The take is cut where the file starts and stops (through-edits; nothing
+plays differently).
+
+- An angle goes on its own cut track right above the camera's, "Angle 2",
+  with its clips off, so the camera still shows. Its own sound isn't
+  placed.
+- A sound file goes on Voice, and the camera's own sound there moves to a
+  muted "Camera sound" track, so the mic is what plays and what gets
+  transcribed. Outside the mic's stretch the camera's sound stays on
+  Voice.
+
+`showAngle` shows an angle over a range: its clips there come on and the
+take's other angles go off. `"trackID": "Camera"` shows the camera again.
+The range snaps to frames, and the take is cut at its edges on every track
+as through-edits, so the sound doesn't change and later cuts keep the
+switch where it was in the take. Don't untick clips or unlink by hand.
+
+`--dry-run` measures and checks the edit without changing anything,
+`--no-place` only sets the takes (then `placeSynced` places one), and
+`--to` names the camera file when there's more than one. A 46 min camera
+take and an 18 min file take about 20 s. In MCP: `sync {"files":
+["source/Ian mic.wav"]}`.

@@ -8,8 +8,8 @@ import TandemCore
 public enum CommandCase: String, CaseIterable, Codable, Sendable {
     case updateProject, updateSettings, addTrack, removeTrack, moveTrack, updateTrack
     case addMedia, updateMedia, removeMedia
-    case placeMedia, insertClip, removeClips, rippleDeleteRange, cutRanges, closeGap, insertTime, insertTemplate, addSectionCards, fitSectionCards
-    case blade, join, joinThroughEdits, trim, roll, slip, slide, holdFrame, setSpeed
+    case placeMedia, placeSynced, insertClip, removeClips, rippleDeleteRange, cutRanges, closeGap, insertTime, insertTemplate, addSectionCards, fitSectionCards
+    case blade, join, joinThroughEdits, showAngle, trim, roll, slip, slide, holdFrame, setSpeed
     case moveClips, updateClip, link, unlink, applyLayout, zoomToRegion, setFormatLayout, adoptFormat, addMotion
     case addTransition, updateTransition, removeTransition
     case addEffect, updateEffect, removeEffect, moveEffect, setKeyframes
@@ -30,6 +30,7 @@ extension EditCommand {
         case .updateMedia: return .updateMedia
         case .removeMedia: return .removeMedia
         case .placeMedia: return .placeMedia
+        case .placeSynced: return .placeSynced
         case .insertClip: return .insertClip
         case .removeClips: return .removeClips
         case .rippleDeleteRange: return .rippleDeleteRange
@@ -42,6 +43,7 @@ extension EditCommand {
         case .blade: return .blade
         case .join: return .join
         case .joinThroughEdits: return .joinThroughEdits
+        case .showAngle: return .showAngle
         case .trim: return .trim
         case .roll: return .roll
         case .slip: return .slip
@@ -91,6 +93,7 @@ public enum CommandText {
         case .updateMedia: return "Update media"
         case .removeMedia: return "Remove media"
         case .placeMedia(let ids, let at, _, _, _, _, _, _, _, _, _): return "Place \(count(ids.count, "file")) at \(at)"
+        case .placeSynced: return "Place a synced file"
         case .insertClip(_, let clip, let mode): return mode == .insert ? "Insert clip at \(clip.start)" : "Add clip at \(clip.start)"
         case .removeClips(let ids, let ripple, _): return ripple == true ? "Ripple delete \(count(ids.count, "clip"))" : "Lift \(count(ids.count, "clip"))"
         case .rippleDeleteRange(let range, _): return "Ripple delete \(range.start)-\(range.end)"
@@ -105,6 +108,7 @@ public enum CommandText {
             return mode == .insert ? "Add section cards at \(markers), making room" : "Add section cards at \(markers)"
         case .fitSectionCards(let clipIDs): return clipIDs.map { "Fit \(count($0.count, "section card")) to their words" } ?? "Fit section cards to their words"
         case .blade(let at, _, _): return "Cut at \(at)"
+        case .showAngle(let range, let trackID): return "Show \(trackID) from \(range.start) to \(range.end)"
         case .join: return "Join a through-edit"
         case .joinThroughEdits(let range): return range.map { "Join through-edits from \($0.start) to \($0.end)" } ?? "Join through-edits"
         case .trim(_, let edge, _, let ripple, _): return ripple == true ? "Ripple trim \(edge.rawValue)" : "Trim \(edge.rawValue)"

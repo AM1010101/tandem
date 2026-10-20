@@ -55,6 +55,20 @@ public enum EditCommand: Codable, Equatable, Sendable {
         pop: Bool? = nil,
         speed: Double? = nil
     )
+    /// Puts a file synced to a take (`tandem sync <file>` sets its
+    /// `takeID` and `takeOffset` by sound) alongside the take's camera
+    /// clips already on the timeline, linked to them, so ripple cuts,
+    /// trims and moves keep it in step. The take is cut where the file
+    /// starts and stops (on whole frames), unless that's within half a
+    /// second of a cut already there, where the file stops short of the cut
+    /// instead (place the shortest file first). A picture (another camera angle)
+    /// goes on its own `cut` video track right above the camera's, "Angle
+    /// 2" unless `trackID` names one, with its clips off so the camera
+    /// still shows until `showAngle` picks it; its sound isn't placed. A
+    /// sound file (an external mic) goes on Voice (or `trackID`), and the
+    /// camera's own sound there moves to a muted "Camera sound" track, so
+    /// the mic is what plays.
+    case placeSynced(mediaID: String, trackID: String? = nil)
     /// `.place` (the default) fails if the range is occupied, `.overwrite`
     /// replaces what's there, `.insert` pushes later clips right.
     case insertClip(trackID: String, clip: Clip, mode: InsertMode? = nil)
@@ -132,6 +146,14 @@ public enum EditCommand: Codable, Equatable, Sendable {
     /// them across the same cut (camera, screen, voice) join too. Fails,
     /// saying why, when that would change what plays (`ThroughEdits`).
     case join(clipID: String)
+    /// Shows one angle of a take over `range` (snapped to frames): the
+    /// clips on `trackID` there come on and the take's other angles there go
+    /// off. Naming the camera's own track shows the camera (every angle
+    /// above it goes off). The take is cut at the range's edges on every
+    /// track it's on, so each piece stays linked one clip a track and the
+    /// sound plays just as before. Angles are the take's tracks above the
+    /// camera's, as `placeSynced` puts them.
+    case showAngle(range: TimeRange, trackID: String)
     /// Joins every through-edit (see `join`) with its cut in `range`, both
     /// ends included, or on the whole timeline, in one go. Cuts that look
     /// like through-edits but can't be joined are left, with a warning

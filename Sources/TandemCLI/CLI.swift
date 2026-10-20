@@ -189,7 +189,15 @@ struct CLI {
             _ = show(result, json: json)
             return result.ok ? 0 : 1
         case "sync":
-            try args.expectPositionals(atMost: 1, command: name)
+            // Files to line up by sound, or one picture delay.
+            if args.positionals.count > 1 || args.positionals.first.map(Self.isSyncFile) == true {
+                let request = SyncRequest(
+                    files: args.positionals.map(mediaReference), to: args.options["to"].map(mediaReference),
+                    place: args.has("no-place") ? false : nil, dryRun: args.has("dry-run") ? true : nil,
+                    label: args.options["label"], expectedRevision: try args.integer("expect")
+                )
+                return show(try await client().call(request), json: json)
+            }
             let delay = try args.positionals.first.map(Self.syncDelay)
             let media = args.values("media")
             let request = SyncRequest(
@@ -628,7 +636,15 @@ struct CLI {
         let value = text.trimmingCharacters(in: .whitespaces).lowercased()
         if value.hasSuffix("ms"), let ms = Double(value.dropLast(2)) { return Time(seconds: ms / 1000) }
         if let seconds = Double(value.hasSuffix("s") ? String(value.dropLast()) : value) { return Time(seconds: seconds) }
-        throw UsageError(message: "\(text) isn't a delay. Give seconds, like tandem sync 0.08, or milliseconds, like tandem sync 80ms.")
+        throw UsageError(message: "\(text) isn't a delay or a file. Give seconds, like tandem sync 0.08, milliseconds, like tandem sync 80ms, or files to line up with the camera by sound, like tandem sync mic.wav.")
+    }
+
+    /// Whether `tandem sync`'s argument names a file to line up by sound
+    /// rather than a delay: a media ID, or something with a slash or an
+    /// extension that isn't a number.
+    static func isSyncFile(_ text: String) -> Bool {
+        if (try? syncDelay(text)) != nil { return false }
+        return text.hasPrefix("med_") || text.contains("/") || text.contains(".")
     }
 
     /// Clears comments an agent has done: one undoable edit, credited to it.

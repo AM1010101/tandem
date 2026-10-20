@@ -24,6 +24,7 @@ Every operation with its CLI command, HTTP endpoint and MCP tool, archiving a fi
 | history | `tandem history` | `POST /v1/history` | `history` |
 | diff | `tandem diff --since <revision, file or export>` | `POST /v1/diff {"since"}` | `diff` |
 | restore | `tandem restore --from <ref> (--clips <ids> \| --from-time --to-time [--track]) [--apply]` | `POST /v1/restore {"from", "clips", "fromTime", "toTime", "track", "apply"}` | `restore` |
+| sync | `tandem sync [<seconds>] [--media] [--default]`, or `tandem sync <file>... [--to] [--no-place] [--dry-run]` | `POST /v1/sync {"delay", "media", "makeDefault"}` or `{"files", "to", "place", "dryRun"}` | `sync` |
 | clips | `tandem clips [--track] [--from] [--to] [--media] [--ids]` | `POST /v1/clips {"track", "from", "to", "media", "ids"}` | `clips` |
 | validate | `tandem validate` | `POST /v1/validate` | `validate` |
 | check | `tandem check [--changed] [--quick \| --cuts]` | `POST /v1/check {"from", "to", "changed", "quick", "cuts"}` | `check` |
@@ -60,8 +61,8 @@ when it's open).
 | save a segment | `tandem segments save "<name>" --clips <ids>` or `--from --to` | `segments_save` |
 | insert a segment | `tandem segments insert "<name>" --at <time>` | `segments_insert` |
 
-`tandem sync`, `tandem comments` and `tandem import` are CLI commands too
-(MCP `sync` and `comments`); `tandem help <command>` has every option.
+`tandem comments` and `tandem import` are CLI commands too (MCP
+`comments`); `tandem help <command>` has every option.
 
 ## Archive a finished video
 

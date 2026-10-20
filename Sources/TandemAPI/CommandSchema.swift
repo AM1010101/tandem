@@ -579,6 +579,15 @@ extension CommandSchema {
             example: #"{"placeMedia": {"mediaIDs": ["med_camera", "med_screen"], "at": 0}}"#
         ),
         Entry(
+            command: .placeSynced,
+            summary: "Puts a file synced to a take by sound (tandem sync <file> sets its take) alongside the take's camera clips, linked to them so ripple cuts, trims and moves keep it in step. The take is cut where the file starts and stops. Another camera angle goes on its own cut track right above the camera's (\"Angle 2\"), its clips off until showAngle picks it, and its own sound isn't placed. A sound file (an external mic) goes on Voice, and the camera's own sound there moves to a muted \"Camera sound\" track, so the mic is what plays.",
+            arguments: S.object([
+                "mediaID": S.string("The synced file."),
+                "trackID": S.track("The track it goes on. Default: a new \"Angle 2\" track for a picture, Voice for sound.")
+            ], required: ["mediaID"]),
+            example: #"{"placeSynced": {"mediaID": "med_closeup"}}"#
+        ),
+        Entry(
             command: .insertClip,
             summary: "Adds one clip to a track: a text title, a solid, a graphic, an adjustment layer or part of a media file.",
             arguments: S.object(["trackID": S.track(), "clip": S.ref("Clip"), "mode": insertMode], required: ["trackID", "clip"]),
@@ -668,6 +677,15 @@ extension CommandSchema {
             summary: "Joins every through-edit (see join) with its cut in range, both ends included, or on the whole timeline, in one go. Cuts that look like through-edits but would play differently joined are left, with a warning saying why. tandem join (the join tool) lists both first.",
             arguments: S.object(["range": S.ref("TimeRange")]),
             example: #"{"joinThroughEdits": {"range": {"start": 60, "duration": 60}}}"#
+        ),
+        Entry(
+            command: .showAngle,
+            summary: "Shows one angle of a synced take over a range (snapped to frames): its clips there come on and the take's other angles there go off. Name the camera's own track to show the camera. The take is cut at the range's edges on every track it's on, as a through-edit, so the sound plays as before and each piece stays linked; later ripple cuts keep the switch where it was in the take.",
+            arguments: S.object([
+                "range": S.ref("TimeRange"),
+                "trackID": S.track("The angle to show: its track, like \"Angle 2\", or \"Camera\" for the camera.")
+            ], required: ["range", "trackID"]),
+            example: #"{"showAngle": {"range": {"start": 297, "duration": 21}, "trackID": "Angle 2"}}"#
         ),
         Entry(
             command: .trim,

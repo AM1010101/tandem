@@ -1085,6 +1085,12 @@ final class TimelineLanesView: TimelineChildView {
                 .updateClip(clipID: $0, patch: .object(["enabled": .bool(!clip.enabled)]))
             }))
         }
+        // A take synced by sound: show this angle there instead of the others.
+        if let angle = TimelineEdits.showAngle(model.project, clipID: clipID, inOut: model.inOutRange) {
+            menu.add(model.inOutRange == nil ? "Show this angle here" : "Show this angle from in to out", icon: "video") {
+                model.apply(angle)
+            }
+        }
         if track.kind == .video {
             menu.addSubmenu("Layout", icon: Icons.layoutSection) { sub in
                 for preset in LayoutPreset.allCases {

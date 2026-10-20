@@ -41,6 +41,11 @@ public struct FFmpeg: Sendable {
         _ = try Self.execute(url, arguments)
     }
 
+    /// Runs ffmpeg and returns what it wrote to standard output.
+    public func output(_ arguments: [String]) throws -> Data {
+        try Self.execute(url, arguments)
+    }
+
     /// The streams of a file as ffprobe reports them; empty without ffprobe.
     public func probeStreams(_ file: URL) throws -> [[String: Any]] {
         guard let ffprobe else { return [] }

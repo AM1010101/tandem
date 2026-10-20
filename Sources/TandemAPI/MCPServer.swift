@@ -269,7 +269,8 @@ public final class MCPServer: @unchecked Sendable {
     transition, soft zooms) are judgement calls. Mike's saved segments (his intro, outro and \
     calls to action) are in `segments_list` and go in with `segments_insert`. Mike leaves comments on the timeline for the next round \
     ("cut the umm here"): when he asks you to look at them, `comments` lists them; do each, then remove it with removeMarker in the same \
-    batch. A camera's picture lags its mic: `sync` sets how late (never slip clips by hand for it). Transcripts, mattes and proxies are \
+    batch. A camera's picture lags its mic: `sync` sets how late (never slip clips by hand for it); `sync` with files lines \
+    another angle or an external mic up with the camera by sound and places it. Transcripts, mattes and proxies are \
     made in the background: `wait` waits for them (never poll in a loop), and `transcribe` makes a transcript of any file with sound. Only change the project through \
     these tools, and never quit \
     or restart the app. Times are seconds or mm:ss.mmm. Pass `project` (a .tandem path) when the server wasn't started in the video's folder.
@@ -721,12 +722,16 @@ enum MCPTools {
         ),
         Tool(
             name: "sync", title: "Sync picture and sound",
-            description: "A webcam's picture lags its mic (Mike's by about 0.08 s), so lips and voice drift apart. With delay, every camera take (or the media files named) shows its picture that much later in the file, in the app, frames, review clips, check and exports; the sound, the cuts and word times stay put. 0 puts it back as recorded. Never slip clips by hand as well, or the delay doubles. Without delay it lists each file's delay and the default new camera takes get.",
+            description: "Two jobs. With delay: a webcam's picture lags its mic (Mike's by about 0.08 s), so lips and voice drift apart; every camera take (or the media files named) shows its picture that much later in the file, in the app, frames, review clips, check and exports; the sound, the cuts and word times stay put. 0 puts it back as recorded. Never slip clips by hand as well, or the delay doubles. Without delay or files it lists each file's delay and the default new camera takes get. With files (another camera angle, an external mic): lines each up with the camera take by sound, however much of the take it covers, and reports how much further into the file the same moment is (offset, positive when it started first), how far the clocks drift apart over the overlap, and a confidence (unrelated sound scores under 10; under 15 is refused and nothing changes). Then, as one undo step, it puts each file in the camera's take and places it beside the take's clips, linked (placeSynced): an angle on its own track above the camera's (\"Angle 2\"), off until the showAngle edit command shows it over a range, its own sound not placed; a sound file on Voice, with the camera's own sound there moved to a muted \"Camera sound\" track. Takes about 20 s for a 46 min camera take.",
             operation: .sync,
             properties: [
                 "delay": time("How late the picture is against the sound, in seconds (0.08 for 80 ms). 0 puts it back."),
-                "media": S.array(S.string("A media ID."), "The files to set. Default: every camera take."),
+                "media": S.array(S.string("A media ID."), "The files to set the delay on. Default: every camera take."),
                 "makeDefault": S.boolean("Make it the delay new camera takes get, in Tandem's settings."),
+                "files": S.array(S.string("A media ID or path."), "Files to line up with the camera take by sound, instead of a delay."),
+                "to": S.string("With files: the media ID or path of the file to line them up with. Default: the camera take."),
+                "place": S.boolean("With files: place each beside the take. Default true; false only sets their takes."),
+                "dryRun": S.boolean("With files: measure and check the edit without changing anything."),
                 "label": S.string("Undo label."),
                 "expectedRevision": S.integer("Refuse unless the project is at this revision.")
             ],

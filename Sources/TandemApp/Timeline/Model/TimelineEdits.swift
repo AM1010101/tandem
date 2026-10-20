@@ -213,6 +213,24 @@ enum TimelineEdits {
         return item.kind == .video && item.hasVideo
     }
 
+    /// "Show this angle" on a clip of a take synced by sound (`tandem
+    /// sync`): that clip's track shows from in to out when they're marked,
+    /// otherwise over the clip, with the take's other angles off there.
+    /// Nil when that's not an angle `showAngle` can switch to there, or it
+    /// already shows.
+    static func showAngle(_ project: Project, clipID: String, inOut: TimeRange?) -> EditBatch? {
+        guard let location = project.location(ofClip: clipID), location.track.kind == .video else { return nil }
+        let track = project[location.track]
+        let range = inOut ?? track.clips[location.index].range
+        let command = EditCommand.showAngle(range: range, trackID: track.id)
+        var tried = project
+        var context = EditContext(seed: 0)
+        guard (try? Editing.apply(command, to: &tried, context: &context)) != nil,
+              tried.videoTracks.flatMap(\.clips).filter(\.enabled).map(\.range) != project.videoTracks.flatMap(\.clips).filter(\.enabled).map(\.range)
+        else { return nil }
+        return EditBatch(label: "Show \(track.name) from \(range.start) to \(range.end)", commands: [command])
+    }
+
     /// What ⌥F freezes: a selected video clip under the playhead (the top
     /// one, if several are), otherwise the top one that shows there.
     /// Titles and stills are passed over for the video under them. Locked

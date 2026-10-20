@@ -545,3 +545,42 @@ final class SelectionRuleTests: XCTestCase {
         XCTAssertEqual(EditPoints.nextMarker(after: t(0), in: f.project), t(30))
     }
 }
+
+/// "Show this angle" on a clip of a take synced by sound.
+final class ShowAngleEditTests: XCTestCase {
+    /// The fixture's take with a close-up synced to it (started with the
+    /// camera) on "Angle 2", off.
+    static func withAngle() throws -> AppFixture {
+        let f = try AppFixture()
+        let angle = MediaItem(
+            id: "med_angle", path: "source/close-up.mov", kind: .video, role: .broll, takeID: "take1", takeOffset: t(0.5),
+            duration: t(60), frameRate: .fps30, width: 3840, height: 2160, hasVideo: true, hasAudio: true
+        )
+        try f.coordinator.apply(EditBatch(label: "Angle", commands: [.addMedia(item: angle), .placeSynced(mediaID: "med_angle")]))
+        return f
+    }
+
+    func testAnAngleShowsFromInToOutOrOverItsClipAndTheCameraComesBack() throws {
+        let f = try Self.withAngle()
+        let inOut = TimeRange(start: t(10), end: t(20))
+        let batch = try XCTUnwrap(TimelineEdits.showAngle(f.project, clipID: f.clip("Angle 2").id, inOut: inOut))
+        XCTAssertEqual(batch.label, "Show Angle 2 from 00:10.000 to 00:20.000")
+        try f.apply(batch)
+        XCTAssertEqual(f.clips("Angle 2").filter(\.enabled).map(\.range), [inOut])
+        XCTAssertNil(TimelineEdits.showAngle(f.project, clipID: f.clip("Angle 2", 1).id, inOut: inOut), "it shows already")
+
+        // The camera over part of it, from a camera clip with no in and out.
+        try f.coordinator.apply(EditBatch(label: "Cut", commands: [.blade(at: t(12), trackIDs: ["Camera"]), .blade(at: t(14), trackIDs: ["Camera"])]))
+        try f.apply(TimelineEdits.showAngle(f.project, clipID: f.clip("Camera", 2).id, inOut: nil))
+        XCTAssertEqual(f.clips("Angle 2").filter(\.enabled).map(\.range), [TimeRange(start: t(10), end: t(12)), TimeRange(start: t(14), end: t(20))])
+    }
+
+    func testOnlyAnglesOfASyncedTakeOfferIt() throws {
+        let f = try Self.withAngle()
+        XCTAssertNil(TimelineEdits.showAngle(f.project, clipID: f.clip("Screen").id, inOut: nil), "the screen isn't an angle")
+        XCTAssertNil(TimelineEdits.showAngle(f.project, clipID: f.clip("B-roll").id, inOut: nil))
+        XCTAssertNil(TimelineEdits.showAngle(f.project, clipID: f.clip("Voice").id, inOut: nil))
+        let plain = try AppFixture()
+        XCTAssertNil(TimelineEdits.showAngle(plain.project, clipID: plain.clip("Camera").id, inOut: nil), "no other angle")
+    }
+}

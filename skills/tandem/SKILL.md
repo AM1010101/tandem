@@ -482,6 +482,12 @@ scripts and the speaker tracker are in
 - **A pro-filmed edit has no webcam lag.** `tandem new` leaves the 80 ms
   picture delay off takes a camera made (a timecode track, or a make and
   model); if a take still has it, clear it with `tandem sync 0 --media <id>`.
+- **A second camera or a separate mic: `tandem sync <files>`,** not a
+  script of your own. It lines them up with the camera take by sound, puts
+  them in its take and places them in one undo step: the angle on "Angle
+  2", off, and the mic on Voice with the camera's own sound muted. Show the
+  angle where it helps with `showAngle`; never untick its clips, unlink or
+  slip anything by hand.
 - **Cutting a speaker's "right?"s:** only where there's a gap after it.
   Where it runs straight into the next word ("economy, right? And..."),
   leave it. The transcript's word times ran about 0.2 s early on this

@@ -160,7 +160,9 @@ public struct MediaItem: Codable, Equatable, Identifiable, Sendable {
     public var path: String
     public var kind: MediaKind
     public var role: MediaRole
-    /// Camera and screen files from the same record-it take share a take ID.
+    /// Camera and screen files from the same record-it take share a take ID,
+    /// and so do files lined up with a camera by sound (`tandem sync <file>`:
+    /// another angle, an external mic).
     public var takeID: String?
     /// How long after the start of the take this file starts. The files of
     /// one take start a moment apart; placing a take uses this to keep them

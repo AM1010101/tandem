@@ -30,7 +30,7 @@ change the code and the tests with it.
 | Target | Owns | May import |
 | --- | --- | --- |
 | `TandemCore` | Model, time, commands, editing, validation, undo, journal, effect registry | Foundation |
-| `TandemMedia` | Folder scanning, probing, take pairing, analysis jobs and cache | Core, AVFoundation, Vision, Speech, SoundAnalysis, VideoToolbox, Accelerate |
+| `TandemMedia` | Folder scanning, probing, take pairing, syncing files by sound, analysis jobs and cache | Core, AVFoundation, Vision, Speech, SoundAnalysis, VideoToolbox, Accelerate |
 | `TandemRender` | Composition building, compositor, text, transitions, audio mix, the viewer's sound, frame grabs, export | Core, Media, AVFoundation, Core Image, Metal, Core Audio (keeping the output awake) |
 | `TandemAPI` | `ProjectSession`, the service (status, timeline, apply, frame, clip, export...), local HTTP server, MCP tool definitions | Core, Media, Render |
 | `TandemApp` | The macOS app (SwiftUI shell, AppKit timeline and viewer) | everything |

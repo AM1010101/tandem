@@ -39,6 +39,8 @@ public enum Editing {
                 mode: mode ?? .place, videoTrackID: videoTrackID, audioTrackID: audioTrackID,
                 includeAudio: includeAudio, anchor: anchor, pop: pop ?? false, speed: speed, &context
             )
+        case .placeSynced(let mediaID, let trackID):
+            try SyncedPlacement.place(&project, mediaID: mediaID, trackID: trackID, &context)
         case .insertClip(let trackID, let clip, let mode):
             try insertClip(&project, trackID: trackID, clip: clip, mode: mode ?? .place, &context)
         case .removeClips(let clipIDs, let ripple, let includeLinked):
@@ -64,6 +66,8 @@ public enum Editing {
             try blade(&project, at: at, trackIDs: trackIDs, clipIDs: clipIDs, &context)
         case .join(let clipID):
             try ThroughEdits.join(&project, clipID: clipID)
+        case .showAngle(let range, let trackID):
+            try SyncedPlacement.showAngle(&project, range: range, trackID: trackID, &context)
         case .joinThroughEdits(let range):
             let report = ThroughEdits.joinAll(&project, in: range)
             for warning in ThroughEdits.warnings(report, in: project) { context.warn(warning) }
@@ -165,6 +169,10 @@ public enum Editing {
             )
         case .insertClip(let trackID, let clip, let mode):
             return .insertClip(trackID: try one(trackID), clip: clip, mode: mode)
+        case .placeSynced(let mediaID, let trackID):
+            return .placeSynced(mediaID: mediaID, trackID: try optional(trackID))
+        case .showAngle(let range, let trackID):
+            return .showAngle(range: range, trackID: try one(trackID))
         case .rippleDeleteRange(let range, let trackIDs):
             return .rippleDeleteRange(range: range, trackIDs: try many(trackIDs))
         case .cutRanges(let ranges, let trackIDs):

@@ -293,6 +293,37 @@ final class EditorBehaviourTests: XCTestCase {
         XCTAssertTrue(start.components(separatedBy: "\n").contains("Hold previous frame (off)"), start)
     }
 
+    // MARK: - Angles
+
+    func testInAndOutThenTheAnglesMenuShowsTheCloseUpThere() throws {
+        let angle = MediaItem(
+            id: "med_angle", path: "source/close-up.mov", kind: .video, role: .broll, takeID: "take1", takeOffset: t(0.5),
+            duration: t(60), frameRate: .fps30, width: 3840, height: 2160, hasVideo: true, hasAudio: true
+        )
+        editor.model.apply(EditBatch(label: "Sync the close-up", commands: [.addMedia(item: angle), .placeSynced(mediaID: "med_angle")]))
+        editor.settle()
+        XCTAssertEqual(editor.clips("Angle 2").map(\.enabled), [false], "the camera shows until an angle is picked")
+
+        editor.model.playback.seek(to: t(10))
+        editor.press("i")
+        editor.model.playback.seek(to: t(20))
+        editor.press("o")
+        let at = editor.point(of: editor.clip("Angle 2").id, at: 15)
+        let menu = try editor.menu(at: at)
+        XCTAssertTrue(menu.components(separatedBy: "\n").contains("Show this angle from in to out"), menu)
+        editor.choose("Show this angle from in to out", at: at)
+        XCTAssertEqual(editor.clips("Angle 2").filter(\.enabled).map(\.range), [TimeRange(start: t(10), end: t(20))])
+        XCTAssertEqual(editor.clips("Camera").map(\.start.seconds), [0, 10, 20], "cut with it, so it stays linked")
+        XCTAssertEqual(editor.clips("Voice").map(\.start.seconds), [0, 10, 20])
+
+        // A ripple cut before it keeps the close-up on the same words.
+        editor.model.apply(EditBatch(label: "Cut", commands: [.rippleDeleteRange(range: TimeRange(start: t(2), end: t(4)))]))
+        XCTAssertEqual(editor.clips("Angle 2").filter(\.enabled).map(\.range), [TimeRange(start: t(8), end: t(18))])
+        XCTAssertTrue(editor.press("cmd+z"))
+        XCTAssertTrue(editor.press("cmd+z"))
+        XCTAssertEqual(editor.clips("Angle 2").map(\.enabled), [false], "one undo step")
+    }
+
     // MARK: - Speed
 
     /// A modal alert can't be clicked here, so the test answers Custom…'s

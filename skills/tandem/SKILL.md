@@ -199,6 +199,16 @@ transitions, media or markers.
   length himself: "you cut too much stuff out... If there's any section
   that I think that we should cut out, maybe I'll cut it out myself"
   (2026-10-16).
+- **Live demos: when he leaves the desk,** go full screen on his camera
+  from when he says he's going ("Cup of tea time") until he's back at the
+  screen, and cover the time away with a time card meme, with its sound,
+  rather than a sped-up fast-forward with a "100x" badge: "I don't think we
+  need to do the 100x here... can you download that 'some time later'
+  meme?" (Tandem video, 2026-10-17). SpongeBob's card says "A Few Moments
+  Later"; its sting sat well about 2 dB above his voice. Full screen also
+  hides the screen recording while he's away, where macOS only captures on
+  change and it dropped to 4 to 7 fps ("why does this part... go like a
+  really low frame rate?").
 - **Editor's notes:** Mike says them out loud in the take ("editor's note:
   cut that bit"). Read the transcript for them before cutting, and remove
   both the note and what it points at.
@@ -244,6 +254,18 @@ From his review comments on the Daytona and Build Your Own Convex videos
   he says it. A highlight (the $200 free credit) appears when he says it,
   not before. When he mentions a person (Jamie Turner, Convex's CEO), put
   their photo above their name's lower third.
+- **Show what he says in a live demo too.** In his last review of the
+  Tandem video, 9 comments were B-roll asks for things he named, live or on
+  camera: Filmora when he first names it, then Filmora itself in use (the
+  features, cutting pauses by hand), Voice Type, the YouTube comment and the
+  X poll he mentions, his What I Need video, ArtCraft's own app pages, and
+  the real mash-up videos: "show actually video of this, not just
+  screenshots". A news article is the fallback, not the first pick. Web
+  pages go in a browser window with the address showing: "make it look like
+  this is actually inside a web browser... so people don't think this is
+  actually Windows XP". When he says "I'll put some B-roll on after this",
+  put it there. His own past demos count: the Voice Type clip came from his
+  February X post.
 - **One thing at a time.** A card with the wrong and the right example side
   by side was "a bit too much to read at the same time as listen to what
   I'm saying": put each up on its own as he says it (What I Need video,
@@ -276,6 +298,15 @@ From his review comments on the Daytona and Build Your Own Convex videos
   `tandem loudness --from T --to T --tracks Music`. A chill lounge kit sat under demo sound effects
   without fighting them: Rhodes, soft pads, round bass and brushed drums at
   about 85 BPM, with no hi-hats, bells, glockenspiel or marimba.
+- **Re-check the music after his own edit pass.** He locks the music track
+  so his cuts can't slice it, but a locked track never moves, so his ripple
+  cuts leave it behind: on the Tandem video the music ran 2.5 minutes past
+  the picture and card 4's swell played 2.5 minutes after the card ("why
+  does the music suddenly get loud at the end here?"). After any edits that
+  change timing (his or yours, with music locked), check that each card's
+  swell sits under its card and the outro ends with the picture. Fix by
+  unlocking, laying the beds again or moving them, and locking it again
+  (mikecann/tandem#33).
 - **Linked sounds:** a card's whooshes are linked to it, so trim either with
   `"includeLinked": false` or you drag the other along.
 - **On-screen text moves in and out,** in his words. A question or callout
@@ -354,6 +385,12 @@ From his review comments on the Daytona and Build Your Own Convex videos
   October 2026). A real pause is quiet for 80 ms or more in the full band
   and above 4 kHz alike, which is what the check goes by. Listen with
   `tandem clip` to any it can't fix (no pause within 0.3 s).
+- **Sweep for leftovers after a rebuild.** Restoring cut stretches left 88
+  clips of 1 to 10 ms (one flickered) and some microsecond overlaps that
+  made every later `apply` fail with "Clips X and Y overlap". After a big
+  restructure, list clips shorter than a frame and adjacent clips that
+  overlap at all, and close them up (remove the sliver, pull the next clip's
+  start back to it; mikecann/tandem#48 and #49).
 - **Before uploading,** watch the start of the export, where sync problems
   show first. The limiter takes about 8 dB off his voice's peaks to reach
   -14 LUFS, and he hears that as artificial, so he asked for -16 after
@@ -555,6 +592,40 @@ His first review round, 16 comments, became these:
   recording's frames for the popup's region (mean brightness catches the
   fade in and out; a dark-pixel count missed about 0.1 s each side) and put
   a cropped, blurred copy of the screen on B-roll over each stretch.
+
+### A quick personal live demo for X: the pool model (October 2026)
+
+A 3-minute one-take demo of his 3D pool model in the browser
+(`convex-videos/pool-project/`), cut, B-rolled and exported in one sitting.
+What he changed, in the order he asked:
+
+- **Corner for the whole thing.** Opening on his face full screen and going
+  to the corner for the demo wasn't what he wanted: "make it picture in
+  picture for the entire thing". When the screen is the subject from the
+  first line, he's in the corner throughout.
+- **Bottom-right, but out of the way of the UI he clicks.** He tried
+  bottom-left (mirrored, since Tandem has no flip: a `hflip` copy with
+  `-copyts`, then `tandem sync 0 --media` on it) and went back to the right:
+  "when I click stuff on the right hand sidebar can you just hide me for a
+  second or move me out of the way". Find the clicks from the recording
+  (frame differences in the sidebar's region), not the transcript; skip
+  plain mouse travel. Slide him off to the right over 0.45 s
+  (`video.transform.position` keyframes on every camera clip in the
+  stretch, easeIn out, easeOut back) and merge stretches less than about 2 s
+  apart so he doesn't pop in and out.
+- **No corner over B-roll.** Him in the corner over full-screen B-roll "just
+  looks weird". Slide him off for B-roll the same way, and move the Camera
+  track above B-roll (`moveTrack`) so the slide shows.
+- **Phone footage goes in a phone, not full screen.** "Put the footage in a
+  mobile phone, have it sliding in from the side... not complete takeover
+  the screen". A landscape phone frame PNG (transparent screen, dynamic
+  island, soft shadow) on Graphics over the clip on B-roll, the clip scaled
+  and cropped to the screen hole, both sliding in from the right with the
+  same position keyframes and out to the left, over the screen recording.
+- **Show each source as he lists it.** "Phone video... satellite... drone
+  photos... surveying... 2D drawing" got a shot each, from his project
+  archive (`~/dev/me/the-pool`). Crop plans and surveys to the drawing:
+  their title blocks carry his address and the designer's phone and email.
 
 ## Rules
 

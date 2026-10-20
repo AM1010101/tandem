@@ -39,7 +39,9 @@ public enum EditCommand: Codable, Equatable, Sendable {
     /// file), and `duration` defaults to all the media that's left.
     /// Stickers sit at the bottom of the frame at a sensible size instead of
     /// filling it; `anchor` puts one (or any other picture) at another edge
-    /// or corner, and `pop` pops it in and out.
+    /// or corner, and `pop` pops it in and out. `speed` plays it faster or
+    /// slower (the linked sound too, pitch corrected as `setSpeed` does);
+    /// `duration` is then the length on the timeline.
     case placeMedia(
         mediaIDs: [String],
         at: Time,
@@ -50,7 +52,8 @@ public enum EditCommand: Codable, Equatable, Sendable {
         audioTrackID: String? = nil,
         includeAudio: Bool? = nil,
         anchor: StickerAnchor? = nil,
-        pop: Bool? = nil
+        pop: Bool? = nil,
+        speed: Double? = nil
     )
     /// `.place` (the default) fails if the range is occupied, `.overwrite`
     /// replaces what's there, `.insert` pushes later clips right.
@@ -71,6 +74,8 @@ public enum EditCommand: Codable, Equatable, Sendable {
     /// `.cut` track has something in that gap.
     case closeGap(trackID: String, at: Time)
     /// Opens up empty time at `at`, pushing everything later to the right.
+    /// A marker right at `at` stays there. An `at` within half a frame of
+    /// a cut goes on the cut.
     case insertTime(at: Time, duration: Time, trackIDs: [String]? = nil)
     /// Expands a template (section card, call to action) into linked clips
     /// at `at`, filling `{{field}}` placeholders from `values`. Media the
@@ -114,7 +119,9 @@ public enum EditCommand: Codable, Equatable, Sendable {
 
     /// Splits clips at a time. With `clipIDs` only those clips (and their
     /// linked partners) are cut. Otherwise every clip under `at` on the given
-    /// tracks, or on all targeted unlocked tracks.
+    /// tracks, or on all targeted unlocked tracks. A clip cut earlier in the
+    /// batch is followed to its piece at `at`; a clip with nothing at `at`
+    /// fails, saying where it is.
     case blade(at: Time, trackIDs: [String]? = nil, clipIDs: [String]? = nil)
     /// Joins a through-edit, the opposite of a blade: `clipID` and the clip
     /// right after it on its track become one clip, when they play one

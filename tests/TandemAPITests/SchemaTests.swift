@@ -98,7 +98,7 @@ final class SchemaTests: XCTestCase {
                 soundIn: SectionCardSound(mediaID: "med_in", gainDB: -5.4, offset: t(0)), soundOut: SectionCardSound(mediaID: "med_out", gainDB: -8.3, offset: t(0.1)),
                 cuts: ["mk_a": t(2.9)]
             ),
-            .placeMedia(mediaIDs: ["med_a"], at: t(1), sourceStart: t(2), duration: t(3), mode: .insert, videoTrackID: "trk_v", audioTrackID: "trk_a", includeAudio: false),
+            .placeMedia(mediaIDs: ["med_a"], at: t(1), sourceStart: t(2), duration: t(3), mode: .insert, videoTrackID: "trk_v", audioTrackID: "trk_a", includeAudio: false, speed: 1.5),
             .moveClips(clipIDs: ["clip_a"], delta: t(1), toTrackID: "trk_b", includeLinked: false, mode: .overwrite),
             .trim(clipID: "clip_a", edge: .start, to: t(2), ripple: false, includeLinked: false),
             .setSpeed(clipID: "clip_a", speed: 2, ripple: true, includeLinked: false),

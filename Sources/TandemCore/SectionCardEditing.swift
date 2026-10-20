@@ -266,7 +266,7 @@ extension Editing {
                 let room = Time.frames((reveal - cut).frameIndex(at: rate), at: rate)
                 if room > .zero {
                     removeTransitions(onCutAt: cut, in: &p, &context)
-                    try insertTime(&p, at: cut, duration: room, trackIDs: nil, &context)
+                    try insertTime(&p, at: cut, duration: room, trackIDs: nil, keepingMarkersAt: false, &context)
                 }
             }
             let group = soundIn != nil || soundOut != nil ? context.makeID("lnk") : nil

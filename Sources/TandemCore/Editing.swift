@@ -33,11 +33,11 @@ public enum Editing {
             try updateMedia(&project, mediaID, patch)
         case .removeMedia(let mediaID):
             try removeMedia(&project, mediaID)
-        case .placeMedia(let mediaIDs, let at, let sourceStart, let duration, let mode, let videoTrackID, let audioTrackID, let includeAudio, let anchor, let pop):
+        case .placeMedia(let mediaIDs, let at, let sourceStart, let duration, let mode, let videoTrackID, let audioTrackID, let includeAudio, let anchor, let pop, let speed):
             try placeMedia(
                 &project, mediaIDs: mediaIDs, at: at, sourceStart: sourceStart, duration: duration,
                 mode: mode ?? .place, videoTrackID: videoTrackID, audioTrackID: audioTrackID,
-                includeAudio: includeAudio, anchor: anchor, pop: pop ?? false, &context
+                includeAudio: includeAudio, anchor: anchor, pop: pop ?? false, speed: speed, &context
             )
         case .insertClip(let trackID, let clip, let mode):
             try insertClip(&project, trackID: trackID, clip: clip, mode: mode ?? .place, &context)
@@ -155,11 +155,11 @@ public enum Editing {
             return .moveTrack(trackID: try one(trackID), index: index)
         case .updateTrack(let trackID, let patch):
             return .updateTrack(trackID: try one(trackID), patch: patch)
-        case .placeMedia(let mediaIDs, let at, let sourceStart, let duration, let mode, let videoTrackID, let audioTrackID, let includeAudio, let anchor, let pop):
+        case .placeMedia(let mediaIDs, let at, let sourceStart, let duration, let mode, let videoTrackID, let audioTrackID, let includeAudio, let anchor, let pop, let speed):
             return .placeMedia(
                 mediaIDs: mediaIDs, at: at, sourceStart: sourceStart, duration: duration, mode: mode,
                 videoTrackID: try optional(videoTrackID), audioTrackID: try optional(audioTrackID),
-                includeAudio: includeAudio, anchor: anchor, pop: pop
+                includeAudio: includeAudio, anchor: anchor, pop: pop, speed: speed
             )
         case .insertClip(let trackID, let clip, let mode):
             return .insertClip(trackID: try one(trackID), clip: clip, mode: mode)
@@ -420,6 +420,7 @@ public enum Editing {
     // MARK: - Placing clips
 
     static func insertClip(_ p: inout Project, trackID: String, clip: Clip, mode: InsertMode, _ context: inout EditContext) throws {
+        var clip = clip
         let location = try requireTrack(p, trackID)
         try requireUnlocked(p[location])
         guard !p.allIDs.contains(clip.id) else { throw EditError.invalid("ID \(clip.id) is already in use") }
@@ -434,7 +435,8 @@ public enum Editing {
         case .overwrite:
             p[location].clear(clip.range, context: &context)
         case .insert:
-            try rippleOpen(&p, at: clip.start, duration: clip.duration, edited: [trackID], &context)
+            clip.start = insertionPoint(p, at: clip.start, edited: [trackID], &context)
+            try rippleOpen(&p, at: clip.start, duration: clip.duration, edited: [trackID], keepingMarkersAt: true, &context)
         }
         p[location].add(clip)
         context.createdIDs.append(clip.id)
@@ -496,10 +498,14 @@ public enum Editing {
         includeAudio: Bool?,
         anchor: StickerAnchor? = nil,
         pop: Bool = false,
+        speed: Double? = nil,
         _ context: inout EditContext
     ) throws {
         guard !mediaIDs.isEmpty else { throw EditError.invalid("placeMedia needs at least one media ID") }
         guard at >= .zero else { throw EditError.invalid("clips can't start before 0") }
+        if let speed, !(speed > 0 && speed <= maximumSpeed) {
+            throw EditError.invalid("speed must be between 0 and \(Int(maximumSpeed))")
+        }
         let items = try mediaIDs.map { id -> MediaItem in
             guard let item = p.media(id) else { throw EditError.notFound("media \(id)") }
             return item
@@ -513,11 +519,14 @@ public enum Editing {
         for (item, start) in zip(items, starts) where start < .zero {
             throw EditError.invalid("\(item.path) starts \(-start) later in the take than the requested source start")
         }
-        let available = zip(items, starts).compactMap { item, start -> Time? in
+        let available = zip(items, starts).compactMap { item, start -> (item: MediaItem, length: Time)? in
             guard item.kind != .image, let length = item.duration else { return nil }
-            return length - start
+            return (item, length - start)
         }
-        let length = duration ?? available.min() ?? Time(seconds: 5)
+        let shortest = available.min { $0.length < $1.length }
+        // `duration` is time on the timeline, so at a speed it plays
+        // `duration * speed` of the media.
+        let length = duration ?? shortest.map { $0.length.scaled(by: 1 / (speed ?? 1)) } ?? Time(seconds: 5)
         guard length > .zero else { throw EditError.invalid("nothing left to place after the source start") }
         let range = TimeRange(start: at, duration: length)
 
@@ -550,7 +559,8 @@ public enum Editing {
                     content: .media(mediaID: item.id),
                     start: at,
                     duration: length,
-                    sourceStart: item.kind == .image ? .zero : start
+                    sourceStart: item.kind == .image ? .zero : start,
+                    speed: item.kind == .image ? 1 : speed ?? 1
                 )
                 if kind == .audio {
                     clip.audio = AudioLevels.placedAudio(role: item.role, on: p[location], settings: p.settings)
@@ -576,11 +586,22 @@ public enum Editing {
             for (location, clip) in planned { p[location].clear(clip.range, context: &context) }
         case .insert:
             let edited = Set(planned.map { p[$0.0].id })
-            try rippleOpen(&p, at: at, duration: length, edited: edited, &context)
+            let point = insertionPoint(p, at: at, edited: edited, &context)
+            for i in planned.indices { planned[i].1.start = point }
+            try rippleOpen(&p, at: point, duration: length, edited: edited, keepingMarkersAt: true, &context)
         }
         for (location, clip) in planned {
             p[location].add(clip)
             context.createdIDs.append(clip.id)
+        }
+        if duration == nil, let shortest, let longest = available.max(by: { $0.length < $1.length }),
+           longest.length - shortest.length > p.settings.frameRate.frameDuration.scaled(by: 0.5) {
+            // A take's files rarely end together. Say which one set the
+            // length, so the next edit isn't worked out from the longer one.
+            let short = URL(fileURLWithPath: shortest.item.path).lastPathComponent
+            let long = URL(fileURLWithPath: longest.item.path).lastPathComponent
+            let extra = String(format: "%.3f", (longest.length - shortest.length).seconds)
+            context.warn("Placed \(length) of the take, as far as \(short) goes (\(long) runs \(extra) s longer), so it ends at \(planned[0].1.end).")
         }
     }
 
@@ -608,12 +629,19 @@ public enum Editing {
     /// the caller has already handled or wants split. If any edited track is
     /// a `.cut` track the whole timeline moves: `.cut` tracks split, `.follow`
     /// tracks shift, `.off` tracks stay. Otherwise only the edited tracks move.
+    ///
+    /// Markers after `time` move with it. One right at `time` moves too,
+    /// unless `keepingMarkersAt`: an insert keeps it there, before the new
+    /// material, which usually belongs to the section starting there (as a
+    /// ripple delete leaves a marker at the start of what it removes). A
+    /// clip growing at its end keeps the marker on the clip after it.
     static func rippleOpen(
         _ p: inout Project,
         at time: Time,
         duration: Time,
         edited: Set<String>,
         handled: Set<String> = [],
+        keepingMarkersAt: Bool = false,
         _ context: inout EditContext
     ) throws {
         guard duration > .zero else { return }
@@ -646,10 +674,49 @@ public enum Editing {
             p[location] = track
         }
         if global {
-            for i in p.markers.indices where p.markers[i].time >= time {
+            for i in p.markers.indices where p.markers[i].time > time || (p.markers[i].time == time && !keepingMarkersAt) {
                 p.markers[i].time += duration
             }
         }
+    }
+
+    /// Where an insert asked for at `time` goes. Within half a frame of a
+    /// clip's start or end on a track it would split, it goes on that cut:
+    /// a split any closer would leave a piece under a frame long, which
+    /// nobody can see and which is almost always rounding (a time read to
+    /// the millisecond, or added up from rounded lengths). Further in, it
+    /// splits where it's told, but a piece under a quarter second either
+    /// side gets a warning saying where the clip starts or ends.
+    static func insertionPoint(_ p: Project, at time: Time, edited: Set<String>, _ context: inout EditContext) -> Time {
+        let global = edited.contains { p.track($0)?.rippleMode == .cut }
+        let tracks = p.allTracks.filter { track in
+            !track.locked && (edited.contains(track.id) || (global && track.rippleMode == .cut))
+        }
+        let clips = tracks.flatMap(\.clips)
+        let reach = p.settings.frameRate.frameDuration.scaled(by: 0.5)
+        let nearest = clips.flatMap { [$0.start, $0.end] }.min { abs(($0 - time).flicks) < abs(($1 - time).flicks) }
+        if let nearest, abs((nearest - time).flicks) <= reach.flicks { return nearest }
+        let short = Time(seconds: 0.25)
+        var reported = Set<Time>()
+        for clip in clips where clip.start < time && time < clip.end {
+            if time - clip.start < short, reported.insert(clip.start).inserted {
+                let piece = String(format: "%.3f", (time - clip.start).seconds)
+                context.warn("Inserting at \(time) leaves a \(piece) s piece of clip \(clip.id) before the inserted time: it starts at \(clip.start). Insert at \(jsonSeconds(clip.start)) to move the whole clip after it.")
+            } else if clip.end - time < short, reported.insert(clip.end).inserted {
+                let piece = String(format: "%.3f", (clip.end - time).seconds)
+                context.warn("Inserting at \(time) leaves a \(piece) s piece of clip \(clip.id) after the inserted time: it ends at \(clip.end). Insert at \(jsonSeconds(clip.end)) to keep the whole clip before it.")
+            }
+        }
+        return time
+    }
+
+    /// A time as seconds the way JSON writes it (to the microsecond), to
+    /// paste into a command.
+    static func jsonSeconds(_ time: Time) -> String {
+        var text = String(format: "%.6f", time.seconds)
+        while text.hasSuffix("0") { text.removeLast() }
+        if text.hasSuffix(".") { text.removeLast() }
+        return text
     }
 
     /// Removes `range` for a ripple edit. `cut` tracks lose the range. If any
@@ -782,7 +849,9 @@ public enum Editing {
         try rippleRemove(&p, TimeRange(start: start, end: end), cut: [trackID], strict: true, &context)
     }
 
-    static func insertTime(_ p: inout Project, at: Time, duration: Time, trackIDs: [String]?, _ context: inout EditContext) throws {
+    /// `keepingMarkersAt` false is for a section card's room, where the
+    /// marker moves on with the section it starts.
+    static func insertTime(_ p: inout Project, at: Time, duration: Time, trackIDs: [String]?, keepingMarkersAt: Bool = true, _ context: inout EditContext) throws {
         guard duration > .zero else { throw EditError.invalid("duration must be positive") }
         let edited: Set<String>
         if let trackIDs {
@@ -791,7 +860,8 @@ public enum Editing {
         } else {
             edited = Set(p.allTracks.filter { $0.rippleMode == .cut }.map(\.id))
         }
-        try rippleOpen(&p, at: at, duration: duration, edited: edited, &context)
+        let point = insertionPoint(p, at: at, edited: edited, &context)
+        try rippleOpen(&p, at: point, duration: duration, edited: edited, keepingMarkersAt: keepingMarkersAt, &context)
     }
 
     // MARK: - Cutting and trimming
@@ -799,7 +869,8 @@ public enum Editing {
     static func blade(_ p: inout Project, at: Time, trackIDs: [String]?, clipIDs: [String]?, _ context: inout EditContext) throws {
         var targets: [String] = []
         if let clipIDs {
-            targets = try expand(p, clipIDs, includeLinked: true)
+            let pieces = try clipIDs.compactMap { try piece(of: $0, at: at, in: p, context) }
+            targets = try expand(p, pieces, includeLinked: true)
         } else {
             let locations: [TrackLocation]
             if let trackIDs {
@@ -828,6 +899,36 @@ public enum Editing {
             if p[location].split(at: at, context: &context) != nil { cutCount += 1 }
         }
         if cutCount == 0 { context.warn("Nothing to cut at \(at).") }
+    }
+
+    /// The piece of clip `id` to blade at `time`. A cut keeps the left
+    /// piece's ID, so after cutting a clip once in a batch a later time is
+    /// in a piece with a new ID; this follows the pieces cut from `id` in
+    /// the batch. Nil when `time` is already a cut between pieces. Throws,
+    /// saying where the clip is, when none of it is at `time`, rather than
+    /// quietly cutting nothing.
+    static func piece(of id: String, at time: Time, in p: Project, _ context: EditContext) throws -> String? {
+        func descends(_ clip: String) -> Bool {
+            var origin = context.cutFrom[clip]
+            var steps = 0
+            while let found = origin, steps < 10_000 {
+                if found == id { return true }
+                origin = context.cutFrom[found]
+                steps += 1
+            }
+            return false
+        }
+        let family = ([id] + context.cutFrom.keys.filter(descends))
+            .compactMap { p.clip($0) }
+            .sorted { $0.start < $1.start }
+        guard !family.isEmpty else { throw EditError.notFound("clip \(id)") }
+        if let clip = family.first(where: { $0.start < time && time < $0.end }) { return clip.id }
+        if family.contains(where: { $0.start == time || $0.end == time }) { return nil }
+        let spans = family.map { "\($0.start) to \($0.end)" }
+        let place = family.count == 1
+            ? "runs from \(spans[0])"
+            : "and the pieces cut from it in this batch run from \(spans.joined(separator: ", "))"
+        throw EditError.invalid("clip \(id) \(place), so there's nothing of it at \(time) to cut. Blade by trackIDs, or name the clip that's there")
     }
 
     static func trim(_ p: inout Project, clipID: String, edge: ClipEdge, to: Time, ripple: Bool, includeLinked: Bool, _ context: inout EditContext) throws {

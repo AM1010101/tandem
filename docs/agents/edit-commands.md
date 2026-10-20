@@ -50,7 +50,7 @@ removes a field. A range is always an object under its own key (`"range":
 | | `cutRanges` | cut many stretches, all in the times you read |
 | | `closeGap` | close the gap on a track at a time |
 | | `insertTime` | open up empty time ([below](#inserttime)) |
-| Cutting | `blade` | cut clips at a time |
+| Cutting | `blade` | cut clips at a time ([below](#blade)) |
 | | `join` | join one through-edit ([below](#join)) |
 | | `joinThroughEdits` | join every through-edit in a range |
 | | `trim` | move a clip edge, optionally rippling |
@@ -99,6 +99,17 @@ linked. A sound effect placed where SFX is taken goes on SFX 2 (or the next
 free SFX track, made when there's none) instead of failing, unless you name
 the track with `audioTrackID`. B-roll is silent unless you pass
 `"includeAudio": true`.
+
+A take is placed as long as its shortest file runs (from `sourceStart`),
+with a warning saying which file that was when they differ, so work the
+next edit out from where the clips end, not from the longer file's length.
+`speed` places it faster or slower in one go, sound and all, the way
+`setSpeed` would; with `duration` too, `duration` is the length on the
+timeline, so 9.6 s of B-roll at 1.5x fills a 6.4 s gap:
+
+```json
+{"placeMedia": {"mediaIDs": ["med_broll"], "at": 312.4, "duration": 6.4, "speed": 1.5}}
+```
 
 Sound gets Mike's levels: speech (a camera's sound, files with no clearer
 role such as a rendered intro, and anything placed on a take track like
@@ -189,10 +200,33 @@ Cut tracks are split at `at` and everything from there moves later. On
 follow tracks only clips starting at or after `at` move: a clip spanning it
 (a music bed, a B-roll shot) stays where it is, isn't cut, and keeps playing
 across the new time, ending where it did. Off tracks and locked tracks
-don't move (a locked one warns). Markers at or after `at` move. Time opened
-right on a cut parts its two clips, so a transition between them goes, with
-a warning. `trackIDs` names the tracks to split and open up instead of the
-cut tracks; when none of them is a cut track, nothing else moves.
+don't move (a locked one warns). Time opened right on a cut parts its two
+clips, so a transition between them goes, with a warning. `trackIDs` names
+the tracks to split and open up instead of the cut tracks; when none of
+them is a cut track, nothing else moves.
+
+Markers after `at` move. A marker right at `at` stays there, at the start
+of the new time, because what goes in usually belongs to the section that
+starts there; a ripple delete leaves a marker at the start of what it
+removes for the same reason. Inserting with `placeMedia`, `insertClip` or
+`insertTemplate` (`"mode": "insert"`) works the same way. Edits that grow a
+clip at its end (a ripple trim, `setSpeed` slower with `ripple`) still take
+a marker at that end along with the clip after it, and a section card's
+room (`addSectionCards` with `insert`) moves its marker on with the section.
+
+An `at` within half a frame of a clip's start or end on a track it splits
+goes on that cut, so a time read to the millisecond doesn't leave a sliver.
+Further inside a clip it splits where you said, and a piece under a quarter
+second either side of the insert gets a warning with the clip's own start
+or end to use instead.
+
+## blade
+
+With `clipIDs`, a clip already cut earlier in the batch is followed to the
+piece of it at `at` (a cut keeps the left piece's ID and gives the right
+one a new one), so blading one clip at several times works in any order.
+A clip with nothing at `at` fails, saying where it is; one ending or
+starting exactly at `at` is already cut there, which only warns.
 
 ## join
 

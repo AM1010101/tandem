@@ -567,7 +567,8 @@ extension CommandSchema {
                 "mediaIDs": S.ids("One file, or the files of one take."),
                 "at": S.time("Timeline time to place at."),
                 "sourceStart": S.time("Where to start in the take (or file), in seconds. Default: where all files have started."),
-                "duration": S.time("Default: all the media that's left."),
+                "duration": S.time("Length on the timeline. Default: all the media that's left (at speed, played at that speed)."),
+                "speed": S.number("Play it at this speed, like setSpeed: 1.5 fits 9.6 s of media into 6.4 s. The linked sound plays at the same speed, pitch corrected. Default 1.", minimum: 0, maximum: Editing.maximumSpeed),
                 "mode": insertMode,
                 "videoTrackID": S.track("Force the video track (single file only)."),
                 "audioTrackID": S.track("Force the audio track (single file only)."),
@@ -652,8 +653,8 @@ extension CommandSchema {
         ),
         Entry(
             command: .blade,
-            summary: "Cuts clips at a time. With clipIDs only those clips (and their linked partners); otherwise every clip under the time on the given tracks, or on all targeted tracks.",
-            arguments: S.object(["at": S.time(), "trackIDs": S.tracks("Only these tracks."), "clipIDs": S.ids("Only these clips.")], required: ["at"]),
+            summary: "Cuts clips at a time. With clipIDs only those clips (and their linked partners); otherwise every clip under the time on the given tracks, or on all targeted tracks. A clip cut earlier in the same batch is followed to the piece of it at the time, and a clip with nothing at the time fails, saying where it is.",
+            arguments: S.object(["at": S.time(), "trackIDs": S.tracks("Only these tracks."), "clipIDs": S.ids("Only these clips. Blading one clip at several times in a batch works in any order.")], required: ["at"]),
             example: #"{"blade": {"at": 12.5}}"#
         ),
         Entry(

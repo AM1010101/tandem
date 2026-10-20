@@ -629,10 +629,14 @@ What he changed, in the order he asked:
 
 ## Rules
 
-- Insert at a cut's exact time, read from the clip (`start + duration`), not
-  a frame-rounded one. Mike's own cuts aren't always on a frame, and a
-  `placeMedia` insert 0.7 ms off one left a 1 ms sliver of the old clip on
-  every take track (Muse Wonder).
+- Insert at a cut's exact time, read from the clips (`start + duration`),
+  not added up from file lengths. Tandem puts an insert within half a frame
+  of a cut on the cut, but further in it splits the clip: a take placed as
+  long as its camera file (282.045 s), not its screen file (282.1 s), so an
+  insert at the sum left a 55 ms sliver of the next clip (the Tandem
+  video). Read the warnings: placing a take says which file set its
+  length, and an insert that leaves a piece under a quarter second says
+  where the clip really starts.
 - Build ffmpeg input lists explicitly. In zsh an unquoted `$LIST` isn't
   split, so `-i $f` swallowed the whole list and ffmpeg took the other
   names as outputs and overwrote five B-roll stills with `-y`.

@@ -229,7 +229,9 @@ extension Editing {
             for (location, clip) in planned { p[location].clear(clip.range, context: &context) }
         case .insert:
             let edited = Set(planned.map { p[$0.0].id })
-            try rippleOpen(&p, at: at, duration: template.duration, edited: edited, &context)
+            let point = insertionPoint(p, at: at, edited: edited, &context)
+            for i in planned.indices { planned[i].1.start += point - at }
+            try rippleOpen(&p, at: point, duration: template.duration, edited: edited, keepingMarkersAt: true, &context)
         }
         for (location, clip) in planned {
             p[location].add(clip)

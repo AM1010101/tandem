@@ -9,7 +9,7 @@ public enum CommandCase: String, CaseIterable, Codable, Sendable {
     case updateProject, updateSettings, addTrack, removeTrack, moveTrack, updateTrack
     case addMedia, updateMedia, removeMedia
     case placeMedia, insertClip, removeClips, rippleDeleteRange, cutRanges, closeGap, insertTime, insertTemplate, addSectionCards, fitSectionCards
-    case blade, join, joinThroughEdits, trim, roll, slip, slide, setSpeed
+    case blade, join, joinThroughEdits, trim, roll, slip, slide, holdFrame, setSpeed
     case moveClips, updateClip, link, unlink, applyLayout, zoomToRegion, setFormatLayout, adoptFormat, addMotion
     case addTransition, updateTransition, removeTransition
     case addEffect, updateEffect, removeEffect, moveEffect, setKeyframes
@@ -46,6 +46,7 @@ extension EditCommand {
         case .roll: return .roll
         case .slip: return .slip
         case .slide: return .slide
+        case .holdFrame: return .holdFrame
         case .setSpeed: return .setSpeed
         case .moveClips: return .moveClips
         case .updateClip: return .updateClip
@@ -110,6 +111,7 @@ public enum CommandText {
         case .roll: return "Roll edit"
         case .slip: return "Slip clip"
         case .slide: return "Slide clip"
+        case .holdFrame(_, let range): return "Hold the frame before \(range.start)"
         case .setSpeed(_, let speed, _, _): return "Speed \(number(speed))x"
         case .moveClips(let ids, _, _, _, _): return "Move \(count(ids.count, "clip"))"
         case .updateClip: return "Update clip"

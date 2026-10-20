@@ -147,6 +147,12 @@ public enum EditCommand: Codable, Equatable, Sendable {
     case slip(clipID: String, delta: Time, includeLinked: Bool? = nil)
     /// Moves a clip between its neighbours, trimming them to compensate.
     case slide(clipID: String, delta: Time)
+    /// Holds the frame `clipID` shows a frame before `range` over `range`
+    /// (timeline times inside the clip), to cover a flash: a stale frame,
+    /// or the preview jumping for a frame as Mike clicked. Picture only:
+    /// just this clip is cut, the held piece is a freeze frame, and every
+    /// piece stays linked to the take, whose sound plays on uncut.
+    case holdFrame(clipID: String, range: TimeRange)
     /// Changes speed but keeps the same media, so the clip gets shorter or
     /// longer. Linked clips change with it.
     case setSpeed(clipID: String, speed: Double, ripple: Bool? = nil, includeLinked: Bool? = nil)

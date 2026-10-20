@@ -264,6 +264,35 @@ final class EditorBehaviourTests: XCTestCase {
         XCTAssertFalse(voice.contains("Freeze frame"), voice)
     }
 
+    // MARK: - Holding the frame before a flash
+
+    func testHoldPreviousFrameOnAClipsMenuCoversAFlashAtThePlayhead() throws {
+        // The screen recording's preview jumps for the frame at 10 s.
+        editor.model.playback.seek(to: t(10))
+        let screen = editor.clip("Screen")
+        let frame = editor.project.settings.frameRate.frameDuration
+        let at = editor.point(of: screen.id, at: 30)
+        let menu = try editor.menu(at: at)
+        XCTAssertTrue(menu.components(separatedBy: "\n").contains("Hold previous frame"), menu)
+        editor.choose("Hold previous frame", at: at)
+
+        XCTAssertEqual(editor.clips("Screen").map(\.start), [t(0), t(10), t(10) + frame])
+        let held = editor.clip("Screen", 1)
+        XCTAssertTrue(held.freezeFrame)
+        XCTAssertEqual(held.duration, frame)
+        XCTAssertEqual(held.sourceStart, screen.sourceTime(atTimelineTime: t(10) - frame), "the frame before the flash")
+        XCTAssertEqual(editor.clips("Camera").count, 1, "only the screen is cut")
+        XCTAssertEqual(editor.clips("Voice").count, 1, "the sound plays on")
+        XCTAssertEqual(Set(editor.clips("Screen").map(\.linkGroup)), [editor.clip("Voice").linkGroup], "still linked to the take")
+        XCTAssertEqual(editor.model.selection, [held.id])
+        XCTAssertEqual(editor.model.undoLabel, "Hold previous frame")
+
+        // At the very start of a clip there's no frame of it before.
+        editor.model.playback.seek(to: .zero)
+        let start = try editor.menu(at: editor.point(of: editor.clip("Camera").id, at: 5))
+        XCTAssertTrue(start.components(separatedBy: "\n").contains("Hold previous frame (off)"), start)
+    }
+
     // MARK: - Speed
 
     /// A modal alert can't be clicked here, so the test answers Custom…'s

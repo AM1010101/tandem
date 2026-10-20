@@ -11,7 +11,13 @@ their own beside it, and reports, with the clips on screen there:
 
 - black frames, and gaps with nothing on any video track;
 - flickers: one to three frames unlike the frames either side, like a
-  stale still or a frame of the wrong shot;
+  stale still or a frame of the wrong shot. Where the flicker is inside one
+  clip of a video and the check can tell which picture flashed (the only
+  video there, or the screen recording when its own scan flickers too),
+  it comes with the `holdFrame` that holds the frame before it over it, as
+  Mike fixed a one-frame jump in a screen recording in the Tandem video;
+  the last line is a `tandem apply` that makes them all. One at a cut is
+  usually a frame of the wrong shot: trim it instead;
 - green screen that didn't key, and flat white blocks that come and go
   (a key or matte that failed);
 - as notes that don't fail it:
@@ -44,11 +50,29 @@ their own beside it, and reports, with the clips on screen there:
     rate, or a gap that short between two clips on a track, on any track.
     They're usually rounding left by a batch: delete the clip, or trim a
     neighbour to close the gap.
+  - low frame rates: a screen recording the viewer sees (not under
+    full-frame B-roll or the camera full frame) playing fewer than 12
+    frames a second on the timeline, and under half the project's, for a
+    second or more while its picture moves. macOS records the screen as it
+    changes, so a recording's rate drops (to 4 to 7 fps while Mike was
+    away from his desk in the Tandem video). A still page or a blinking
+    caret at 4 fps looks the same as at 60, so those don't count. The rate
+    is the file's own frame times (read from its sample table, cached per
+    file) at the clip's speed, so a slowed-down clip can be low too. Cover
+    it: Mike went full screen on his camera over it; B-roll works too, or
+    cut it.
 
 Run `tandem check --changed` before handing an edit back: it checks only
 what agents changed that's waiting for Mike's review, half a second either
 side. It exits 1 when it finds a problem; notes never fail it. `--quick`
-skips rendering, so it only finds gaps, soft pictures and slivers.
+skips rendering, so it only finds gaps, soft pictures, slivers and nothing
+that needs the screen recordings scanned (page changes, low frame rates).
+
+It renders the timeline in 10 s pieces, several at once, and keeps what it
+measured in each in `.tandem/cache/check`. A piece is rendered again only
+when something that draws in it changed (a clip, a transition near it,
+the project's settings, a file or its proxy or matte becoming ready), so
+the next check after a fix renders just the pieces the fix touched.
 
 ```
 Checked 05:40.000-06:11.000 (930 frames) in 0.9 s: 1 problem:

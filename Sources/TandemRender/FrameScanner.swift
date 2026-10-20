@@ -13,6 +13,14 @@ import TandemCore
 public enum FrameScanner {
     /// Tiles across the frame; rows keep them about square (18 for 16:9).
     static let columns = 32
+    /// Stretches are read in pieces this long, on the same grid as the
+    /// check's cache (`QualityCheck.pieces`), several at once: one reader
+    /// decodes and composes a frame at a time, which leaves the media engine
+    /// and the GPU idle much of the time. A piece starts from the keyframe
+    /// before it, a fraction of a second of proxy.
+    public static let pieceLength = Time(seconds: 10)
+    /// How many pieces are read at once.
+    static var readers: Int { max(2, min(4, ProcessInfo.processInfo.activeProcessorCount / 3)) }
 
     /// Every frame of `ranges`, rendered `width` wide and measured. With
     /// `scanlines`, each frame's lines are measured too (in
@@ -27,13 +35,35 @@ public enum FrameScanner {
         let tracks = try await built.composition.loadTracks(withMediaType: .video)
         guard !tracks.isEmpty else { return [] }
         let timeline = TimeRange(start: .zero, end: built.duration)
-        var stats: [FrameStats] = []
-        for range in ranges {
-            guard let wanted = range.intersection(timeline), wanted.duration > .zero else { continue }
+        let wanted = ranges.compactMap { $0.intersection(timeline) }.filter { $0.duration > .zero }
+        let pieces = QualityCheck.pieces(of: wanted, every: pieceLength)
+        let source = Unchecked((built: built, tracks: tracks))
+        return try await inParallel(pieces, limit: readers) { piece in
             try Task.checkCancellation()
-            stats += try await read(built, tracks: tracks, range: wanted, scanlines: scanlines)
+            return try await read(source.value.built, tracks: source.value.tracks, range: piece, scanlines: scanlines)
         }
-        return stats
+    }
+
+    /// `body` over each of `pieces`, `limit` at a time, joined in order.
+    static func inParallel<T: Sendable>(_ pieces: [TimeRange], limit: Int, _ body: @escaping @Sendable (TimeRange) async throws -> [T]) async throws -> [T] {
+        try await withThrowingTaskGroup(of: (Int, [T]).self) { group in
+            var results = [[T]](repeating: [], count: pieces.count)
+            var next = 0
+            while next < min(max(1, limit), pieces.count) {
+                let index = next
+                group.addTask { (index, try await body(pieces[index])) }
+                next += 1
+            }
+            while let (index, result) = try await group.next() {
+                results[index] = result
+                if next < pieces.count {
+                    let more = next
+                    group.addTask { (more, try await body(pieces[more])) }
+                    next += 1
+                }
+            }
+            return results.flatMap { $0 }
+        }
     }
 
     /// Reads one stretch on a thread of its own: the reader blocks.

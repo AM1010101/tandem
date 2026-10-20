@@ -100,6 +100,70 @@ final class QualityCheckTests: XCTestCase {
         XCTAssertTrue(QualityCheck.frameProblems(frames([40, 80, 120, 160, 200, 240]), in: shot).isEmpty, "steady change")
     }
 
+    // MARK: Holding the frame before a flicker
+
+    private let screenMedia = MediaItem(id: "med_screen", path: "source/take-screen.mov", kind: .video, role: .screen, duration: t(120), width: 3840, height: 2160, hasVideo: true)
+    private let cameraMedia = MediaItem(id: "med_camera", path: "source/take-camera.mov", kind: .video, role: .camera, duration: t(120), width: 3840, height: 2160, hasVideo: true)
+
+    /// The screen recording on V1 from 0 to 60 (10 s into its file), with
+    /// the camera over it on V2 when asked.
+    private func recording(camera: Bool = false, cutAt: Double? = nil) -> Project {
+        var screens = [Clip(id: "clip_s", content: .media(mediaID: "med_screen"), start: .zero, duration: t(60), sourceStart: t(10))]
+        if let cutAt {
+            screens = [
+                Clip(id: "clip_s", content: .media(mediaID: "med_screen"), start: .zero, duration: t(cutAt), sourceStart: t(10)),
+                Clip(id: "clip_s2", content: .media(mediaID: "med_screen"), start: t(cutAt), duration: t(60 - cutAt), sourceStart: t(80))
+            ]
+        }
+        var p = project(screens, media: [screenMedia, cameraMedia])
+        if camera {
+            p.videoTracks.insert(Track(id: "trk_v2", kind: .video, name: "V2", clips: [
+                Clip(id: "clip_c", content: .media(mediaID: "med_camera"), start: .zero, duration: t(60), sourceStart: t(10))
+            ]), at: 1)
+        }
+        return p
+    }
+
+    private func check(_ p: Project, _ composite: [FrameStats], screen: [FrameStats]? = nil) -> [CheckProblem] {
+        QualityCheck.problems(in: p, ranges: [TimeRange(start: t(1), end: t(2))], frames: composite, screenFrames: screen)
+            .filter { $0.kind == .flicker }
+    }
+
+    func testAFlickerInOneClipCarriesTheHoldThatFixesIt() {
+        let found = check(recording(), frames([100, 100, 100, 200, 100, 100], from: 1))
+        XCTAssertEqual(found.count, 1)
+        let flash = TimeRange(start: t(1) + Time(seconds: 3.0 / 30), duration: FrameRate.fps30.frameDuration)
+        XCTAssertEqual(found.first?.fix, .holdFrame(clipID: "clip_s", range: TimeRange(start: found[0].start, end: found[0].end)))
+        XCTAssertEqual(found.first?.start.seconds ?? 0, flash.start.seconds, accuracy: 0.0001)
+        XCTAssertTrue(found.first?.message.contains("Hold the frame before it") == true, found.first?.message ?? "")
+    }
+
+    func testTheHoldGoesOnTheScreenRecordingWhenThatsWhatFlashes() {
+        let composite = frames([100, 100, 100, 200, 100, 100], from: 1)
+        let screen = frames([60, 60, 60, 160, 60, 60], from: 1)
+        XCTAssertEqual(check(recording(camera: true), composite, screen: screen).first?.fix?.holdClipID, "clip_s", "the screen flashes on its own too")
+        let steady = frames([60, 60, 60, 60, 60, 60], from: 1)
+        XCTAssertEqual(check(recording(camera: true), composite, screen: steady).first?.fix?.holdClipID, "clip_c", "the screen doesn't, so it's the camera")
+        XCTAssertNil(check(recording(camera: true), composite).first?.fix, "with no screen scan, either could be it")
+    }
+
+    func testNoHoldForAFlickerAtACutOrOnASolid() {
+        // The flash is the first frame of the next clip.
+        let cut = 1 + 3.0 / 30
+        XCTAssertNil(check(recording(cutAt: cut), frames([100, 100, 100, 200, 100, 100], from: 1)).first?.fix)
+        let solid = check(shot, frames([100, 100, 100, 200, 100, 100], from: 1))
+        XCTAssertEqual(solid.count, 1)
+        XCTAssertNil(solid.first?.fix, "a solid has no frame before to hold")
+    }
+
+    func testStretchesAreCutOnAFixedGrid() {
+        let pieces = QualityCheck.pieces(of: [TimeRange(start: t(5), end: t(27)), TimeRange(start: t(26), end: t(31)), TimeRange(start: t(40), end: t(40))], every: t(10))
+        XCTAssertEqual(pieces, [
+            TimeRange(start: t(5), end: t(10)), TimeRange(start: t(10), end: t(20)), TimeRange(start: t(20), end: t(30)), TimeRange(start: t(30), end: t(31))
+        ], "joined first, cut at multiples of 10 s, nothing empty")
+        XCTAssertEqual(QualityCheck.pieces(of: [TimeRange(start: t(10), end: t(20))], every: t(10)), [TimeRange(start: t(10), end: t(20))])
+    }
+
     func testAFlashOfBlackIsReportedOnceAsBlack() {
         let found = QualityCheck.frameProblems(frames([100, 100, 0, 100, 100]), in: shot)
         XCTAssertEqual(found.map(\.kind), [.black], "not a flicker as well")
@@ -164,5 +228,12 @@ final class QualityCheckTests: XCTestCase {
             ReviewEntry(revision: 3, label: "One more", author: "claude", date: Date(), changes: one)
         ])
         XCTAssertEqual(log.changedRegions(in: p), [TimeRange(start: .zero, end: t(20)), TimeRange(start: t(40), end: t(45))])
+    }
+}
+
+private extension EditCommand {
+    var holdClipID: String? {
+        if case .holdFrame(let clipID, _) = self { return clipID }
+        return nil
     }
 }

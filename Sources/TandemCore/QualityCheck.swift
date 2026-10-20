@@ -32,12 +32,15 @@ public struct CheckProblem: Codable, Equatable, Sendable {
         /// The voice runs right up to a cut in its file: a word is clipped
         /// (`tandem check --cuts`).
         case clippedWord
+        /// A screen recording playing at a low frame rate while its picture
+        /// moves, so it looks choppy.
+        case lowFrameRate
 
         /// Worth knowing rather than wrong: Mike signed off softer zooms on
         /// cartoon B-roll than on screen recordings, a pause can let a point
         /// land, and not every big change on screen is a page that should
         /// push. So these don't fail a check.
-        public var isNote: Bool { self == .soft || self == .deadAir || self == .pageChange || self == .sliver }
+        public var isNote: Bool { self == .soft || self == .deadAir || self == .pageChange || self == .sliver || self == .lowFrameRate }
     }
 
     public var kind: Kind
@@ -50,8 +53,11 @@ public struct CheckProblem: Codable, Equatable, Sendable {
     public var clipIDs: [String]
     /// For a clipped word, the clip edge and where to move it.
     public var cut: CutEdge?
+    /// The edit that fixes it, when the check can tell: for a flicker, the
+    /// `holdFrame` that holds the frame before it over it.
+    public var fix: EditCommand?
 
-    public init(kind: Kind, start: Time, end: Time, frames: Int? = nil, message: String, clipIDs: [String] = [], cut: CutEdge? = nil) {
+    public init(kind: Kind, start: Time, end: Time, frames: Int? = nil, message: String, clipIDs: [String] = [], cut: CutEdge? = nil, fix: EditCommand? = nil) {
         self.kind = kind
         self.start = start
         self.end = end
@@ -59,6 +65,7 @@ public struct CheckProblem: Codable, Equatable, Sendable {
         self.message = message
         self.clipIDs = clipIDs
         self.cut = cut
+        self.fix = fix
     }
 
     /// The edge of a speech clip a word is clipped at.
@@ -191,18 +198,22 @@ public enum QualityCheck {
     /// Every problem and note in `ranges`, by time. Without `frames` only
     /// the model checks run. Dead air needs `speech` as well, and page
     /// changes need `screenFrames`, the screen recordings scanned on their
-    /// own (`screenOnly`).
-    public static func problems(in project: Project, ranges: [TimeRange], frames: [FrameStats]?, screenFrames: [FrameStats]? = nil, speech: Speech? = nil) -> [CheckProblem] {
+    /// own (`screenOnly`), and low frame rates those and `frameTimes`, the
+    /// recordings' own frame times by media ID.
+    public static func problems(in project: Project, ranges: [TimeRange], frames: [FrameStats]?, screenFrames: [FrameStats]? = nil, speech: Speech? = nil, frameTimes: [String: [Time]] = [:]) -> [CheckProblem] {
         let gapProblems = gaps(in: project, ranges: ranges)
         var found = gapProblems + softPictures(in: project, ranges: ranges) + slivers(in: project, ranges: ranges)
         if let frames {
-            found += frameProblems(frames, in: project, skipping: gapProblems.map { TimeRange(start: $0.start, end: $0.end) })
+            found += holdFixes(frameProblems(frames, in: project, skipping: gapProblems.map { TimeRange(start: $0.start, end: $0.end) }), in: project, screenFrames: screenFrames)
             if let speech {
                 found += deadAir(in: project, ranges: ranges, frames: frames, speech: speech)
             }
         }
         if let screenFrames {
             found += pageChanges(in: project, ranges: ranges, screenFrames: screenFrames)
+            if !frameTimes.isEmpty {
+                found += lowFrameRates(in: project, ranges: ranges, frameTimes: frameTimes, screenFrames: screenFrames)
+            }
         }
         return found.sorted { ($0.start, $0.kind.rawValue) < ($1.start, $1.kind.rawValue) }
     }
@@ -371,6 +382,52 @@ public enum QualityCheck {
         return found
     }
 
+    /// The label for a batch of `holdFrame` fixes.
+    public static let holdLabel = "Hold the frame before each flicker"
+
+    /// Gives each flicker the `holdFrame` that covers it, when it's inside
+    /// one clip of a video file with a frame of that clip either side (so
+    /// not a frame of the wrong shot at a cut) and the check can tell which
+    /// picture flashed: the only video on screen, or with the camera over
+    /// the screen recording, the recording when its own scan
+    /// (`screenFrames`) flickers there too and the other one when it
+    /// doesn't. In the Tandem video it was the preview in a screen
+    /// recording jumping for a frame as Mike clicked.
+    static func holdFixes(_ problems: [CheckProblem], in project: Project, screenFrames: [FrameStats]?) -> [CheckProblem] {
+        let frame = project.settings.frameRate.frameDuration
+        let screens = Set(project.media.filter { $0.role == .screen }.map(\.id))
+        let screenFlickers: [TimeRange]? = screenFrames.map { frames in
+            contiguousRuns(frames, frameDuration: frame).flatMap { run in
+                flickers(Array(frames[run]), project: project, frameDuration: frame).map { TimeRange(start: $0.start, end: $0.end) }
+            }
+        }
+        // Whether the screen scan read this stretch at all.
+        func scanned(_ range: TimeRange) -> Bool {
+            guard let screenFrames else { return false }
+            return screenFrames.contains { $0.time >= range.start && $0.time < range.end }
+        }
+        return problems.map { problem in
+            guard problem.kind == .flicker else { return problem }
+            let flash = TimeRange(start: problem.start, end: problem.end)
+            let around = TimeRange(start: flash.start - frame, end: flash.end + frame)
+            var candidates = project.videoTracks.reversed().filter { !$0.hidden && !$0.locked }.compactMap { track -> Clip? in
+                guard let clip = track.clip(at: flash.start), clip.enabled, !clip.freezeFrame,
+                      clip.start <= around.start, around.end <= clip.end,
+                      let item = clip.mediaID.flatMap({ project.media($0) }), item.kind == .video, item.hasVideo else { return nil }
+                return clip
+            }
+            if let screenFlickers, scanned(flash) {
+                let screenFlashes = screenFlickers.contains { $0.overlaps(flash) }
+                candidates = candidates.filter { clip in screens.contains(clip.mediaID ?? "") == screenFlashes }
+            }
+            guard candidates.count == 1, let clip = candidates.first else { return problem }
+            var fixed = problem
+            fixed.fix = .holdFrame(clipID: clip.id, range: flash)
+            fixed.message += " Hold the frame before it: holdFrame on \(clip.id)."
+            return fixed
+        }
+    }
+
     static func unkeyed(_ frames: [FrameStats], project: Project, frameDuration: Time) -> [CheckProblem] {
         runs(of: frames.map { $0.flatGreen >= greenShare }).map { run in
             let share = run.map { frames[$0].flatGreen }.max() ?? 0
@@ -489,6 +546,25 @@ public enum QualityCheck {
         }
         if let first = start { found.append(first..<flags.count) }
         return found
+    }
+
+    /// `ranges` (joined first) cut where they cross a multiple of `every` on
+    /// the timeline, so the same stretch is always cut the same way: the
+    /// check reads the pieces side by side and keeps what it measured in
+    /// each between runs (`CheckCache`).
+    public static func pieces(of ranges: [TimeRange], every: Time) -> [TimeRange] {
+        guard every > .zero else { return merge(ranges) }
+        var pieces: [TimeRange] = []
+        for range in merge(ranges) where !range.isEmpty {
+            var start = range.start
+            while start < range.end {
+                let next = Time(flicks: (start.flicks / every.flicks + 1) * every.flicks)
+                let end = min(next, range.end)
+                pieces.append(TimeRange(start: start, end: end))
+                start = end
+            }
+        }
+        return pieces
     }
 
     /// Ranges with overlapping and touching ones joined, by start.

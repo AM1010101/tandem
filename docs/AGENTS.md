@@ -246,9 +246,10 @@ follows.
 - `tandem frame <time>`, `tandem frames --every 5 --from 1:00 --to 2:00`
   (one contact sheet) and `tandem clip <start> <end>` (a 720p review MP4)
   to look and listen; `tandem loudness --from T --to T` to measure the mix.
-- `tandem check --changed` before handing back: black frames, flickers,
-  failed keys, gaps and slivers, with notes on dead air and page changes;
-  `--cuts` finds clipped words at cuts.
+- `tandem check --changed` before handing back: black frames, flickers
+  (with a `holdFrame` fix where it can), failed keys, gaps and slivers,
+  with notes on dead air, page changes and low frame rate screen
+  recordings; `--cuts` finds clipped words at cuts.
 - `tandem diff --since <revision>` for what Mike changed since your last
   round, and `tandem comments` for the notes he left on the timeline.
 

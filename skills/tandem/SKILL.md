@@ -90,7 +90,9 @@ rounds up.
    lands late.
 4. **Check.** `tandem check --changed` before you hand back. It renders
    what you changed and finds black frames, flickers, green screen that
-   didn't key and white blocks. If you cut the take, also run
+   didn't key and white blocks. A flicker it can fix (a frame jumping in
+   a screen recording) comes with a `holdFrame`, in the `tandem apply` on
+   its last line. If you cut the take, also run
    `tandem check --changed --cuts` for words clipped at the cuts. Fix every problem it reports. Its notes
    are judgement calls, but go through each one:
    - soft zooms;
@@ -100,7 +102,10 @@ rounds up.
    - page changes with no transition: the screen recording turns to a new
      page and nothing covers it. Push it if it's a page in an explainer or
      slides (see "Page changes in an explainer or slides"); a demo button
-     that redraws the page can show up too.
+     that redraws the page can show up too;
+   - low frame rates: the screen recording moving at a few frames a second
+     (macOS recorded it slowly). Cover it with the camera full screen, as
+     Mike did in the Tandem video, or B-roll, or cut it.
 5. **Hand back.** Open the project in the app for Mike with
    `open "<video folder>/<name>.tandem"` (skip it if `tandem status` says
    the app already has it open), rather than asking him to open it. Then

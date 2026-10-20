@@ -1062,6 +1062,12 @@ final class TimelineLanesView: TimelineChildView {
             menu.add("Freeze frame", icon: Icons.command(.freezeFrame), command: freezes ? .freezeFrame : nil, enabled: freezes) {
                 model.freezeFrame(clipID: clipID)
             }
+            // At the playhead too: step onto the flash and hold the frame
+            // before it over it.
+            let holds = TimelineEdits.holdPreviousFrame(model.project, clipID: clipID, at: model.playback.time) != nil
+            menu.add("Hold previous frame", icon: "pause.rectangle", enabled: holds) {
+                model.holdPreviousFrame(clipID: clipID)
+            }
         }
         menu.add("Delete", command: .lift) { model.apply(TimelineEdits.remove(model.project, clipIDs: selection, ripple: false)) }
         menu.add("Ripple delete", command: .rippleDelete) { model.apply(TimelineEdits.remove(model.project, clipIDs: selection, ripple: true)) }

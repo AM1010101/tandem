@@ -198,6 +198,26 @@ final class CutEditTests: XCTestCase {
     }
 }
 
+final class HoldPreviousFrameEditTests: XCTestCase {
+    /// Hold previous frame, from a clip's menu: the frame the playhead is on
+    /// shows the one before it, on that clip only.
+    func testHoldsTheFrameBeforeThePlayheadOnThatClipOnly() throws {
+        let f = try AppFixture()
+        let screen = f.clip("Screen")
+        let frame = f.project.settings.frameRate.frameDuration
+        let batch = try XCTUnwrap(TimelineEdits.holdPreviousFrame(f.project, clipID: screen.id, at: t(10)))
+        XCTAssertEqual(batch.label, "Hold previous frame")
+        XCTAssertEqual(batch.commands, [.holdFrame(clipID: screen.id, range: TimeRange(start: t(10), duration: frame))])
+        try f.apply(batch)
+        XCTAssertEqual(f.track("Screen").clips.count, 3)
+        XCTAssertEqual(f.track("Camera").clips.count, 1)
+        XCTAssertEqual(f.track("Voice").clips.count, 1)
+
+        XCTAssertNil(TimelineEdits.holdPreviousFrame(f.project, clipID: f.clip("Camera").id, at: .zero), "no frame of the clip before its start")
+        XCTAssertNil(TimelineEdits.holdPreviousFrame(f.project, clipID: f.clip("Voice").id, at: t(10)), "sound has no picture")
+    }
+}
+
 final class FreezeFrameEditTests: XCTestCase {
     /// Filmora's freeze frame, for the whole picture: the camera over the
     /// screen, each cut at the playhead and holding its own frame there for

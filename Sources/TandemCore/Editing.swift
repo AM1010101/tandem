@@ -75,6 +75,8 @@ public enum Editing {
             try slip(&project, clipID, delta: delta, includeLinked: includeLinked ?? true)
         case .slide(let clipID, let delta):
             try slide(&project, clipID, delta: delta, &context)
+        case .holdFrame(let clipID, let range):
+            try holdFrame(&project, clipID: clipID, range: range, &context)
         case .setSpeed(let clipID, let speed, let ripple, let includeLinked):
             try setSpeed(&project, clipID, speed: speed, ripple: ripple ?? false, includeLinked: includeLinked ?? true, &context)
         case .moveClips(let clipIDs, let delta, let toTrackID, let includeLinked, let mode):

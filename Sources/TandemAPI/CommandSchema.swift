@@ -697,6 +697,15 @@ extension CommandSchema {
             example: #"{"slide": {"clipID": "clip_k3f9x2mq", "delta": 2}}"#
         ),
         Entry(
+            command: .holdFrame,
+            summary: "Holds the frame a clip shows a frame before range over range, to cover a flash: a stale frame, or the preview jumping for a frame in a screen recording. Picture only: just this clip is cut, the held piece is a freeze frame, and every piece stays linked to the take, whose sound plays on uncut, so nothing moves. tandem check gives one for each flicker it can fix. The held piece is the clip's own ID when range starts at the clip's start, otherwise the first ID the batch makes. Several in one clip go latest first, as a cut keeps the clip's ID on the piece before it.",
+            arguments: S.object([
+                "clipID": S.string("A clip of a video file on a video track."),
+                "range": S.ref("TimeRange")
+            ], required: ["clipID", "range"]),
+            example: #"{"holdFrame": {"clipID": "clip_k3f9x2mq", "range": {"start": 12.5, "duration": 0.033333}}}"#
+        ),
+        Entry(
             command: .setSpeed,
             summary: "Changes speed, keeping the same media, so the clip gets shorter or longer. Linked clips change with it.",
             arguments: S.object([

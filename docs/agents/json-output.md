@@ -137,3 +137,5 @@ in the order the commands made them.
 
 `tandem check --cuts --json` has `commands` (the fixes, latest first) and
 `revision`, and each problem's `cut` has `clipID`, `edge`, `to` and `fix`.
+A plain `tandem check --json` has `commands` and `revision` too when it
+can fix a flicker, and that problem's `fix` is the `holdFrame`.

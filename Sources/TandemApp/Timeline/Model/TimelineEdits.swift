@@ -274,6 +274,22 @@ enum TimelineEdits {
         return EditBatch(label: "Freeze frame", commands: commands)
     }
 
+    /// Hold previous frame (a clip's menu): the frame of `clipID` the
+    /// playhead is on shows the one before it instead, to cover a one-frame
+    /// flash like the preview jumping in a screen recording as Mike clicked.
+    /// Picture only: the sound and the clips linked to it carry on uncut
+    /// (`holdFrame`). Nil when there's no frame of the clip before it.
+    static func holdPreviousFrame(_ project: Project, clipID: String, at time: Time) -> EditBatch? {
+        guard let clip = project.clip(clipID), canFreeze(clip, in: project),
+              project.track(containingClip: clipID)?.locked == false else { return nil }
+        let frame = project.settings.frameRate.frameDuration
+        // The frame the playhead is on, allowing for a playhead a hair
+        // before a frame's start.
+        let start = Time(flicks: (time.flicks + frame.flicks / 100) / frame.flicks * frame.flicks)
+        guard start - frame >= clip.start, start + frame <= clip.end else { return nil }
+        return EditBatch(label: "Hold previous frame", commands: [.holdFrame(clipID: clipID, range: TimeRange(start: start, duration: frame))])
+    }
+
     /// Whether a clip on a video track shows a picture from a file, which a
     /// freeze holds: a video's frame (moving, or held already) or a still.
     /// Titles, graphics and solids aren't held.

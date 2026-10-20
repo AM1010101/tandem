@@ -57,6 +57,7 @@ removes a field. A range is always an object under its own key (`"range":
 | | `roll` | move the cut between two clips |
 | | `slip` | change which part of the file a clip plays |
 | | `slide` | move a clip between its neighbours |
+| | `holdFrame` | hold the frame before a flash over it, picture only (`check` gives these for flickers) |
 | | `setSpeed` | change speed, keeping the media |
 | Clips | `moveClips` | move in time or to another track |
 | | `updateClip` | any clip setting ([below](#updateclip)) |

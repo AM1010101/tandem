@@ -33,6 +33,69 @@ final class CheckAPITests: XCTestCase {
         XCTAssertTrue(text.contains("On: clip_cam1 take1-camera"), "names the clips on screen, top first: \(text)")
     }
 
+    /// Grey frames at 30 fps, one of them lighter at `flash`: not white,
+    /// just unlike its neighbours, like the preview jumping for a frame.
+    private func flicker(from start: Double, to end: Double, at flash: Double) -> [FrameStats] {
+        stride(from: start, to: end - 0.0001, by: 1.0 / 30).map { seconds in
+            let lit = abs(flash - seconds) < 0.001
+            return FrameStats(time: Time(seconds: seconds), luma: 0.4, brightestTile: 0.4, flatGreen: 0, flatWhite: 0, thumbnail: [UInt8](repeating: lit ? 160 : 100, count: 16))
+        }
+    }
+
+    func testAFlickerInTheScreenRecordingComesWithTheHoldThatFixesIt() async throws {
+        var renderer = FakeRenderer()
+        renderer.scanned = flicker(from: 0, to: 2, at: 1)
+        renderer.screenScanned = flicker(from: 0, to: 2, at: 1)
+        let h = try ServiceHarness(renderer: renderer)
+        defer { h.close() }
+        let result = try await CheckRequest(from: t(0), to: t(2)).run(on: h.service, context: h.context)
+        XCTAssertEqual(result.problems.map(\.kind), [.flicker])
+        let flash = TimeRange(start: t(1), end: t(1) + FrameRate.fps30.frameDuration)
+        let hold = EditCommand.holdFrame(clipID: "clip_scr1", range: flash)
+        XCTAssertEqual(result.problems.first?.fix, hold, "the screen recording flashes on its own, under the camera")
+        XCTAssertEqual(result.commands, [hold])
+        XCTAssertEqual(result.revision, h.service.coordinator.revision)
+        let text = result.readableText
+        XCTAssertTrue(text.contains("Hold the frame before it: holdFrame on clip_scr1."), text)
+        XCTAssertTrue(text.contains(#"Fix: tandem apply --expect \#(h.service.coordinator.revision) --label "Hold the frame before each flicker" '[{"holdFrame":"#), text)
+        let json = String(decoding: try ServiceJSON.encoder().encode(result), as: UTF8.self)
+        XCTAssertTrue(json.contains(#""commands":[{"holdFrame""#), json)
+
+        _ = try h.service.apply(ApplyRequest(label: QualityCheck.holdLabel, commands: result.commands, expectedRevision: result.revision), context: h.context)
+        let screen = try XCTUnwrap(h.service.coordinator.project.track(named: "Screen")).clips
+        XCTAssertEqual(screen.filter(\.freezeFrame).map(\.range), [flash])
+        XCTAssertEqual(h.service.coordinator.project.track(named: "Voice")?.clips.first?.range, TimeRange(start: t(0), end: t(30)), "the sound plays on uncut")
+    }
+
+    func testTheNextCheckOnlyRendersThePiecesThatChanged() async throws {
+        let renderer = FakeRenderer()
+        let h = try ServiceHarness(renderer: renderer)
+        defer { h.close() }
+        let first = try await CheckRequest(from: t(0), to: t(40)).run(on: h.service, context: h.context)
+        XCTAssertEqual(renderer.scans.all.filter { !$0.screen }.map(\.ranges), [[TimeRange(start: .zero, end: t(40))]])
+
+        let again = try await CheckRequest(from: t(0), to: t(40)).run(on: h.service, context: h.context)
+        XCTAssertEqual(renderer.scans.all.count, 2, "nothing changed, so nothing is rendered again")
+        XCTAssertEqual(again.frames, first.frames)
+        XCTAssertEqual(again.problems, first.problems)
+        XCTAssertEqual(again.notes, first.notes)
+
+        // The B-roll at 20 to 25 moves a second later: the pieces from 10 to
+        // 30 (with the margin either side for transitions) render again.
+        try h.apply(.moveClips(clipIDs: ["clip_brl1"], delta: t(1), includeLinked: false))
+        _ = try await CheckRequest(from: t(0), to: t(40)).run(on: h.service, context: h.context)
+        XCTAssertEqual(renderer.scans.all.dropFirst(2).filter { !$0.screen }.map(\.ranges), [[TimeRange(start: t(10), end: t(30))]])
+    }
+
+    func testCachedFramesReadBackExactly() throws {
+        let frames = [
+            FrameStats(time: t(1.5), luma: 0.123456789, brightestTile: 0.9, flatGreen: 0.01, flatWhite: 0.2, thumbnail: [1, 2, 3, 4], columns: 2, scanlines: [9, 8, 7]),
+            FrameStats(time: t(1.533), luma: 0, brightestTile: 0, flatGreen: 0, flatWhite: 0, thumbnail: [], columns: 1)
+        ]
+        XCTAssertEqual(CheckCache.decode(CheckCache.encode(frames)), frames)
+        XCTAssertNil(CheckCache.decode(CheckCache.encode(frames).dropLast()), "a cut-short file isn't read")
+    }
+
     /// Still 32 x 18 frames at 30 fps from `start`, and with `turn` a new
     /// page from then on, as the screen recording on its own shows it.
     private func pages(from start: Double, to end: Double, turn: Double? = nil) -> [FrameStats] {

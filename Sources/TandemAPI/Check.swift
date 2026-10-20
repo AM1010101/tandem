@@ -1,5 +1,6 @@
 import Foundation
 import TandemCore
+import TandemMedia
 import TandemRender
 
 /// `tandem check`: looks for what Mike would otherwise catch in review
@@ -57,8 +58,8 @@ public struct CheckResult: Codable, Sendable {
     /// What's wrong: black frames, gaps, flickers, keys that didn't happen.
     public var problems: [CheckProblem]
     /// Worth knowing but not wrong: pictures zoomed past their own pixels,
-    /// clips and gaps shorter than a frame, dead air, and page changes with
-    /// no transition.
+    /// clips and gaps shorter than a frame, dead air, page changes with no
+    /// transition, and screen recordings at a low frame rate where they move.
     public var notes: [CheckProblem]
     /// Names for the clips the problems mention.
     public var clipNames: [String: String]
@@ -67,8 +68,10 @@ public struct CheckResult: Codable, Sendable {
     public var warnings: [String]
     /// With `cuts`: how many cut edges on the speech tracks were checked.
     public var cuts: Int?
-    /// With `cuts`: the trims that move each clipped edge into its pause,
-    /// latest first. Pass them to `apply` with `revision`.
+    /// The edits that fix what the check can fix, latest first: with
+    /// `cuts`, the trims that move each clipped edge into its pause;
+    /// otherwise a `holdFrame` for each flicker it can tell the picture of.
+    /// Pass them to `apply` with `revision`.
     public var commands: [EditCommand]
     /// The revision the check read, for `commands`.
     public var revision: Int?
@@ -122,7 +125,7 @@ public struct CheckResult: Codable, Sendable {
         try c.encodeIfPresent(note, forKey: .note)
         if !warnings.isEmpty { try c.encode(warnings, forKey: .warnings) }
         try c.encodeIfPresent(cuts, forKey: .cuts)
-        if cuts != nil { try c.encode(commands, forKey: .commands) }
+        if cuts != nil || !commands.isEmpty { try c.encode(commands, forKey: .commands) }
         try c.encodeIfPresent(revision, forKey: .revision)
         try c.encode(ok, forKey: .ok)
     }
@@ -157,7 +160,8 @@ extension CheckResult: ReadableResult {
             encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
             let batch = (try? encoder.encode(commands)).map { String(decoding: $0, as: UTF8.self) } ?? "[]"
             let expect = revision.map { " --expect \($0)" } ?? ""
-            lines.append("Fix: tandem apply\(expect) --label \"\(CutCheck.label)\" '\(batch)'")
+            let label = cuts == nil ? QualityCheck.holdLabel : CutCheck.label
+            lines.append("Fix: tandem apply\(expect) --label \"\(label)\" '\(batch)'")
         }
         return lines.joined(separator: "\n")
     }
@@ -240,35 +244,59 @@ extension TandemService {
         }
         let screenScan = screenContext
         let screenStretches = screenRanges
+        // The screen recordings that play there, whose own frame times say
+        // where they drop to a low frame rate.
+        let recordings = screenScan == nil ? [] : project.media.filter { item in
+            item.role == .screen && item.hasVideo && project.videoTracks.contains { track in
+                !track.hidden && track.clips.contains { $0.enabled && $0.mediaID == item.id && screenStretches.contains(where: $0.range.overlaps) }
+            }
+        }
+        let projectFolder = folder
+        let cache = CheckCache(folder: folder)
+        let analysis = self.analysis
         let notices = warnings
+        let revision = coordinator.revision
         return {
             let started = Date()
             var frames: [FrameStats]?
             var screenFrames: [FrameStats]?
+            var frameTimes: [String: [Time]] = [:]
+            for item in recordings {
+                frameTimes[item.id] = await FrameTimes.read(item, in: projectFolder)
+            }
             if scans {
                 do {
                     // Side by side: the screen recording on its own reads far
                     // less than the composite (no camera, no mattes), so it's
                     // done first and adds little to the wait.
-                    async let composite = renderer.scan(context: context, ranges: toCheck, width: width, scanlines: false)
+                    // Each from the cache where nothing in a piece has
+                    // changed since the last check (`CheckCache`).
+                    async let composite = cache.scan(project: project, analysis: analysis, ranges: toCheck, width: width, scanlines: false) { ranges in
+                        try await renderer.scan(context: context, ranges: ranges, width: width, scanlines: false)
+                    }
                     if let screenScan {
-                        screenFrames = try await renderer.scan(context: screenScan, ranges: screenStretches, width: width, scanlines: true)
+                        screenFrames = try await cache.scan(project: screenScan.project, analysis: analysis, ranges: screenStretches, width: width, scanlines: true) { ranges in
+                            try await renderer.scan(context: screenScan, ranges: ranges, width: width, scanlines: true)
+                        }
                     }
                     frames = try await composite
                 } catch {
                     throw ServiceError.wrap(error)
                 }
             }
-            let found = QualityCheck.problems(in: project, ranges: toCheck, frames: frames, screenFrames: screenFrames, speech: speech)
+            let found = QualityCheck.problems(in: project, ranges: toCheck, frames: frames, screenFrames: screenFrames, speech: speech, frameTimes: frameTimes)
             var names: [String: String] = [:]
             for id in Set(found.flatMap(\.clipIDs)) {
                 guard let clip = project.clip(id) else { continue }
                 names[id] = Self.checkName(clip, in: project)
             }
+            // Latest first, so a hold that cuts a clip never takes the ID
+            // off the piece an earlier hold names.
+            let fixes = found.filter { !$0.kind.isNote }.sorted { $0.start > $1.start }.compactMap(\.fix)
             return CheckResult(
                 ranges: toCheck, frames: frames?.count ?? 0, seconds: Date().timeIntervalSince(started),
                 problems: found.filter { !$0.kind.isNote }, notes: found.filter(\.kind.isNote), clipNames: names, note: why,
-                warnings: notices
+                warnings: notices, commands: fixes, revision: fixes.isEmpty ? nil : revision
             )
         }
     }

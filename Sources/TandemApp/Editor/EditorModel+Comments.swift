@@ -100,6 +100,24 @@ extension EditorModel {
         return true
     }
 
+    /// Hold previous frame (a clip's menu): the frame at the playhead on
+    /// `clipID` shows the one before it, picture only, then picks out the
+    /// held frame.
+    @discardableResult
+    func holdPreviousFrame(clipID: String) -> Bool {
+        let time = playback.time
+        guard let batch = TimelineEdits.holdPreviousFrame(project, clipID: clipID, at: time) else {
+            show(.info, "Put the playhead on the flash, a frame or more into a video clip.")
+            return false
+        }
+        guard apply(batch) != nil else { return false }
+        if case .holdFrame(_, let range) = batch.commands.first,
+           let held = project.track(containingClip: clipID).flatMap({ $0.clip(at: range.start) }) {
+            selection = [held.id]
+        }
+        return true
+    }
+
     /// Works out what's near the playhead again, keeping the old value when
     /// nothing's changed so the sidebar doesn't redraw.
     func refreshNearPlayhead() {

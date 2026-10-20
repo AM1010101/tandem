@@ -47,4 +47,31 @@ final class FrameScannerTests: XCTestCase {
         XCTAssertEqual(frames.first?.time.seconds ?? 0, 0.5, accuracy: 0.001)
         XCTAssertTrue(QualityCheck.frameProblems(frames, in: project).isEmpty, "the jump between the two isn't a flicker")
     }
+
+    func testALongStretchIsReadInPiecesSideBySideWithEveryFrameOnce() async throws {
+        let media = try TestMedia()
+        // Grey for 24 s, with one white frame at 12 s, across the grid
+        // the pieces are cut on.
+        try await media.movie("long.mov", seconds: 24, draw: { frame, c in
+            TestMedia.fill(c, 0.4, 0.4, 0.4)
+            if frame == 360 { TestMedia.fill(c, 1, 1, 1) }
+        })
+        let clip = Clip(id: "clip_l", content: .media(mediaID: "med_l"), start: .zero, duration: t(24))
+        let project = smallProject(video: [Track(kind: .video, name: "V1", clips: [clip])], media: [media.item("med_l", "long.mov", seconds: 24)])
+        let frames = try await FrameScanner.scan(RenderContext(project: project, folder: media.projectFolder), ranges: [TimeRange(start: t(3), end: t(23))], width: 128)
+        XCTAssertEqual(frames.count, 600)
+        XCTAssertEqual(frames.first?.time.seconds ?? 0, 3, accuracy: 0.001)
+        XCTAssertTrue(zip(frames, frames.dropFirst()).allSatisfy { $1.time > $0.time }, "in order, none twice")
+        XCTAssertEqual(QualityCheck.frameProblems(frames, in: project).map(\.start.seconds), [12])
+    }
+
+    func testPiecesComeBackInOrderWhateverFinishesFirst() async throws {
+        let pieces = (0..<7).map { TimeRange(start: t(Double($0) * 10), end: t(Double($0 + 1) * 10)) }
+        let joined = try await FrameScanner.inParallel(pieces, limit: 3) { piece -> [Int] in
+            let index = Int(piece.start.seconds / 10)
+            try await Task.sleep(nanoseconds: UInt64((7 - index) * 3_000_000))
+            return [index * 2, index * 2 + 1]
+        }
+        XCTAssertEqual(joined, Array(0..<14))
+    }
 }

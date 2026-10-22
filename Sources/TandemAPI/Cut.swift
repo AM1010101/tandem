@@ -20,9 +20,18 @@ public struct CutRequest: ServiceCall {
     public static let operation = ServiceOperation.cut
     /// What to take out: phrases and timeline ranges, in any order.
     public var remove: [CutTarget]
-    /// Cut every stretch as a long false start: pause to pause even when
-    /// that brings a word of it back. A stretch's own `falseStart` wins.
-    /// Without either, stretches over 2 s are false starts.
+    /// Also take out every filler the transcript has ("um", "uh" and the
+    /// rest of `TranscriptTools.fillers`) between `from` and `to`.
+    public var fillers: Bool?
+    public var from: Time?
+    public var to: Time?
+    /// Leave in a filler with any of these times in it or in the pauses
+    /// either side of it, as tighten's protect leaves a pause alone.
+    public var protect: [Time]?
+    /// Cut every stretch asked for as a long false start: pause to pause
+    /// even when that brings a word of it back. A stretch's own
+    /// `falseStart` wins. Without either, stretches over 2 s are false
+    /// starts. Fillers on their own never are.
     public var falseStart: Bool?
     /// Make the cut. Without it this is a dry run that returns the plan.
     public var apply: Bool?
@@ -32,15 +41,35 @@ public struct CutRequest: ServiceCall {
     public var expectedRevision: Int?
 
     public init(
-        remove: [CutTarget], falseStart: Bool? = nil, apply: Bool? = nil,
+        remove: [CutTarget], fillers: Bool? = nil, from: Time? = nil, to: Time? = nil, protect: [Time]? = nil,
+        falseStart: Bool? = nil, apply: Bool? = nil,
         label: String? = nil, author: String? = nil, expectedRevision: Int? = nil
     ) {
         self.remove = remove
+        self.fillers = fillers
+        self.from = from
+        self.to = to
+        self.protect = protect
         self.falseStart = falseStart
         self.apply = apply
         self.label = label
         self.author = author
         self.expectedRevision = expectedRevision
+    }
+
+    // `remove` can be left out when it's only fillers.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        remove = try c.decodeIfPresent([CutTarget].self, forKey: .remove) ?? []
+        fillers = try c.decodeIfPresent(Bool.self, forKey: .fillers)
+        from = try c.decodeTime(.from)
+        to = try c.decodeTime(.to)
+        protect = try c.decodeTimes(.protect)
+        falseStart = try c.decodeIfPresent(Bool.self, forKey: .falseStart)
+        apply = try c.decodeIfPresent(Bool.self, forKey: .apply)
+        label = try c.decodeIfPresent(String.self, forKey: .label)
+        author = try c.decodeIfPresent(String.self, forKey: .author)
+        expectedRevision = try c.decodeIfPresent(Int.self, forKey: .expectedRevision)
     }
 
     public func run(on service: TandemService, context: CallContext) async throws -> CutResult {
@@ -92,6 +121,23 @@ public struct CutResult: Codable, Sendable {
     /// Set when the plan was applied.
     public var applied: ApplyResult?
     public var warnings: [String]
+    /// How the fillers went, with `fillers: true`.
+    public var fillers: CutFillers?
+}
+
+/// The fillers `tandem cut --fillers` found, and what became of them.
+public struct CutFillers: Codable, Equatable, Sendable {
+    /// Filler words the transcript has between from and to. One heard on
+    /// two mics is one.
+    public var found: Int
+    public var cut: Int
+    /// The ones left in, by why: a `CutPlan.Problem` (`fluent` for one in
+    /// running speech), `protected`, or `unplaced` when the sound couldn't
+    /// be read.
+    public var leftIn: [String: Int]
+    /// What the stretches with fillers in them take out, a phrase cut
+    /// with a filler included.
+    public var removed: Time
 }
 
 /// One stretch: where its cut goes, or why it's left in.
@@ -126,6 +172,8 @@ public struct CutStretch: Codable, Equatable, Sendable {
     /// (or this much sound, with no transcript).
     public var falseStart: Bool
     public var broughtBack: String?
+    /// How many fillers the stretch is or has in it, with `fillers: true`.
+    public var fillers: Int?
     /// Sound in the stretch asked for (or within the transcript's slack of
     /// it) that the cut keeps, because a word that stays is said on the far
     /// side of it: a word the transcript has well off, or missed.
@@ -154,8 +202,10 @@ extension CutResult: ReadableResult {
         func quoted(_ stretch: CutStretch) -> String {
             stretch.text.isEmpty ? stretch.asked : "\"\(stretch.text)\""
         }
-        if made.isEmpty {
-            lines.append(cuts.count == 1 ? "Nothing to cut:" : "Nothing to cut, none of the \(cuts.count) stretches has a pause either side:")
+        if cuts.isEmpty {
+            lines.append("No fillers to cut: the transcript has none there.")
+        } else if made.isEmpty {
+            lines.append(cuts.count == 1 ? "Nothing to cut:" : "Nothing to cut, all \(cuts.count) stretches are left in:")
         } else {
             let count = made.count == 1 ? "1 stretch" : "\(made.count) stretches"
             lines.append("Cut \(count) pause to pause (\(mode), revision \(revision)), removing \(TimeText.duration(removed)): \(durationBefore) -> \(durationAfter).")
@@ -180,6 +230,19 @@ extension CutResult: ReadableResult {
         for stretch in kept {
             lines.append("  \(stretch.start)-\(stretch.end)  \(quoted(stretch)): \(stretch.reason ?? "kept")")
         }
+        if let fillers, fillers.found > 0 {
+            var line = "Fillers: \(fillers.found) found, \(fillers.cut) cut (removing \(TimeText.duration(fillers.removed)))"
+            let left = fillers.leftIn.values.reduce(0, +)
+            if left > 0 {
+                let why: [(String, String)] = [
+                    ("fluent", "in running speech"), ("runsOn", "with the voice running on"), ("notClean", "whose join wouldn't be clean"),
+                    ("protected", "protected"), ("noSpeech", "not heard in the sound"), ("nothingLeft", "with nothing left to cut"), ("unplaced", "where the sound couldn't be read")
+                ]
+                let reasons = why.compactMap { key, text in fillers.leftIn[key].map { "\($0) \(text)" } }
+                line += ", \(left) left in (\(reasons.joined(separator: ", ")))"
+            }
+            lines.append(line + ".")
+        }
         for warning in warnings { lines.append("Warning: \(warning)") }
         if let applied {
             lines.append("Applied as revision \(applied.revision) (\"\(applied.label)\"). Undo with `tandem undo`.")
@@ -197,21 +260,28 @@ extension TandemService {
     static var cutWindow: Double { CutAudit.around + CutAudit.reach + CutPlanner.slack }
 
     public func cut(_ request: CutRequest, context: CallContext) async throws -> CutResult {
-        guard !request.remove.isEmpty else {
-            throw ServiceError(.badRequest, "Say what to cut: a phrase, like {\"remove\": [{\"phrase\": \"as I said before\"}]}, or a range with start and end.")
+        guard !request.remove.isEmpty || request.fillers == true else {
+            throw ServiceError(.badRequest, "Say what to cut: a phrase, like {\"remove\": [{\"phrase\": \"as I said before\"}]}, a range with start and end, or fillers: true.")
+        }
+        if request.fillers != true, request.from != nil || request.to != nil || request.protect != nil {
+            throw ServiceError(.badRequest, "from, to and protect say which fillers to cut, so they go with fillers: true.")
+        }
+        if let from = request.from, let to = request.to, to <= from {
+            throw ServiceError(.badRequest, "from (\(from)) has to be before to (\(to)).")
         }
         let (project, revision) = coordinator.snapshot()
         try checkExpected(request.expectedRevision, at: revision)
         let map = TranscriptTools.speechMap(project, analysis: analysis)
 
         // What each target is on the timeline.
-        var asked: [(target: CutTarget, name: String, range: TimeRange)] = []
-        for target in request.remove {
+        var asks: [CutAsk] = []
+        for (order, target) in request.remove.enumerated() {
+            let name: String, range: TimeRange
             if let phrase = target.phrase {
                 guard target.start == nil, target.end == nil else {
                     throw ServiceError(.badRequest, "Give a stretch to cut as a phrase or as start and end, not both.")
                 }
-                asked.append((target, phrase, try Self.find(phrase, at: target.at, in: map, project: project)))
+                (name, range) = (phrase, try Self.find(phrase, at: target.at, in: map, project: project))
             } else {
                 guard let start = target.start, let end = target.end else {
                     throw ServiceError(.badRequest, "Give a stretch to cut as a phrase, or as start and end.")
@@ -219,19 +289,35 @@ extension TandemService {
                 guard start >= .zero, end > start, start < project.duration else {
                     throw ServiceError(.badRequest, "Nothing to cut between \(start) and \(end): the timeline is \(project.duration) long.")
                 }
-                asked.append((target, "\(start)-\(end)", TimeRange(start: start, end: min(end, project.duration))))
+                (name, range) = ("\(start)-\(end)", TimeRange(start: start, end: min(end, project.duration)))
             }
+            let falseStart = target.falseStart ?? request.falseStart ?? (range.duration.seconds > CutPlanner.falseStartFrom)
+            asks.append(CutAsk(names: [name], range: range, order: order, falseStart: falseStart))
+        }
+        var fillersFound = 0
+        if request.fillers == true {
+            let fillers = Self.fillers(in: map, from: request.from, to: request.to, protect: request.protect ?? [])
+            fillersFound = fillers.count
+            asks = Self.joining(fillers, to: asks, words: map.words)
         }
 
         var warnings: [String] = []
         var stretches: [CutStretch] = []
         var plans: [Planned] = []
-        for (target, name, range) in asked {
-            let falseStart = target.falseStart ?? request.falseStart
-            plans.append(plan(range, falseStart: falseStart, in: project))
+        for ask in asks {
+            if let protected = ask.protected {
+                plans.append(Planned(
+                    range: ask.range, falseStart: false, keep: 0, tightenFrom: 0, removedText: ask.names.joined(separator: " "), before: "", after: "",
+                    reason: "a protect time (\(protected)) is in it or the pauses round it, so it's left in."
+                ))
+            } else {
+                var planned = plan(ask.range, falseStart: ask.falseStart, in: project)
+                planned.filled = ask.order == nil && ask.fillers > 0
+                plans.append(planned)
+            }
             stretches.append(CutStretch(
-                asked: name, text: "", start: range.start, end: range.end, status: .kept,
-                falseStart: false, before: "", after: ""
+                asked: ask.names.joined(separator: " + "), text: "", start: ask.range.start, end: ask.range.end, status: .kept,
+                falseStart: false, fillers: ask.fillers > 0 ? ask.fillers : nil, before: "", after: ""
             ))
         }
 
@@ -289,6 +375,21 @@ extension TandemService {
             durationBefore: project.duration, durationAfter: project.duration - removed,
             commands: commands, applied: nil, warnings: warnings
         )
+        if request.fillers == true {
+            var summary = CutFillers(found: fillersFound, cut: 0, leftIn: [:], removed: .zero)
+            var cut: [TimeRange] = []
+            for (ask, stretch) in zip(asks, stretches) where ask.fillers > 0 {
+                if stretch.status == .cut, let range = stretch.cut {
+                    summary.cut += ask.fillers
+                    cut.append(range)
+                } else {
+                    let why = ask.protected != nil ? "protected" : stretch.problem?.rawValue ?? "unplaced"
+                    summary.leftIn[why, default: 0] += ask.fillers
+                }
+            }
+            summary.removed = TimeRange.union(cut).reduce(.zero) { $0 + $1.duration }
+            result.fillers = summary
+        }
         guard !commands.isEmpty else { return result }
         let made = stretches.filter { $0.status == .cut }
         let label = made.count == 1
@@ -302,6 +403,83 @@ extension TandemService {
         result.warnings += applied.warnings
         if request.apply == true { result.applied = applied }
         return result
+    }
+
+    /// A stretch to plan: one asked for, fillers, or one asked for with the
+    /// fillers beside it joined on.
+    struct CutAsk {
+        /// What was asked for, then the fillers, as `TranscriptTools.filler`
+        /// names them.
+        var names: [String]
+        var range: TimeRange
+        /// Where it was asked, for the order the result lists it in; nil
+        /// for fillers on their own, which come after, in timeline order.
+        var order: Int?
+        var falseStart: Bool
+        var fillers = 0
+        /// The protect time a filler has round it, which leaves it in.
+        var protected: Time?
+    }
+
+    /// The fillers the transcript has from `from` to `to`, each its own
+    /// stretch. One heard on two mics is one.
+    static func fillers(in map: TranscriptTools.SpeechMap, from: Time?, to: Time?, protect: [Time]) -> [CutAsk] {
+        let words = map.words.sorted { $0.start < $1.start }
+        var found: [CutAsk] = []
+        for word in words {
+            guard let name = TranscriptTools.filler(word.text),
+                  from.map({ $0 <= word.start }) ?? true, to.map({ word.end <= $0 }) ?? true else { continue }
+            let range = TimeRange(start: word.start, end: word.end)
+            if let last = found.last, last.range.overlaps(range) {
+                found[found.count - 1].range = TimeRange(start: last.range.start, end: max(last.range.end, range.end))
+                continue
+            }
+            found.append(CutAsk(names: [name], range: range, order: nil, falseStart: false, fillers: 1))
+        }
+        // A protect time in a filler, or in the pause either side of it out
+        // to the next word, leaves it in: the beat it's part of is meant,
+        // as tighten's protect leaves a pause alone.
+        for index in found.indices {
+            let range = found[index].range
+            let before = words.last { $0.end <= range.start }?.end ?? .zero
+            let after = words.first { $0.start >= range.end }?.start ?? range.end
+            found[index].protected = protect.first { before <= $0 && $0 <= after }
+        }
+        return found
+    }
+
+    /// Joins each filler to the stretch beside it, a filler or one asked
+    /// for, when no word that stays is between them: "um, uh" is one cut,
+    /// not two with a sliver of pause between them, and so is "as I said,
+    /// uh". Not across more than `CutPlanner.falseStartFrom` of pause,
+    /// where sound with no word (someone off mic) would go with it.
+    /// Stretches asked for are never joined to each other.
+    static func joining(_ fillers: [CutAsk], to asked: [CutAsk], words: [TranscriptTools.SpokenWord]) -> [CutAsk] {
+        let reach = Time(seconds: CutPlanner.falseStartFrom)
+        var joined: [CutAsk] = []
+        for ask in (asked + fillers.filter { $0.protected == nil }).sorted(by: { $0.range.start < $1.range.start }) {
+            if let last = joined.last, last.fillers > 0 || ask.fillers > 0, ask.range.start - last.range.end <= reach,
+               !words.contains(where: { word in
+                   let mid = (word.start.seconds + word.end.seconds) / 2
+                   return last.range.end.seconds < mid && mid < ask.range.start.seconds
+               }), last.order == nil || ask.order == nil {
+                joined[joined.count - 1] = CutAsk(
+                    names: last.names + ask.names, range: TimeRange(start: last.range.start, end: max(last.range.end, ask.range.end)),
+                    order: last.order ?? ask.order, falseStart: last.falseStart || ask.falseStart, fillers: last.fillers + ask.fillers
+                )
+            } else {
+                joined.append(ask)
+            }
+        }
+        let protected = fillers.filter { $0.protected != nil }
+        return (joined + protected).sorted { a, b in
+            switch (a.order, b.order) {
+            case let (x?, y?): return x < y
+            case (_?, nil): return true
+            case (nil, _?): return false
+            case (nil, nil): return a.range.start < b.range.start
+            }
+        }
     }
 
     /// Where `phrase` is said on the timeline: the one match, or the one at
@@ -374,6 +552,9 @@ extension TandemService {
         var keep: Double
         /// Pauses under this are kept as they were, as tighten leaves them.
         var tightenFrom: Double
+        /// Fillers on their own are a filled pause, the minimum going by
+        /// the whole of it (`CutPlanner.plan`'s `filled`).
+        var filled = false
         var removedText: String
         var before: String
         var after: String
@@ -518,7 +699,8 @@ extension TandemService {
         }
         let plan = CutPlanner.plan(
             start: startPlacer, first.boundary, end: endPlacer, last.boundary, keep: planned.keep, tightenFrom: planned.tightenFrom,
-            falseStart: planned.falseStart, sameFile: Self.oneRun(first.clip, last.clip), snap: snap
+            falseStart: planned.falseStart, sameFile: Self.oneRun(first.clip, last.clip),
+            filled: planned.filled ? planned.range.duration.seconds : nil, snap: snap
         )
         stretch.falseStart = plan.falseStart
         stretch.problem = plan.problem

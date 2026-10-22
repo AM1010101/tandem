@@ -164,7 +164,7 @@ transitions, media or markers.
   side of it, and lists the pauses it left alone for that, with where the
   sound is: listen to them, and cut a stray "um" with `tandem cut --range`
   if it should go. Bark writes most "um"s as words, so they split pauses
-  and stay until they're cut.
+  and stay until they're cut: run `tandem cut --fillers` before tightening.
 - **Never place an edge from transcript times,** with or without a margin.
   Mike heard Ian "cut off" 10 times over 4 review rounds on the whiteboard
   interview: "it's quite a common problem that we seem to get wrong,
@@ -182,7 +182,9 @@ transitions, media or markers.
   `tandem cut "<phrase>"` (or `--range <start>-<end>` for a rough cut,
   `--at` for a phrase said twice) puts both edges of each cut in a real
   pause found in the audio and leaves in a filler with no pause round it,
-  which is what sounded right on the Ian video. Long false starts are cut
+  which is what sounded right on the Ian video. `--fillers` does that for
+  every "um" and "uh" in the transcript (`--from`/`--to`, `--protect`).
+  Long false starts are cut
   pause to pause anyway. Dry run first, then `--apply`; it's one undo step.
   Keep `cutRanges` for exact cuts you've checked yourself.
 - **Then check every join three ways,** after every batch and across the

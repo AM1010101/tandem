@@ -582,7 +582,7 @@ enum MCPTools {
         ),
         Tool(
             name: "cut", title: "Cut words pause to pause",
-            description: "Cuts words out of the whole take (camera, screen and voice; B-roll, music and titles follow) with both edges of each cut in a real pause found in the voice's sound, so nothing that stays is clipped. Use it instead of rippleDeleteRange or cutRanges at search times, which are 30 to 200 ms off the sound. Each stretch is a phrase (found as search finds it; one said more than once needs at) or a timeline start and end. The join keeps Mike's tighten pauses (0.4 s after a sentence, 0.12 s after a comma, 0.08 s mid-sentence), and both of its sides are judged as check cuts would. A stretch with no pause round it (a filler in running speech) is left in with the reason; a long false start (over 2 s, or falseStart: true) is cut pause to pause even if a word of it comes back. One cutRanges, one undo step. A dry run that returns the plan and the command unless apply: true.",
+            description: "Cuts words out of the whole take (camera, screen and voice; B-roll, music and titles follow) with both edges of each cut in a real pause found in the voice's sound, so nothing that stays is clipped. Use it instead of rippleDeleteRange or cutRanges at search times, which are 30 to 200 ms off the sound. Each stretch is a phrase (found as search finds it; one said more than once needs at) or a timeline start and end. The join keeps Mike's tighten pauses (0.4 s after a sentence, 0.12 s after a comma, 0.08 s mid-sentence), and both of its sides are judged as check cuts would. A stretch with no pause round it (a filler in running speech) is left in with the reason; a long false start (over 2 s, or falseStart: true) is cut pause to pause even if a word of it comes back. fillers: true also cuts every um, uh, uhm, erm, er, ah, mm and hmm the transcript has between from and to, each like a phrase (so one in running speech is left in, fluent), side-by-side fillers and a filler beside a stretch being cut as one, never one with a protect time in it or its pauses; the result counts found, cut, left in and why, and seconds removed. Cut fillers before tighten. One cutRanges, one undo step. A dry run that returns the plan and the command unless apply: true.",
             operation: .cut,
             properties: [
                 "remove": S.array(S.object([
@@ -591,13 +591,16 @@ enum MCPTools {
                     "start": time("A timeline range to cut instead of a phrase: roughly where its words start."),
                     "end": time("And where they end."),
                     "falseStart": S.boolean("Cut it as a long false start: pause to pause even if a word of it comes back.")
-                ]), "The stretches to cut, in any order."),
-                "falseStart": S.boolean("Cut every stretch as a long false start. Without it (or a stretch's own), stretches over 2 s are."),
+                ]), "The stretches to cut, in any order. Can be left out with fillers."),
+                "fillers": S.boolean("Also cut every filler (um, uh, uhm, erm, er, ah, mm, hmm) the transcript has between from and to."),
+                "from": time("With fillers: only fillers after this time."), "to": time("With fillers: only fillers before this time."),
+                "protect": S.array(time("A timeline time."), "With fillers: leave in a filler with one of these times in it or in the pauses round it."),
+                "falseStart": S.boolean("Cut every stretch asked for as a long false start (not fillers on their own). Without it (or a stretch's own), stretches over 2 s are."),
                 "apply": S.boolean("Make the cut. Without it nothing changes."),
                 "label": S.string("Undo label."), "author": S.string("Who made the edit."),
                 "expectedRevision": S.integer("Refuse unless the project is at this revision.")
             ],
-            required: ["remove"], readOnly: false
+            readOnly: false
         ),
         Tool(
             name: "join", title: "Join through-edits",

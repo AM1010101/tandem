@@ -481,4 +481,18 @@ final class SectionCutTests: XCTestCase {
         XCTAssertEqual(cut(at: 11.6, words: engine).time, t(11.6))
         XCTAssertEqual(cut(at: 11.6, words: voice.words).time, t(11.3))
     }
+    func testFillersMatchLooselyButOnlyWholeWords() {
+        // Case, punctuation and drawn-out letters don't matter.
+        for word in ["um", "Um,", "UMM...", "ummm", "uh", "Uh.", "uhh", "uhm", "erm", "er,", "ah", "Ahh!", "mm", "mmm", "hmm", "Hmmm?", "\u{2014}um"] {
+            XCTAssertNotNil(TranscriptTools.filler(word), word)
+        }
+        XCTAssertEqual(TranscriptTools.filler("Ummm,"), "um")
+        XCTAssertEqual(TranscriptTools.filler("Hmmm"), "hmm")
+        XCTAssertEqual(TranscriptTools.filler("mmm"), "mm")
+        // Real words, answers ("uh-huh" is a yes) and the acronym "ER" stay,
+        // and so do "like" and "you know", which are often meant.
+        for word in ["umbrella", "uhuru", "her", "ahead", "oh", "eh", "uh-huh", "mm-hmm", "ER", "err", "like", "know", "", "..."] {
+            XCTAssertNil(TranscriptTools.filler(word), word)
+        }
+    }
 }

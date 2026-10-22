@@ -166,9 +166,15 @@ public enum CutPlanner {
     /// `snap` can move each edge within its pause (onto a frame, say)
     /// before the join is judged. `sameFile` when both edges are in one
     /// file's time, so the cut can be checked for being the right way round.
+    /// `filled` when the stretch is a filler this long (timeline seconds):
+    /// a filled pause, so `tightenFrom` goes by the whole pause, filler and
+    /// all, as tighten would have heard it with no filler. "query, [um] we"
+    /// with 0.3 s either side is a 0.9 s pause cut to a comma's 0.12 s, not
+    /// a 0.3 s one kept as it was.
     public static func plan(
         start: CutPlacer, _ startBoundary: Boundary, end: CutPlacer, _ endBoundary: Boundary,
-        keep: Double, tightenFrom: Double = 0, falseStart: Bool, sameFile: Bool = true, snap: ((Double, CutPlan.Edge, ClosedRange<Double>) -> Double)? = nil
+        keep: Double, tightenFrom: Double = 0, falseStart: Bool, sameFile: Bool = true, filled: Double? = nil,
+        snap: ((Double, CutPlan.Edge, ClosedRange<Double>) -> Double)? = nil
     ) -> CutPlan {
         var plan = CutPlan()
         var missed: [CutPlan.Edge: [ClosedRange<Double>]] = [:]
@@ -214,7 +220,8 @@ public enum CutPlanner {
 
         // The pauses as they play: a clip at 2x plays a 0.4 s pause in 0.2.
         let lengths = (before: before.upperBound - before.lowerBound, after: after.upperBound - after.lowerBound)
-        let natural = max(lengths.before / startBoundary.speed, lengths.after / endBoundary.speed)
+        let natural = filled.map { lengths.before / startBoundary.speed + $0 + lengths.after / endBoundary.speed }
+            ?? max(lengths.before / startBoundary.speed, lengths.after / endBoundary.speed)
         let (tail, lead) = split(
             natural < tightenFrom ? natural : keep, before: lengths.before, after: lengths.after,
             speeds: (startBoundary.speed, endBoundary.speed)

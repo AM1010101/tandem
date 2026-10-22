@@ -15,10 +15,7 @@ import XCTest
 ///     TANDEM_TIGHTEN_PROJECT="<…>/ian-whiteboard/Ian Whiteboard.tandem" \
 ///       swift test --filter TightenScorecardTests
 ///
-/// It's a dry run on a copy: the project file is copied into a folder in
-/// `.build`, with the voice's file linked beside it, and never saved. The
-/// voice's transcript comes from the project's own cache, aligned to its
-/// cached waveform as the app aligns it. Add TANDEM_TIGHTEN_ALL=1 for a
+/// It's a dry run on a copy (`ScorecardProject`), never saved. Add TANDEM_TIGHTEN_ALL=1 for a
 /// line on every join that isn't clean.
 final class TightenScorecardTests: XCTestCase {
     struct Score {
@@ -33,51 +30,9 @@ final class TightenScorecardTests: XCTestCase {
         guard let path = ProcessInfo.processInfo.environment["TANDEM_TIGHTEN_PROJECT"] else {
             throw XCTSkip("set TANDEM_TIGHTEN_PROJECT to a .tandem project to score tighten")
         }
-        let original = URL(fileURLWithPath: path)
-        let source = original.deletingLastPathComponent()
-        let copy = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent(".build/tighten-scorecard-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: copy, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: copy) }
-        let projectURL = copy.appendingPathComponent(original.lastPathComponent)
-        try FileManager.default.copyItem(at: original, to: projectURL)
-
-        let session = try ProjectSession.open(projectURL, owner: .cli)
-        session.autosaveDelay = 3600
-        let analysis = FakeAnalysis()
-        analysis.transcripts = [:]
-        let service = TandemService(session: session, mode: .headless, analysis: analysis, renderer: FakeRenderer())
-        defer {
-            service.shutdown()
-            session.close()
-        }
-        let project = service.coordinator.project
-
-        // Each voice file linked in, with its transcript from the cache.
-        let cache = source.appendingPathComponent(".tandem/cache")
-        func entry(_ kind: String, for item: MediaItem) throws -> URL? {
-            let folder = cache.appendingPathComponent(kind)
-            for name in try FileManager.default.contentsOfDirectory(atPath: folder.path) {
-                let url = folder.appendingPathComponent(name)
-                guard let data = try? Data(contentsOf: url.appendingPathComponent("entry.json")),
-                      let json = try JSONSerialization.jsonObject(with: data) as? [String: Any], json["source"] as? String == item.path else { continue }
-                return url
-            }
-            return nil
-        }
-        let voiceClips = TranscriptTools.speechTracks(project).flatMap(\.clips)
-        var voices: [String: SpeechEnergy] = [:]
-        for id in Set(voiceClips.compactMap(\.mediaID)).sorted() {
-            guard let item = project.media(id) else { continue }
-            let link = copy.appendingPathComponent(item.path)
-            try FileManager.default.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: source.appendingPathComponent(item.path))
-            guard let transcriptFolder = try entry("transcript", for: item), let raw = TranscriptJob.read(from: transcriptFolder) else { continue }
-            let waveform = try entry("waveform", for: item).flatMap { WaveformJob.read(from: $0) }
-            analysis.transcripts[id] = waveform.map { raw.aligned(to: $0) } ?? raw
-            voices[id] = try Self.energy(link)
-        }
-        XCTAssertFalse(analysis.transcripts.isEmpty, "no transcript in the cache")
+        let opened = try ScorecardProject(path: path)
+        defer { opened.close() }
+        let (original, service, project, analysis, voiceClips, voices) = (opened.original, opened.service, opened.project, opened.analysis, opened.voiceClips, opened.voices)
 
         // Old: the transcript's gaps, cut in the middle, Mike's rules.
         let started = Date()
@@ -189,6 +144,70 @@ final class TightenScorecardTests: XCTestCase {
         }
         for warning in new.warnings { lines.append("  warning: \(warning)") }
         print(lines.joined(separator: "\n"))
+    }
+}
+
+/// A copy of a real project for a scorecard: the project file copied into a
+/// folder in `.build` with the voice's files linked beside it, never saved,
+/// and each voice's transcript from the project's own cache, aligned to its
+/// cached waveform as the app aligns it.
+struct ScorecardProject {
+    let original: URL
+    let copy: URL
+    let session: ProjectSession
+    let service: TandemService
+    let analysis: FakeAnalysis
+    let project: Project
+    let voiceClips: [Clip]
+    /// Each voice file's whole sound.
+    var voices: [String: SpeechEnergy] = [:]
+
+    init(path: String) throws {
+        original = URL(fileURLWithPath: path)
+        let source = original.deletingLastPathComponent()
+        copy = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent(".build/scorecard-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: copy, withIntermediateDirectories: true)
+        let projectURL = copy.appendingPathComponent(original.lastPathComponent)
+        try FileManager.default.copyItem(at: original, to: projectURL)
+
+        session = try ProjectSession.open(projectURL, owner: .cli)
+        session.autosaveDelay = 3600
+        analysis = FakeAnalysis()
+        analysis.transcripts = [:]
+        service = TandemService(session: session, mode: .headless, analysis: analysis, renderer: FakeRenderer())
+        project = service.coordinator.project
+
+        // Each voice file linked in, with its transcript from the cache.
+        let cache = source.appendingPathComponent(".tandem/cache")
+        func entry(_ kind: String, for item: MediaItem) throws -> URL? {
+            let folder = cache.appendingPathComponent(kind)
+            for name in try FileManager.default.contentsOfDirectory(atPath: folder.path) {
+                let url = folder.appendingPathComponent(name)
+                guard let data = try? Data(contentsOf: url.appendingPathComponent("entry.json")),
+                      let json = try JSONSerialization.jsonObject(with: data) as? [String: Any], json["source"] as? String == item.path else { continue }
+                return url
+            }
+            return nil
+        }
+        voiceClips = TranscriptTools.speechTracks(project).flatMap(\.clips)
+        for id in Set(voiceClips.compactMap(\.mediaID)).sorted() {
+            guard let item = project.media(id) else { continue }
+            let link = copy.appendingPathComponent(item.path)
+            try FileManager.default.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: source.appendingPathComponent(item.path))
+            guard let transcriptFolder = try entry("transcript", for: item), let raw = TranscriptJob.read(from: transcriptFolder) else { continue }
+            let waveform = try entry("waveform", for: item).flatMap { WaveformJob.read(from: $0) }
+            analysis.transcripts[id] = waveform.map { raw.aligned(to: $0) } ?? raw
+            voices[id] = try Self.energy(link)
+        }
+        XCTAssertFalse(analysis.transcripts.isEmpty, "no transcript in the cache")
+    }
+
+    func close() {
+        service.shutdown()
+        session.close()
+        try? FileManager.default.removeItem(at: copy)
     }
 
     /// The whole file, read with AVAudioFile.

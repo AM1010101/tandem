@@ -287,11 +287,16 @@ struct CLI {
                 guard parts.count == 2 else { throw UsageError(message: "--range is <start>-<end>, like 2:14.2-2:16.05, not \"\(text)\".") }
                 remove.append(CutTarget(start: try parseTime(parts[0]), end: try parseTime(parts[1])))
             }
-            guard !remove.isEmpty else {
-                throw UsageError(message: "`tandem cut` needs a phrase or a --range, like tandem cut \"as I said before\" or tandem cut --range 2:14.2-2:16.05.")
+            guard !remove.isEmpty || args.has("fillers") else {
+                throw UsageError(message: "`tandem cut` needs a phrase, a --range or --fillers, like tandem cut \"as I said before\", tandem cut --range 2:14.2-2:16.05 or tandem cut --fillers.")
             }
+            let protect = try (args.repeated["protect"] ?? [])
+                .flatMap { $0.split(separator: ",") }
+                .map { try parseTime($0.trimmingCharacters(in: .whitespaces)) }
             let request = CutRequest(
-                remove: remove, falseStart: args.has("false-start") ? true : nil, apply: args.has("apply"),
+                remove: remove, fillers: args.has("fillers") ? true : nil, from: try time(args, "from"), to: try time(args, "to"),
+                protect: protect.isEmpty ? nil : protect,
+                falseStart: args.has("false-start") ? true : nil, apply: args.has("apply"),
                 label: args.options["label"], expectedRevision: try args.integer("expect")
             )
             return show(try await client().call(request), json: json)

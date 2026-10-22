@@ -545,6 +545,40 @@ public enum TranscriptTools {
         return true
     }
 
+    // MARK: - Fillers
+
+    /// The filler sounds `tandem cut --fillers` takes out, as written once
+    /// the case, punctuation and drawn-out letters are gone. Bark 3.0 writes
+    /// these as words, where SpeechAnalyzer left them out. "ah" and "er"
+    /// are in: "er" isn't a word on its own (the acronym "ER" is written in
+    /// capitals, and "err" is its own word), and an "ah" between pauses is
+    /// nearly always thinking aloud. "oh", "eh", and answers like "uh-huh"
+    /// and "mm-hmm" mean something, so they stay, and so do "like" and "you
+    /// know", which are often meant.
+    public static let fillers = ["um", "uh", "uhm", "erm", "er", "ah", "mm", "hmm"]
+
+    /// Which filler `word` is ("Ummm," is "um"), or nil when it's a word.
+    public static func filler(_ word: String) -> String? {
+        let letters = word.trimmingCharacters(in: CharacterSet.letters.inverted)
+        guard !letters.isEmpty, letters.allSatisfy(\.isLetter) else { return nil }
+        // Each run of one letter once, and how long the runs were: "Ummm"
+        // is "um", with the "m" three long.
+        var runs: [(letter: Character, count: Int)] = []
+        for letter in letters.lowercased() {
+            if runs.last?.letter == letter { runs[runs.count - 1].count += 1 } else { runs.append((letter, 1)) }
+        }
+        let shape = String(runs.map(\.letter))
+        switch shape {
+        case "um", "uh", "uhm", "erm", "ah": return shape
+        // "err" is a word, and "ER" an acronym.
+        case "er": return runs[1].count == 1 && letters != "ER" ? "er" : nil
+        // "m" on its own is the letter.
+        case "m": return runs[0].count >= 2 ? "mm" : nil
+        case "hm": return "hmm"
+        default: return nil
+        }
+    }
+
     // MARK: - Search
 
     /// Lower-case words with punctuation removed, so "Don't," matches "dont".

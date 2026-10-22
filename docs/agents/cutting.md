@@ -1,11 +1,12 @@
 # Cutting the take
 
-Recipes for tightening pauses, cutting a phrase, a false start or a rough cut pause to pause, joining through-edits back up, keeping the camera's picture in sync with its sound, and adding another camera angle or an external mic.
+Recipes for tightening pauses, taking out fillers, cutting a phrase, a false start or a rough cut pause to pause, joining through-edits back up, keeping the camera's picture in sync with its sound, and adding another camera angle or an external mic.
 
 ## Tighten pauses
 
 ```bash
 tandem pauses --min 0.5                      # what's there
+tandem cut --fillers --apply                 # first, the ums and uhs between pauses
 tandem tighten --mike                        # the plan, nothing changes
 tandem tighten --mike --protect 2:14.5,5:03 --widen --apply
 tandem clip 0:00 1:00 -o /tmp/review.mp4     # watch the result
@@ -78,8 +79,10 @@ The plan says which pauses it left alone and why (sound in them, with
 where and on which track; under the minimum in the sound; a join that
 wouldn't be clean), and each pause it cut beside sound says where that
 sound is (and lists each of its cuts), so listen to those with
-`tandem clip`. To take out an "um" it kept, cut it
-with `tandem cut --range`. Where any track that plays a pause has a file
+`tandem clip`. Take out fillers first with `tandem cut --fillers` ([Take
+out fillers](#take-out-fillers)): Bark writes most "um"s as words, so each
+splits its pause in two and tighten won't cut a word. To take out an "um"
+the transcript left out and tighten kept, cut it with `tandem cut --range`. Where any track that plays a pause has a file
 whose sound can't be read, that pause is tightened from the transcript's
 gap as before, with a warning: the other tracks can't say it's quiet. The plan is a batch of
 `rippleDeleteRange` commands (and the widening's `trim`s), latest first so
@@ -88,6 +91,60 @@ rather adjust it and `apply` it yourself. `--from` and `--to` limit it to
 part of the video. In MCP: `tighten {"mike": true, "protect": [134.5],
 "widen": true}`, then again with `"apply": true, "expectedRevision": <the
 plan's revision>`.
+
+## Take out fillers
+
+```bash
+tandem cut --fillers                         # the plan, nothing changes
+tandem cut --fillers --from 2:00 --to 5:00 --protect 3:10 --apply
+tandem tighten --mike --apply                # then the pauses
+```
+
+```
+Cut 5 stretches pause to pause (dry run, revision 16), removing 4.296s: 45:53.376 -> 45:49.080.
+  02:16.553-02:17.888  "um"  ...parts of the platform. | So when I thought,...  keeps 0.475s of pause; join clean (27 and 30 dB under the speech)
+  03:16.196-03:16.947  "um"  ...you have a query, | we really care about...  keeps 0.184s of pause; join clean (25 and 26 dB under the speech)
+  ...
+Left in:
+  02:52.915-02:52.965  "uh": no pause between it and "same": they run together, so a cut there would clip a word. ...
+  ...
+Fillers: 10 found, 5 cut (removing 4.296s), 5 left in (5 in running speech).
+Nothing changed yet. Run again with --apply (or apply: true) to make the cut.
+```
+
+`--fillers` makes every filler the transcript has a stretch to cut, as if
+you'd asked for each one: um, uh, uhm, erm, er, ah, mm and hmm, in any
+case, with punctuation and drawn out ("Ummm,"). Not "oh", "eh", "uh-huh"
+or "mm-hmm", which mean something, nor "like" or "you know", which are
+often meant, nor the acronym "ER" or "err". Each is planned as a phrase is
+([Cut a phrase](#cut-a-phrase)): one with a pause either side is cut pause
+to pause, and one that runs into a word that stays is left in as `fluent`,
+because a natural "um" beats a chopped word. Fillers side by side ("um,
+uh"), or a filler beside a phrase or range cut in the same call, with no
+word that stays between them, are one stretch, so there's one join and no
+sliver of pause between two cuts. Fillers on their own are never false
+starts, so `--false-start` doesn't cut one in running speech.
+
+`--from` and `--to` hold it to part of the video. `--protect` takes
+timeline times, as tighten's does: a filler with one in it, or in the
+pauses either side of it, stays (an "ah" of realisation, a beat that's
+meant). The result counts the fillers found, cut and left in (and why) and
+the seconds they take out, and lists each one at its timeline time, so
+listen to the ones left in with `tandem clip`. In MCP and HTTP: `cut
+{"fillers": true, "from": 120, "to": 300}` (`remove` can be left out), then
+again with `"apply": true, "expectedRevision": <the plan's revision>`.
+
+Cut fillers before tightening. A filler on its own is a filled pause, so
+its join keeps what `tighten --mike` would leave there with no filler at
+all, going by the whole pause, filler and all: "query, [um] we" with 0.3 s
+either side is a 0.9 s pause, so it keeps a comma's 0.12 s, and a pause
+under 0.5 s with the filler in it is kept as it was. (A phrase is
+different: there each pause either side is what the speaker left.) Then
+tighten shortens the pauses that are left and leaves the filler joins
+alone. The other way round, tighten has already cut the pauses round each
+filler down to about 0.11 s, which is often too little to place a cut in:
+on the Ian video that cut 11 of its 75 fillers instead of 31, and 33 were
+left in with the voice running on.
 
 ## Cut a phrase
 

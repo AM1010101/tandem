@@ -154,10 +154,11 @@ can fix a flicker, and that problem's `fix` is the `holdFrame`.
 {"revision": 57, "removed": 2.15, "durationBefore", "durationAfter",
  "commands": [{"cutRanges": {...}}],              // empty when nothing's cut
  "applied"?: {...apply's result}, "warnings": [],
- "cuts": [{"asked", "text", "start", "end", "status": "cut" | "kept", "before", "after", "falseStart",
+ "fillers"?: {"found": 179, "cut": 120, "leftIn": {"fluent": 50, "protected": 1}, "removed": 61.2},   // with fillers: true
+ "cuts": [{"asked", "text", "start", "end", "status": "cut" | "kept", "before", "after", "falseStart", "fillers"?,
            "cut"?: {"start", "duration"}, "mediaID"?, "mediaStart"?, "mediaEnd"?, "keptBefore"?, "keptAfter"?,
            "startEdge"?: {"verdict", "margin"}, "endEdge"?: {"verdict", "margin"},
-           "broughtBack"?, "missed"?, "reason"?, "problem"?, "problemEdge"?}]}   // in the order asked
+           "broughtBack"?, "missed"?, "reason"?, "problem"?, "problemEdge"?}]}   // in the order asked, then fillers
 ```
 
 `cuts` has one entry per stretch asked for. `start` and `end` are the
@@ -174,3 +175,13 @@ A `kept` stretch has a `reason`, and a `problem` (`fluent`, `runsOn`,
 brings back. `missed` is sound in the stretch (or within 0.3 s of it) that
 no transcript word claims and the cut keeps, because cutting it would cut
 a word that stays too: listen there.
+
+With `fillers: true`, the fillers come after the stretches asked for, in
+timeline order, each entry one stretch: `"um"`, or `"um + uh"` for fillers
+side by side. A filler joined to a stretch asked for is in that one
+(`"as I said + uh"`). An entry's `fillers` is how many fillers it is or
+has in it. `fillers` on the result counts them: `found` between `from` and
+`to` (one two mics hear is one), `cut`, `leftIn` by why (a `problem`, so
+`fluent` for one in running speech, or `protected`, or `unplaced` when the
+sound couldn't be read), and `removed`, the seconds the stretches with
+fillers in them take out.

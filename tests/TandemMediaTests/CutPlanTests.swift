@@ -253,4 +253,40 @@ final class CutPlanTests: XCTestCase {
         XCTAssertEqual(result.problemEdge, .start)
         XCTAssertEqual(result.start?.verdict, .clipped)
     }
+    func testTwoFillersSideBySideAreOneCutWithThePauseBetweenThem() throws {
+        // "Right. [um, uh] next one": two fillers with a 0.3 s pause between
+        // them, and 0.5 s pauses round them. One stretch from the start of
+        // "um" to the end of "uh" goes pause to pause, the pause between
+        // them with it, rather than leaving a sliver of "um, uh" apart.
+        let take = Take(length: 4, words: [(10.5, 11.0), (11.5, 11.8), (12.1, 12.4), (12.9, 13.3)])
+        let result = plan(take, removing: 11.5...12.4, cut: [11.5...11.8, 12.1...12.4], kept: [10.5...11.0, 12.9...13.3], keep: 0.4, tightenFrom: 0.5)
+        XCTAssertTrue(result.cuts, "\(result)")
+        assertInside(try XCTUnwrap(result.startPause), 11.0...11.5)
+        assertInside(try XCTUnwrap(result.endPause), 12.4...12.9)
+        XCTAssertLessThan(try XCTUnwrap(result.from), 11.5)
+        XCTAssertGreaterThan(try XCTUnwrap(result.to), 12.4)
+        XCTAssertEqual(result.start?.verdict, .clean)
+        XCTAssertEqual(result.end?.verdict, .clean)
+    }
+    func testAFilledPauseGoesByTheWholePauseFillerAndAll() throws {
+        // "you have a query, [um] we": 0.3 s pauses either side of a 0.3 s
+        // "um". Neither is 0.5 s, but without the "um" it's one 0.9 s pause,
+        // which tighten would cut to a comma's 0.12 s, so the cut does too.
+        let take = Take(length: 4, words: [(10.5, 11.0), (11.3, 11.6), (11.9, 12.4)])
+        let cut = CutPlanner.plan(
+            start: placer(take), CutPlanner.Boundary(time: 11.3, before: [10.5...11.0], after: [11.3...11.6]),
+            end: placer(take), CutPlanner.Boundary(time: 11.6, before: [11.3...11.6], after: [11.9...12.4]),
+            keep: 0.12, tightenFrom: 0.5, falseStart: false, filled: 0.3
+        )
+        XCTAssertTrue(cut.cuts, "\(cut)")
+        // Split as tighten splits it, 0.06 / 0.08 with the least before a word.
+        XCTAssertEqual(cut.keptBefore + cut.keptAfter, 0.14, accuracy: 0.001)
+        // A phrase isn't a pause: its pauses are kept as they were.
+        let phrase = CutPlanner.plan(
+            start: placer(take), CutPlanner.Boundary(time: 11.3, before: [10.5...11.0], after: [11.3...11.6]),
+            end: placer(take), CutPlanner.Boundary(time: 11.6, before: [11.3...11.6], after: [11.9...12.4]),
+            keep: 0.12, tightenFrom: 0.5, falseStart: false
+        )
+        XCTAssertGreaterThan(phrase.keptBefore + phrase.keptAfter, 0.2)
+    }
 }

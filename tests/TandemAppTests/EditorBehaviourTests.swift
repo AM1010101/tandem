@@ -689,6 +689,143 @@ final class EditorBehaviourTests: XCTestCase {
         XCTAssertEqual(editor.x(at: 40), playhead, accuracy: 1)
     }
 
+    func testRulerClickWhilePlayingJumpsAndKeepsPictureAndSoundPlaying() throws {
+        let editor = try soundEditor()
+        let playback = editor.model.playback
+        editor.press("space")
+        editor.click(editor.rulerPoint(at: 12))
+        XCTAssertTrue(playback.isPlaying)
+        XCTAssertEqual(playback.time.seconds, 12.3, accuracy: 0.6)
+        let jumped = playback.time
+        editor.wait(for: "picture and sound playing after the jump") {
+            playback.time > jumped + t(0.05) && playback.audio.isPlaying
+        }
+        assertInStep(playback, "after jumping on the ruler")
+    }
+
+    func testRulerAndEmptyLanesClicksWhilePlayingKeepTheShuttleRate() {
+        let playback = editor.model.playback
+        for rate in [1.0, 4, -2] {
+            playback.seek(to: t(5))
+            playback.play(rate: rate)
+            editor.click(editor.rulerPoint(at: 12))
+            XCTAssertEqual(playback.rate, rate)
+            XCTAssertEqual(playback.time.seconds, 12.3, accuracy: 1.5)
+            editor.click(editor.point(onTrack: "Graphics", at: 20))
+            XCTAssertEqual(playback.rate, rate)
+            XCTAssertEqual(playback.time.seconds, 20, accuracy: 1.5)
+            playback.pause()
+        }
+    }
+
+    func testRulerClickWhilePausedMovesThePlayheadAndStaysPaused() {
+        editor.click(editor.rulerPoint(at: 12))
+        XCTAssertEqual(editor.model.playback.time.seconds, 12.3, accuracy: 0.1)
+        XCTAssertFalse(editor.model.playback.isPlaying)
+    }
+
+    func testRulerAndEmptyMarkerStripDragsPauseThenResumeAtTheSameRate() {
+        let playback = editor.model.playback
+        for strip in [false, true] {
+            for rate in [1.0, 4, -2] {
+                playback.seek(to: t(5))
+                playback.play(rate: rate)
+                let from = strip ? editor.stripPoint(.markers, at: 10) : editor.rulerPoint(at: 10)
+                let to = strip ? editor.stripPoint(.markers, at: 20) : editor.rulerPoint(at: 20)
+                var finished = false
+                InputSimulator.run(.init(kind: .drag(to: to, steps: 4), at: from, modifiers: [], interval: 0.08), in: editor.window) {
+                    finished = true
+                }
+                editor.wait(for: "scrubbing to pause playback") { !playback.isPlaying || finished }
+                XCTAssertFalse(finished, "paused before releasing the mouse")
+                XCTAssertFalse(playback.isPlaying, "no sound restarts during the drag")
+                editor.wait(for: "the scrubbed playhead to reach the release point") {
+                    playback.time.seconds >= 20 || finished
+                }
+                XCTAssertFalse(finished)
+                XCTAssertFalse(playback.isPlaying, "stays paused through the last drag event")
+                editor.wait(for: "mouse up") { finished }
+                XCTAssertEqual(playback.rate, rate, "resumes the original direction and speed")
+                XCTAssertEqual(playback.time.seconds, strip ? 20 : 20.3, accuracy: 0.1)
+                playback.pause()
+            }
+        }
+    }
+
+    func testPausedScrubsMoveImmediatelyEvenBelowThreePoints() {
+        let playback = editor.model.playback
+        for strip in [false, true] {
+            playback.seek(to: .zero)
+            let from = strip ? editor.stripPoint(.markers, at: 15) : editor.rulerPoint(at: 15)
+            let to = CGPoint(x: from.x + 2, y: from.y)
+            var finished = false
+            InputSimulator.run(.init(kind: .drag(to: to, steps: 1), at: from, modifiers: [], interval: 0.1), in: editor.window) {
+                finished = true
+            }
+            editor.wait(for: "mouse down to move the playhead") { playback.time.seconds >= 15 }
+            let pressed = playback.time
+            editor.wait(for: "the paused playhead to scrub before mouse up") { playback.time > pressed || finished }
+            XCTAssertFalse(finished, "paused scrubbing has no drag threshold")
+            XCTAssertFalse(playback.isPlaying)
+            XCTAssertEqual((playback.time - pressed).seconds, 0.1, accuracy: 0.04)
+            editor.wait(for: "mouse up") { finished }
+            XCTAssertFalse(playback.isPlaying)
+        }
+    }
+
+    func testSmallWobblesOnRulerAndEmptyMarkerStripKeepPlaying() {
+        let playback = editor.model.playback
+        for strip in [false, true] {
+            playback.seek(to: t(5))
+            playback.play(rate: -2)
+            let from = strip ? editor.stripPoint(.markers, at: 15) : editor.rulerPoint(at: 15)
+            let to = CGPoint(x: from.x + 2, y: from.y)
+            var finished = false
+            InputSimulator.run(.init(kind: .drag(to: to, steps: 1), at: from, modifiers: [], interval: 0.1), in: editor.window) {
+                finished = true
+            }
+            var keptPlaying = true
+            editor.wait(for: "the small wobble to finish") {
+                keptPlaying = keptPlaying && playback.rate == -2
+                return finished
+            }
+            XCTAssertTrue(keptPlaying, "a wobble never pauses")
+            XCTAssertEqual(playback.time.seconds, 15, accuracy: 1)
+            playback.pause()
+        }
+    }
+
+    func testMarkerStripClicksKeepTheShuttleRateOnEmptySpaceAndMarkers() {
+        let playback = editor.model.playback
+        for rate in [1.0, 4, -2] {
+            playback.seek(to: t(5))
+            playback.play(rate: rate)
+            editor.click(editor.stripPoint(.markers, at: 15))
+            XCTAssertEqual(playback.rate, rate)
+            XCTAssertEqual(playback.time.seconds, 15, accuracy: 1.5)
+            editor.click(editor.stripPoint(.markers, at: 30.5))
+            XCTAssertEqual(playback.rate, rate)
+            XCTAssertEqual(playback.time.seconds, 30, accuracy: 1.5)
+            playback.pause()
+        }
+    }
+
+    func testCommentDoubleClicksPausePlaybackBeforeOpeningTheBox() throws {
+        editor.model.apply(CommentEdits.add("A note", at: t(10))!)
+        editor.settle()
+        let points = [editor.rulerPoint(at: 15), editor.point(onTrack: "Graphics", at: 15),
+                      editor.commentsPoint(at: 20), editor.commentsPoint(at: 10.5)]
+        for point in points {
+            editor.model.playback.play(rate: 2)
+            editor.click(point, count: 2)
+            XCTAssertFalse(editor.model.playback.isPlaying)
+            let box = try XCTUnwrap(timeline.commentBox)
+            XCTAssertEqual(box.popover?.isShown, true)
+            box.cancel()
+            editor.settle()
+        }
+    }
+
     func testPlayingKeepsTheScreenAwakeAndPausingLetsItSleep() {
         XCTAssertFalse(displaySleepHeld(), "nothing held before playing")
         editor.press("space")

@@ -85,6 +85,8 @@ final class TimelineMarkerStripView: TimelineChildView {
     private var dragging: (id: String, offset: Double, moved: Bool)?
     private var preview: Time?
     private var pressPoint: CGPoint = .zero
+    /// Empty-space presses keep playing until they move enough to scrub.
+    private var scrubOrigin: CGPoint?
     /// What a double-click asked for, done as the button comes up so the
     /// release can't close the box or dialog it opens.
     private var pending: Pending?
@@ -241,10 +243,11 @@ final class TimelineMarkerStripView: TimelineChildView {
         pending = nil
         dragging = nil
         preview = nil
+        scrubOrigin = nil
         guard let model else { return }
         let point = convert(event.locationInWindow, from: nil)
         pressPoint = point
-        model.playback.pause()
+        if event.clickCount == 2 { model.playback.pause() }
         if let marker = marker(at: point) {
             if event.clickCount == 2 {
                 pending = .change(marker)
@@ -259,6 +262,7 @@ final class TimelineMarkerStripView: TimelineChildView {
             pending = .add(model.timeline.scale.time(atX: point.x, rate: model.frameRate))
             return
         }
+        scrubOrigin = model.playback.isPlaying ? point : nil
         scrub(to: point)
     }
 
@@ -277,12 +281,20 @@ final class TimelineMarkerStripView: TimelineChildView {
             needsDisplay = true
             return
         }
-        if pending == nil { scrub(to: point) }
+        guard pending == nil else { return }
+        if let origin = scrubOrigin {
+            guard hypot(point.x - origin.x, point.y - origin.y) >= 3 else { return }
+            model.playback.beginScrub()
+            scrubOrigin = nil
+        }
+        scrub(to: point)
     }
 
     override func mouseUp(with event: NSEvent) {
         defer { updateCursor(event) }
         guard let model else { return }
+        scrubOrigin = nil
+        model.playback.endScrub()
         let asked = pending
         pending = nil
         if let drag = dragging, let marker = model.project.markers.first(where: { $0.id == drag.id }) {

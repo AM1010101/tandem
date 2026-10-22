@@ -14,6 +14,8 @@ final class TimelineRulerView: TimelineChildView {
     /// Where a double-click away from the markers asked for a comment,
     /// until the button comes up and the box opens.
     private var commentAt: Time?
+    /// While playing, a small wobble is still a click, not a silent scrub.
+    private var scrubOrigin: CGPoint?
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -116,26 +118,36 @@ final class TimelineRulerView: TimelineChildView {
         // Clicking here takes the keys back from any text field.
         window?.makeFirstResponder(self)
         commentAt = nil
+        scrubOrigin = nil
         guard let model else { return }
         let point = convert(event.locationInWindow, from: nil)
-        model.playback.pause()
         // A double-click: a comment there, as on an empty stretch of the
         // tracks.
         if event.clickCount == 2 {
+            model.playback.pause()
             commentAt = model.timeline.scale.time(atX: point.x, rate: model.frameRate)
             return
         }
+        scrubOrigin = model.playback.isPlaying ? point : nil
         scrub(to: point, event: event)
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard commentAt == nil else { return }
-        scrub(to: convert(event.locationInWindow, from: nil), event: event)
+        guard commentAt == nil, let model else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        if let origin = scrubOrigin {
+            guard hypot(point.x - origin.x, point.y - origin.y) >= 3 else { return }
+            model.playback.beginScrub()
+            scrubOrigin = nil
+        }
+        scrub(to: point, event: event)
     }
 
     override func mouseUp(with event: NSEvent) {
         defer { updateCursor(event) }
         guard let model else { return }
+        scrubOrigin = nil
+        model.playback.endScrub()
         if let time = commentAt {
             commentAt = nil
             model.playback.seek(to: time)

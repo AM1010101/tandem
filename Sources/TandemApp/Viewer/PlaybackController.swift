@@ -104,6 +104,7 @@ final class PlaybackController {
     @ObservationIgnored private var fontsObserver: NSObjectProtocol?
     @ObservationIgnored private var readyObservation: NSKeyValueObservation?
     @ObservationIgnored private var clock: Timer?
+    @ObservationIgnored private var scrubRate: Double?
     @ObservationIgnored private var lastTick: TimeInterval = 0
     @ObservationIgnored private var seeking = false
     /// Where the seek under way is going.
@@ -583,6 +584,20 @@ final class PlaybackController {
     /// Whether the players and the sound are playing (or about to), as
     /// opposed to the clock stepping the picture or nothing moving.
     private var playingTogether: Bool { rate != 0 && clock == nil && hasComposition }
+
+    /// A drag seeks many times, so keep it silent and remember how to play on.
+    func beginScrub() {
+        guard scrubRate == nil, isPlaying else { return }
+        scrubRate = rate
+        pause()
+    }
+
+    /// Play on from the released playhead, in the same direction and at the same speed.
+    func endScrub() {
+        guard let rate = scrubRate else { return }
+        scrubRate = nil
+        play(rate: rate)
+    }
 
     func seek(to target: Time) {
         let clamped = min(max(target, .zero), max(duration, .zero))

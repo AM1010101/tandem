@@ -985,7 +985,6 @@ final class TimelineLanesView: TimelineChildView {
                 // A click on empty space moves the playhead there, which is
                 // handy on a trackpad.
                 if !(pressModifiers.shift || pressModifiers.command) {
-                    model.playback.pause()
                     model.playback.seek(to: box.startTime(rate: model.frameRate))
                 }
             } else {

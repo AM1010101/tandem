@@ -307,7 +307,14 @@ public enum CutAudit {
     /// "time", and Mike heard it cut off; on its final cut this matched
     /// that edge and five an agent fixed, and none of the 290 joins Mike
     /// approved once "like" and "know" fillers are left out.
-    static func lastWordCut(_ words: [Word], at time: Double, removed: ClosedRange<Double>?) -> Word? {
+    ///
+    /// `cutAway` is the stretch of the file past the edge that nothing
+    /// plays next. The word has to be all inside it: with no such stretch,
+    /// the next clip may play the word (two clips of a take meeting at
+    /// different speeds aren't a through-edit), and finishing it would play
+    /// it twice.
+    static func lastWordCut(_ words: [Word], at time: Double, cutAway: ClosedRange<Double>?) -> Word? {
+        guard let cutAway else { return nil }
         let sorted = words.sorted { $0.start < $1.start }
         // A word starting a frame or so before the edge is still after it:
         // its first sound is past the edge, or the edge is mid-word anyway.
@@ -315,7 +322,7 @@ public enum CutAudit {
         let kept = sorted[next - 1], word = sorted[next]
         guard word.start - time <= lastWordReach, endsClause(word.text), !endsClause(kept.text) else { return nil }
         guard !fillers.contains(word.text.lowercased().filter(\.isLetter)) else { return nil }
-        if let removed, removed.upperBound < word.end + endSlack { return nil }
+        guard cutAway.lowerBound <= max(time, word.start) + 1e-6, word.end + endSlack <= cutAway.upperBound else { return nil }
         return word
     }
 
@@ -386,6 +393,9 @@ public enum CutAudit {
     /// - Parameters:
     ///   - removed: at a cut between two pieces of one take, the stretch of
     ///     the file cut out between them; a fix only reaches into it.
+    ///   - cutAway: at the end of a clip, the stretch of the file after it
+    ///     that the next clip doesn't play, when that's more than `removed`
+    ///     (see `CutPlacer.judge(at:keeps:removed:cutAway:transcript:)`).
     ///   - words: transcript words around the edge, in media time, with no
     ///     text (see `CutPlacer.judge(at:keeps:removed:transcript:)`).
     public static func judge(
@@ -397,8 +407,8 @@ public enum CutAudit {
 
     public static func judge(
         _ energy: SpeechEnergy, levels: SpeechLevels, at time: Double, keeps side: Side,
-        removed: ClosedRange<Double>? = nil, transcript: [Word]
+        removed: ClosedRange<Double>? = nil, cutAway: ClosedRange<Double>? = nil, transcript: [Word]
     ) -> Edge {
-        CutPlacer(energy, levels: levels).judge(at: time, keeps: side, removed: removed, transcript: transcript)
+        CutPlacer(energy, levels: levels).judge(at: time, keeps: side, removed: removed, cutAway: cutAway, transcript: transcript)
     }
 }

@@ -81,10 +81,13 @@ final class SpeechEnergyTests: XCTestCase {
     }
 
     private func judge(
-        _ take: Take, at time: Double, keeps side: CutAudit.Side, removed: ClosedRange<Double>? = nil, transcript: [CutAudit.Word]
+        _ take: Take, at time: Double, keeps side: CutAudit.Side, removed: ClosedRange<Double>? = nil,
+        cutAway: ClosedRange<Double>? = nil, transcript: [CutAudit.Word]
     ) -> CutAudit.Edge {
         let energy = take.energy
-        return CutAudit.judge(energy, levels: SpeechLevels(of: [energy]), at: time, keeps: side, removed: removed, transcript: transcript)
+        return CutAudit.judge(
+            energy, levels: SpeechLevels(of: [energy]), at: time, keeps: side, removed: removed, cutAway: cutAway, transcript: transcript
+        )
     }
 
     private func word(_ text: String, _ start: Double, _ end: Double) -> CutAudit.Word {
@@ -366,6 +369,66 @@ final class SpeechEnergyTests: XCTestCase {
         }
         // And it's only the end of a clip: a clip starting on "time." is fine.
         XCTAssertEqual(judge(take, at: 10.93, keeps: .after, removed: 9...10.93, transcript: words("about", "time.")).verdict, .clean)
+    }
+
+    func testTheLastWordIsOnlyCutWhenNothingPlaysItNext() {
+        // The same "about [time.]" join, but nothing says "time." is cut:
+        // two clips of the take meeting at different speeds aren't a
+        // through-edit, and the next one plays "time." whole. Only a cut
+        // stretch the word's in, or a next clip that doesn't play it,
+        // leaves the sentence hanging.
+        let take = Take(length: 6, words: [(10.5, 10.9), (10.955, 11.22), (11.29, 11.6), (11.65, 12.0), (13.6, 14)])
+        let words = [word("about", 10.5, 10.96), word("time.", 10.96, 11.25), word("And", 11.41, 11.6), word("this", 11.65, 12.0), word("is", 13.6, 14)]
+        let unknown = judge(take, at: 10.93, keeps: .before, transcript: words)
+        XCTAssertEqual(unknown.verdict, .clean, "\(unknown)")
+        XCTAssertNil(unknown.lastWordCut)
+        let playedNext = judge(take, at: 10.93, keeps: .before, cutAway: 11.6...Double.infinity, transcript: words)
+        XCTAssertEqual(playedNext.verdict, .clean, "the next clip plays the file to 11.6: \(playedNext)")
+        // Nothing plays it after the clip (another file follows, or none).
+        let gone = judge(take, at: 10.93, keeps: .before, cutAway: 10.93...Double.infinity, transcript: words)
+        XCTAssertTrue(gone.clipped, "\(gone)")
+        XCTAssertEqual(gone.lastWordCut, "time.")
+    }
+
+    func testTheLastWordFixGoesPastTheWordFromInsideTheWordBefore() throws {
+        // The clip ends 20 ms before "about" does, so the edge isn't in the
+        // gap between "about" and "time." but before it. The fix has to go
+        // past "time.", not stop in that gap and still cut it.
+        let take = Take(length: 6, words: [(10.5, 10.9), (10.955, 11.22), (11.29, 11.6), (11.65, 12.0), (13.6, 14)])
+        let words = [word("about", 10.5, 10.96), word("time.", 10.96, 11.25), word("And", 11.41, 11.6), word("this", 11.65, 12.0), word("is", 13.6, 14)]
+        let edge = judge(take, at: 10.88, keeps: .before, removed: 10.88...13.5, transcript: words)
+        XCTAssertTrue(edge.clipped, "\(edge)")
+        XCTAssertEqual(edge.lastWordCut, "time.")
+        let to = try XCTUnwrap(edge.suggestion, "\(edge)")
+        XCTAssertGreaterThan(to, 11.22, "past \"time.\": \(edge)")
+        XCTAssertLessThan(to, 11.29, "before \"And\": \(edge)")
+
+        // With no gap or pause past "time." in reach, it says so: put the
+        // short cut back rather than trim to the gap before the word.
+        let long = Take(length: 6, words: [(10.5, 10.9), (10.955, 11.47), (11.55, 11.8), (13.6, 14)])
+        let longWords = [word("about", 10.5, 10.96), word("time.", 10.96, 11.5), word("And", 11.6, 11.8), word("is", 13.6, 14)]
+        let far = judge(long, at: 10.88, keeps: .before, removed: 10.88...12.5, transcript: longWords)
+        XCTAssertTrue(far.clipped, "\(far)")
+        XCTAssertEqual(far.lastWordCut, "time.")
+        XCTAssertNil(far.suggestion, "\(far)")
+        XCTAssertEqual(far.fix, .putBack)
+    }
+
+    func testAClipEndingInAPauseBeforeTheLastWordIsClipped() throws {
+        // "about [time.]" with 100 ms between the words: the clip ends in a
+        // real pause, as clean as a join gets, and still stops one word
+        // short of the end of the sentence.
+        let take = Take(length: 6, words: [(10.5, 10.9), (11.0, 11.22), (11.29, 11.6), (11.65, 12.0), (13.6, 14)])
+        func words(_ kept: String, _ cut: String) -> [CutAudit.Word] {
+            [word(kept, 10.5, 10.9), word(cut, 11.0, 11.25), word("And", 11.41, 11.6), word("this", 11.65, 12.0), word("is", 13.6, 14)]
+        }
+        let edge = judge(take, at: 10.92, keeps: .before, removed: 10.92...13.5, transcript: words("about", "time."))
+        XCTAssertTrue(edge.clipped, "\(edge)")
+        XCTAssertEqual(edge.lastWordCut, "time.")
+        let to = try XCTUnwrap(edge.suggestion, "\(edge)")
+        XCTAssertGreaterThan(to, 11.22, "past \"time.\": \(edge)")
+        XCTAssertLessThan(to, 11.29, "before \"And\": \(edge)")
+        XCTAssertEqual(judge(take, at: 10.92, keeps: .before, removed: 10.92...13.5, transcript: words("about", "time")).verdict, .clean)
     }
 
     func testAnEdgeInARealPauseIsClean() {

@@ -164,9 +164,14 @@ about [time.]" on the Ian video ended in the 0.055 s gap between "about"
 and the "t" of "time", as clean to the ear as the "that [you know]" joins
 Mike approved, but he heard the sentence cut off. So when the first word
 cut (starting within 0.15 s of the edge, and cut whole) ends with . ? ! ,
-; or : and the kept word before the edge doesn't, the edge is clipped and
-the fix finishes that word, to the gap after it. "like" and "know" don't
-count: cutting a "you know," or "like." filler is what Mike does.
+; or : and the kept word before the edge doesn't, the edge is clipped,
+even in a real pause, and the fix finishes that word: to the gap or pause
+after it, or putting the cut back when there's none in reach, never a
+trim that stops short of it. "Cut whole" means it's in the stretch cut
+at the join, or the next clip on the track doesn't play it (it's another
+file, or there's none); two clips of a take meeting at different speeds
+may play it, so that doesn't count. "like" and "know" don't count:
+cutting a "you know," or "like." filler is what Mike does.
 
 The last line is a `tandem apply` that makes every fix (in `--json`,
 `commands`, latest first, and `revision`; each problem's `cut` has

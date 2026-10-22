@@ -146,7 +146,7 @@ final class CutScorecardTests: XCTestCase {
             case .putBack: fixed = "putBack"
             case .unknown: fixed = "-"
             }
-            return "    \(labelled.id) \(String(format: "%.3f", labelled.edge)) keeps \(labelled.keeps): \(edge.verdict.rawValue), \(margin), lost \(lost), gap \(gap), fix \(fixName(edge.fix)) \(to)\(edge.betweenWords ? " between words" : "")\(edge.drops.map { " drops \"\($0)\"" } ?? "") (worked: \(fixed)) [\(labelled.kind ?? "")\(labelled.under.map { " under " + $0.joined(separator: "+") } ?? "")]"
+            return "    \(labelled.id) \(String(format: "%.3f", labelled.edge)) keeps \(labelled.keeps): \(edge.verdict.rawValue), \(margin), lost \(lost), gap \(gap), fix \(fixName(edge.fix)) \(to)\(edge.betweenWords ? " between words" : "")\(edge.drops.map { " drops \"\($0)\"" } ?? "")\(edge.lastWordCut.map { " last word \"\($0)\"" } ?? "") (worked: \(fixed)) [\(labelled.kind ?? "")\(labelled.under.map { " under " + $0.joined(separator: "+") } ?? "")]"
         }
         let missed = results.filter { $0.0.label == "clipped" && !$0.1.clipped && $0.0.source != "fixed" }
         let falseAlarms = results.filter { $0.0.label == "clean" && $0.1.clipped }
@@ -154,6 +154,9 @@ final class CutScorecardTests: XCTestCase {
         lines += missed.map(row)
         lines.append("  clean edges flagged (\(falseAlarms.count)):")
         lines += falseAlarms.map(row)
+        let lastWord = results.filter { $0.1.lastWordCut != nil }
+        lines.append("  ending just before the last word of a sentence (\(lastWord.count)):")
+        lines += lastWord.map { "  \($0.0.source ?? $0.0.label)" + row($0) }
         if environment["TANDEM_CUT_ALL"] == "1" {
             for label in ["clipped", "marginal", "clean"] {
                 lines.append("  every \(label) edge:")

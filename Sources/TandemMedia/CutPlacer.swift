@@ -200,12 +200,18 @@ public struct CutPlacer: Sendable {
     /// - Parameters:
     ///   - removed: at a cut between two pieces of one take, the stretch of
     ///     the file cut out between them; a fix only reaches into it.
+    ///   - cutAway: at the end of a clip, the stretch of the file after it
+    ///     that the next clip on the track doesn't play: from the edge on
+    ///     when the next clip is another file or there's none. `removed` is
+    ///     cut away too. Only a word in one of them can be the sentence's
+    ///     last word cut (`CutAudit.lastWordCut`).
     ///   - transcript: the words around the edge, in media time. Their times
     ///     only say where a word boundary can be; the sound says where it
     ///     is. They also keep a fix from bringing a cut word back or
     ///     dropping a kept one.
     public func judge(
-        at time: Double, keeps side: CutAudit.Side, removed: ClosedRange<Double>? = nil, transcript: [CutAudit.Word]
+        at time: Double, keeps side: CutAudit.Side, removed: ClosedRange<Double>? = nil, cutAway: ClosedRange<Double>? = nil,
+        transcript: [CutAudit.Word]
     ) -> CutAudit.Edge {
         let step = Self.step
         let x = (time - energy.start) / step
@@ -213,9 +219,12 @@ public struct CutPlacer: Sendable {
         let after = Int((x + 1e-6).rounded(.down))
         let (keptFrame, keptStep, lostFrame, lostStep) = side == .before ? (before, -1, after, 1) : (after, 1, before, -1)
         var near = around(time)
-        if near.isPause(keptFrame) || near.isPause(lostFrame) { return .clean }
+        // Before the pause check: a clip ending in a real pause before the
+        // sentence's last word leaves it hanging as much as one ending in a
+        // gap between words does.
+        let lastWord = side == .before ? CutAudit.lastWordCut(transcript, at: time, cutAway: cutAway ?? removed) : nil
+        if lastWord == nil, near.isPause(keptFrame) || near.isPause(lostFrame) { return .clean }
         near.wordGapFrames = betweenWords(transcript, in: near)
-        let lastWord = side == .before ? CutAudit.lastWordCut(transcript, at: time, removed: removed) : nil
         if lastWord == nil, near.isWordGap(keptFrame) || near.isWordGap(lostFrame) {
             var edge = CutAudit.Edge.clean
             edge.betweenWords = true
@@ -223,12 +232,12 @@ public struct CutPlacer: Sendable {
         }
 
         let score = score(at: time, keeps: side, speech: near.speech)
-        // Past the sentence's last word, from the edge's own gap if it's in
-        // one, is where a fix that finishes it goes.
+        // A fix that finishes the sentence goes past its last word, so the
+        // search for a pause starts at the word's end, less the slack in its
+        // times: the gap or pause between the edge and the word (the edge
+        // can be in it, or before it in the word it keeps) still cuts it.
         var lostFrom = lostFrame
-        if lastWord != nil {
-            while near.isWordGap(lostFrom), abs(lostFrom - lostFrame) < Int((CutAudit.reach / step).rounded()) { lostFrom += lostStep }
-        }
+        if let lastWord { lostFrom = max(lostFrame, energy.index(of: lastWord.end - CutAudit.endSlack)) }
         let lost = run(from: lostFrom, lostStep, edge: time, in: near)
         let kept = run(from: keptFrame, keptStep, edge: time, in: near)
         let lostSpeech = speech(Array(lost.frames.prefix(Int((CutAudit.reach / step).rounded()))), in: near)
@@ -247,7 +256,7 @@ public struct CutPlacer: Sendable {
         }
 
         var gap: Double?
-        for frame in [keptFrame, lostFrame] where near.isQuiet(frame) {
+        for frame in [keptFrame, lostFrame] where near.isQuiet(frame) && !near.isPause(frame) {
             var low = frame, high = frame
             while !near.isPause(low - 1), near.isQuiet(low - 1) { low -= 1 }
             while !near.isPause(high + 1), near.isQuiet(high + 1) { high += 1 }
@@ -279,7 +288,9 @@ public struct CutPlacer: Sendable {
             let others = transcript.filter { !cutIn.contains($0) }.map(\.range)
             if inCut, !Self.holdsWord(others, min(time, to)...max(time, to)) { moves.append((to, pause, !isPause)) }
         }
-        if kept.distance != nil {
+        // Back into the kept side leaves the sentence as unfinished as it
+        // was, so it's no fix for its last word.
+        if kept.distance != nil, lastWord == nil {
             let pause = pause(at: kept.pause, in: near)
             let isPause = near.isPause(kept.pause)
             let to = target(in: pause, direction: keptStep, startOfClip: false, inPause: isPause)

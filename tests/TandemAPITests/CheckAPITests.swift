@@ -265,9 +265,12 @@ final class CheckAPITests: XCTestCase {
     }
 
     /// The fixture with the camera's sound in a WAV file that's really there.
-    private func voicedHarness(words: [(Double, Double)], soft: [(Double, Double, Double)] = []) throws -> ServiceHarness {
+    private func voicedHarness(
+        words: [(Double, Double)], soft: [(Double, Double, Double)] = [], edit: (inout Project) -> Void = { _ in }
+    ) throws -> ServiceHarness {
         var project = APIFixture.project()
         project.media[0].path = "source/take1-camera.wav"
+        edit(&project)
         let h = try ServiceHarness(project: project)
         try FileManager.default.createDirectory(at: h.folder.file("source"), withIntermediateDirectories: true)
         try writeVoice(to: h.folder.file("source/take1-camera.wav"), length: 64, words: words, soft: soft)
@@ -392,6 +395,35 @@ final class CheckAPITests: XCTestCase {
         XCTAssertTrue(text.contains(" s later, past \"time.\", into the pause after it."), text)
         let json = String(decoding: try JSONEncoder().encode(cut), as: UTF8.self)
         XCTAssertTrue(json.contains(#""lastWordCut":"time.""#), json)
+    }
+
+    func testTheLastWordIsntCutWhenTheNextClipPlaysIt() async throws {
+        // "about [time.]" again, but the second piece starts where the first
+        // ends, at another speed: not a through-edit, so the join is checked,
+        // but it plays "time." whole and the sentence isn't left hanging.
+        let h = try voicedHarness(words: [(1, 3.6), (29.4, 30.0), (30.04, 30.4), (33, 33.8)]) { project in
+            for tracks in [\Project.videoTracks, \Project.audioTracks] {
+                for track in project[keyPath: tracks].indices {
+                    for clip in project[keyPath: tracks][track].clips.indices where project[keyPath: tracks][track].clips[clip].linkGroup == "lnk_b" {
+                        project[keyPath: tracks][track].clips[clip].sourceStart = t(30)
+                        project[keyPath: tracks][track].clips[clip].speed = 1.1
+                    }
+                }
+            }
+        }
+        defer { h.close() }
+        h.analysis.transcripts["med_camera"] = Transcript(language: "en", engine: "fake", words: [
+            TranscriptWord(text: "about", start: t(29.4), end: t(30)),
+            TranscriptWord(text: "time.", start: t(30), end: t(30.4)),
+            TranscriptWord(text: "Now", start: t(33), end: t(33.8))
+        ])
+        let result = try await CheckRequest(cuts: true).run(on: h.service, context: h.context)
+        XCTAssertTrue(result.ok, "\(result.problems)")
+
+        // With nothing after the first piece, "time." is gone.
+        try h.service.apply(ApplyRequest(label: "remove", commands: [.removeClips(clipIDs: ["clip_voc2"])]), context: h.context)
+        let alone = try await CheckRequest(cuts: true).run(on: h.service, context: h.context)
+        XCTAssertEqual(alone.problems.first?.cut?.lastWordCut, "time.", "\(alone.problems)")
     }
 
     func testAMarginalJoinIsANote() async throws {

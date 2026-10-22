@@ -35,6 +35,10 @@ enum CutCheck {
         /// the stretch of the file cut out between them (media time).
         var outgoing: Clip?
         var removed: ClosedRange<Double>?
+        /// At a clip's end, the stretch of its file after the edge that the
+        /// next clip on the track doesn't play (media time): from the edge
+        /// on when that's another file or there's none.
+        var cutAway: ClosedRange<Double>?
 
         var time: Time { edge == .end ? clip.end : clip.start }
         var mediaTime: Double { (edge == .end ? clip.sourceEnd : clip.sourceStart).seconds }
@@ -66,6 +70,15 @@ enum CutCheck {
             guard a.mediaID == b.mediaID, b.sourceStart > a.sourceEnd else { return nil }
             return a.sourceEnd.seconds...b.sourceStart.seconds
         }
+        /// What of the file after the end of `a` isn't played by `b`, the
+        /// next clip on the track, touching or not. A clip of the take that
+        /// starts back at or before the edge plays on to its own end.
+        func cutAway(_ a: Clip, _ b: Clip?) -> ClosedRange<Double> {
+            let edge = a.sourceEnd.seconds
+            guard let b, b.mediaID == a.mediaID else { return edge...Double.infinity }
+            if b.sourceStart.seconds > edge { return edge...b.sourceStart.seconds }
+            return max(edge, b.sourceEnd.seconds)...Double.infinity
+        }
         var edges: [Edge] = []
         for track in TranscriptTools.speechTracks(project) {
             let clips = track.clips.filter { clip in
@@ -84,6 +97,7 @@ enum CutCheck {
                 if next.map({ !throughEdit(clip, $0) }) ?? true, checked(clip.end) {
                     var edge = Edge(clip: clip, edge: .end, other: next?.id, media: media)
                     if let next, let removed = removed(clip, next) { (edge.outgoing, edge.removed) = (clip, removed) }
+                    edge.cutAway = cutAway(clip, index + 1 < clips.count ? clips[index + 1] : nil)
                     edges.append(edge)
                 }
             }
@@ -141,7 +155,7 @@ enum CutCheck {
                 guard let placer = placers.first(where: { $0.energy.start <= edge.mediaTime && edge.mediaTime <= $0.energy.end }) else { continue }
                 let near = (edge.mediaTime - window)...(edge.mediaTime + window)
                 let verdict = placer.judge(
-                    at: edge.mediaTime, keeps: edge.edge == .end ? .before : .after, removed: edge.removed,
+                    at: edge.mediaTime, keeps: edge.edge == .end ? .before : .after, removed: edge.removed, cutAway: edge.cutAway,
                     transcript: said.filter { $0.end >= near.lowerBound && $0.start <= near.upperBound }
                 )
                 guard verdict.verdict != .clean else { continue }

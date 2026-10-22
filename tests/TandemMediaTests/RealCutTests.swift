@@ -71,6 +71,23 @@ final class RealCutTests: XCTestCase {
         XCTAssertFalse(try judge(mic, at: 325.285, keeps: .before, removed: 325.285...327.74, words: words).clipped)
     }
 
+    /// The final cut kept "do," after a cut of "and also. [...] I've not seen
+    /// other places": "filled out, [do,] but I want to start off with
+    /// something spicy". The clip started at 157.47, in the closure gap
+    /// before "do" (157.53 to 157.67); it sounds clean and reads wrong. The
+    /// fix that worked started it at 157.715, in the gap before "but".
+    func testAClipOpeningOnTheLastWordOfACutSentenceIsAFragment() throws {
+        let mic = try mic()
+        let words = try bark(mic)
+        let edge = try judge(mic, at: 157.47, keeps: .after, removed: 147.07...157.47, words: words)
+        XCTAssertTrue(edge.clipped, "\(edge)")
+        XCTAssertEqual(edge.fragment, "do,")
+        let to = try XCTUnwrap(edge.suggestion, "\(edge)")
+        XCTAssertEqual(to, 157.715, accuracy: 0.03, "past \"do,\", before \"but\": \(edge)")
+        // Where the edit's fix went is clean.
+        XCTAssertFalse(try judge(mic, at: 157.715, keeps: .after, removed: 147.07...157.715, words: words).clipped)
+    }
+
     /// "convex." ends at 327.73 and "It's" starts at 327.78 (Bark has it at
     /// 327.89): a clip starting at 327.74, in the 45 ms gap between them,
     /// keeps "It's actually true" whole. The sound alone can't tell that gap

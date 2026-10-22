@@ -143,8 +143,25 @@ fix trims the clip before the join, which may not be `clipID`. `drops`
 is the kept word (the transcript's text) a trim back would have dropped,
 when that's why the fix isn't a trim; it's missing otherwise.
 `lastWordCut` is the last word of a sentence or clause the clip ends just
-before, cut with what follows, when that's what clips it. Marginal
-joins are notes of kind `marginalJoin`, with `cut.margin`.
+before, cut with what follows, when that's what clips it; `firstWordCut`
+the first word of the sentence a clip starts just after; `fragment` the
+leftover last word of a cut sentence a clip opens on; and `beforeFiller`
+the word a cut of a filler took with it. Marginal joins are notes of kind
+`marginalJoin`, with `cut.margin`.
+With `--listen` it has `listened` too:
+
+```
+"listened": {"engine": "Bark 3.0 Pro", "heard": 3, "cached": 0, "secondsPerJoin": 0.9,
+  "joins": [{"time": 30, "said": "that | Now", "heard": "that | be Now.", "clipIDs": ["clip_voc1", "clip_voc2"], "cached": false,
+             "findings": [{"kind": "extra", "heard": "be", "time": 30.06, "slip": false,
+                           "why": "sounds like part of \"because\", which is cut"}]}]}
+```
+
+`kind` is `notHeard` (a kept word near the join that isn't heard, `said`),
+`heardAs` (`said` heard as `heard`) or `extra` (`heard`, which the take
+doesn't keep there). A `slip` finding is as likely the engine's mistake;
+a join with any other is a `heardCutOff` problem, and one with only slips
+a `heardDifferently` note.
 A plain `tandem check --json` has `commands` and `revision` too when it
 can fix a flicker, and that problem's `fix` is the `holdFrame`.
 

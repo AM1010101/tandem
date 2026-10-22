@@ -16,15 +16,19 @@ public struct CheckRequest: ServiceCall {
     /// Only the cuts on the speech tracks: does the voice run right up to
     /// one (a clipped word)? Reads the files' sound, renders nothing.
     public var cuts: Bool?
+    /// With `cuts`: also render the voice across each join, transcribe it
+    /// and compare what's heard with the take's words (`CutListen`).
+    public var listen: Bool?
     /// How wide frames are rendered for the scan. Default 384.
     public var width: Int?
 
-    public init(from: Time? = nil, to: Time? = nil, changed: Bool? = nil, quick: Bool? = nil, cuts: Bool? = nil, width: Int? = nil) {
+    public init(from: Time? = nil, to: Time? = nil, changed: Bool? = nil, quick: Bool? = nil, cuts: Bool? = nil, listen: Bool? = nil, width: Int? = nil) {
         self.from = from
         self.to = to
         self.changed = changed
         self.quick = quick
         self.cuts = cuts
+        self.listen = listen
         self.width = width
     }
 
@@ -35,6 +39,7 @@ public struct CheckRequest: ServiceCall {
         changed = try c.decodeIfPresent(Bool.self, forKey: .changed)
         quick = try c.decodeIfPresent(Bool.self, forKey: .quick)
         cuts = try c.decodeIfPresent(Bool.self, forKey: .cuts)
+        listen = try c.decodeIfPresent(Bool.self, forKey: .listen)
         width = try c.decodeIfPresent(Int.self, forKey: .width)
     }
 
@@ -75,16 +80,19 @@ public struct CheckResult: Codable, Sendable {
     public var commands: [EditCommand]
     /// The revision the check read, for `commands`.
     public var revision: Int?
+    /// With `listen`: what was heard across each join.
+    public var listened: ListenSummary?
 
     public var ok: Bool { problems.isEmpty }
 
     enum CodingKeys: String, CodingKey {
-        case ranges, frames, seconds, problems, notes, clipNames, note, warnings, cuts, commands, revision, ok
+        case ranges, frames, seconds, problems, notes, clipNames, note, warnings, cuts, commands, revision, listened, ok
     }
 
     public init(
         ranges: [TimeRange], frames: Int, seconds: Double, problems: [CheckProblem], notes: [CheckProblem] = [], clipNames: [String: String],
-        note: String? = nil, warnings: [String] = [], cuts: Int? = nil, commands: [EditCommand] = [], revision: Int? = nil
+        note: String? = nil, warnings: [String] = [], cuts: Int? = nil, commands: [EditCommand] = [], revision: Int? = nil,
+        listened: ListenSummary? = nil
     ) {
         self.ranges = ranges
         self.frames = frames
@@ -97,6 +105,7 @@ public struct CheckResult: Codable, Sendable {
         self.cuts = cuts
         self.commands = commands
         self.revision = revision
+        self.listened = listened
     }
 
     public init(from decoder: Decoder) throws {
@@ -112,6 +121,7 @@ public struct CheckResult: Codable, Sendable {
         cuts = try c.decodeIfPresent(Int.self, forKey: .cuts)
         commands = try c.decodeIfPresent([EditCommand].self, forKey: .commands) ?? []
         revision = try c.decodeIfPresent(Int.self, forKey: .revision)
+        listened = try c.decodeIfPresent(ListenSummary.self, forKey: .listened)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -127,6 +137,7 @@ public struct CheckResult: Codable, Sendable {
         try c.encodeIfPresent(cuts, forKey: .cuts)
         if cuts != nil || !commands.isEmpty { try c.encode(commands, forKey: .commands) }
         try c.encodeIfPresent(revision, forKey: .revision)
+        try c.encodeIfPresent(listened, forKey: .listened)
         try c.encode(ok, forKey: .ok)
     }
 }
@@ -153,6 +164,18 @@ extension CheckResult: ReadableResult {
         if !notes.isEmpty {
             lines.append("Notes (not problems):")
             lines += notes.map(line)
+        }
+        if let listened {
+            // Every join's words, so an agent can read each one as the Ian
+            // session did: what reads wrong there is worth a listen too.
+            let timing = listened.secondsPerJoin.map { String(format: ", %.1f s a join", $0) } ?? ""
+            lines.append("Heard across \(listened.joins.count) join\(listened.joins.count == 1 ? "" : "s") with \(listened.engine) (\(listened.heard) heard\(timing), \(listened.cached) unchanged since the last check):")
+            for join in listened.joins {
+                let mark = join.clipped ? "  cut off" : join.findings.isEmpty ? "" : "  differs"
+                lines.append("  \(join.time)\(mark)")
+                lines.append("    take:  \(join.said)")
+                lines.append("    heard: \(join.heard)")
+            }
         }
         lines += warnings.map { "Warning: \($0)" }
         if !commands.isEmpty {
@@ -196,16 +219,44 @@ extension TandemService {
             ranges = [TimeRange(start: start, end: end)]
         }
         ranges = QualityCheck.merge(ranges)
-        if request.cuts == true {
+        if request.cuts == true || request.listen == true {
             if request.quick == true { throw ServiceError(.badRequest, "A cuts check renders nothing already, so it doesn't take quick.") }
             let folder = self.folder
             let revision = coordinator.revision
             let toCheck = ranges
             let why = note
             let words = toCheck.isEmpty ? [:] : CutCheck.words(in: project, analysis: analysis)
+            let listens = request.listen == true && !toCheck.isEmpty
+            let said = listens ? CutCheck.said(in: project, analysis: analysis) : []
+            let listening = cutListening
+            let mediaAnalysis = session.analysis
             return {
                 let started = Date()
-                let outcome = toCheck.isEmpty ? CutCheck.Outcome() : await CutCheck.run(project: project, folder: folder, ranges: toCheck, words: words)
+                var outcome = toCheck.isEmpty ? CutCheck.Outcome() : await CutCheck.run(project: project, folder: folder, ranges: toCheck, words: words)
+                var listened: ListenSummary?
+                if listens {
+                    var mix = listening?.mix
+                    if mix == nil {
+                        do {
+                            mix = try await CutCheck.Mix.speech(project, folder: folder, analysis: mediaAnalysis)
+                        } catch {
+                            outcome.warnings.append("Couldn't render the voice to listen to it: \((error as? LocalizedError)?.errorDescription ?? "\(error)")")
+                        }
+                    }
+                    if let mix, let ear = listening?.ear ?? CutCheck.Ear.standard() {
+                        let heard = await CutCheck.listen(
+                            project: project, edges: CutCheck.edges(in: project, ranges: toCheck), said: said, words: words, mix: mix, ear: ear,
+                            cache: CutListenCache(project: folder)
+                        )
+                        listened = heard.summary
+                        outcome.warnings += heard.warnings
+                        let found = CutCheck.problems(heard.summary)
+                        outcome.problems = (outcome.problems + found.problems).sorted { $0.start < $1.start }
+                        outcome.notes = (outcome.notes + found.notes).sorted { $0.start < $1.start }
+                    } else if mix != nil {
+                        outcome.warnings.append("Nothing to listen with: \(BarkListener.engine) isn't downloaded, and SpeechAnalyzer needs macOS 26.")
+                    }
+                }
                 var names: [String: String] = [:]
                 for id in Set((outcome.problems + outcome.notes).flatMap(\.clipIDs)) {
                     guard let clip = project.clip(id) else { continue }
@@ -213,7 +264,8 @@ extension TandemService {
                 }
                 return CheckResult(
                     ranges: toCheck, frames: 0, seconds: Date().timeIntervalSince(started), problems: outcome.problems, notes: outcome.notes,
-                    clipNames: names, note: why, warnings: outcome.warnings, cuts: outcome.checked, commands: outcome.commands, revision: revision
+                    clipNames: names, note: why, warnings: outcome.warnings, cuts: outcome.checked, commands: outcome.commands, revision: revision,
+                    listened: listened
                 )
             }
         }

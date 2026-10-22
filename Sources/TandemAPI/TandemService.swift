@@ -33,6 +33,9 @@ public final class TandemService: @unchecked Sendable {
     /// app, `tandem serve` and CLI commands set the asset library's; nil
     /// leaves them missing, with a warning.
     public var fontInstaller: FontInstalling?
+    /// What `check --cuts --listen` hears with and renders by, in place of
+    /// Bark (or SpeechAnalyzer) and the export mix: for tests.
+    var cutListening: (ear: CutCheck.Ear, mix: CutCheck.Mix)?
     /// Called for every call a client makes, reads included, with the
     /// operation's name (`status`, `apply`, `watch`...) and the author it's
     /// credited to, so the app can show which agent is connected. Runs on

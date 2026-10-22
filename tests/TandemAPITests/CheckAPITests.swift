@@ -217,7 +217,7 @@ final class CheckAPITests: XCTestCase {
     func testRequestsThatDontMakeSenseAreRefused() async throws {
         let h = try ServiceHarness()
         defer { h.close() }
-        for request in [CheckRequest(from: t(10), to: t(5)), CheckRequest(from: t(1), changed: true), CheckRequest(width: 10), CheckRequest(quick: true, cuts: true)] {
+        for request in [CheckRequest(from: t(10), to: t(5)), CheckRequest(from: t(1), changed: true), CheckRequest(width: 10), CheckRequest(quick: true, cuts: true), CheckRequest(quick: true, listen: true)] {
             do {
                 _ = try await request.run(on: h.service, context: h.context)
                 XCTFail("\(request) should be refused")
@@ -349,6 +349,86 @@ final class CheckAPITests: XCTestCase {
         XCTAssertEqual(unheard.problems.first?.cut?.fixKind, .trimToPause)
     }
 
+    /// Hears what `script` says for the join whose render starts at the
+    /// key's time, and counts how often it's asked.
+    private final class FakeEar: @unchecked Sendable {
+        let lock = NSLock()
+        var calls = 0
+        let script: [Double: [CutListen.Word]]
+
+        init(_ script: [Double: [CutListen.Word]]) {
+            self.script = script
+        }
+
+        /// A render whose every sample says where it starts, so the ear can
+        /// tell which join it's hearing.
+        var mix: CutCheck.Mix {
+            CutCheck.Mix(rate: CutListen.sampleRate) { from, to in [Float](repeating: Float(from) / 1000, count: Int(((to - from) * CutListen.sampleRate).rounded())) }
+        }
+
+        var ear: CutCheck.Ear {
+            CutCheck.Ear(engine: "fake") { samples in
+                self.lock.withLock { self.calls += 1 }
+                let from = (Double(samples[Int(CutListen.padding * CutListen.sampleRate)]) * 1000).rounded()
+                return self.script[from] ?? []
+            }
+        }
+    }
+
+    func testListeningHearsEachJoinAndFlagsWhatsCutOff() async throws {
+        // "that [because] Now": the first piece ends between "that" and
+        // "because", but "be" is heard after the join: the start of the cut
+        // word left in.
+        let h = try voicedHarness(words: [(1, 3.6), (29.5, 30.0), (30.02, 30.24), (33, 33.8)])
+        defer { h.close() }
+        h.analysis.transcripts["med_camera"] = Transcript(language: "en", engine: "fake", words: [
+            TranscriptWord(text: "So", start: t(1), end: t(3.6)),
+            TranscriptWord(text: "that", start: t(29.5), end: t(30)),
+            TranscriptWord(text: "because", start: t(30.02), end: t(30.24)),
+            TranscriptWord(text: "Now", start: t(33), end: t(33.8))
+        ])
+        // Heard times are from the start of what the engine hears: the
+        // padding, then 3 s before the join.
+        let lead = CutListen.padding + CutListen.span
+        let ear = FakeEar([
+            27: [CutListen.Word(text: "that", start: lead - 0.5, end: lead), CutListen.Word(text: "be", start: lead + 0.01, end: lead + 0.1),
+                 CutListen.Word(text: "Now.", start: lead + 1, end: lead + 1.8)],
+            -3: [CutListen.Word(text: "So", start: lead + 1, end: lead + 3.6)]
+        ])
+        h.service.cutListening = (ear.ear, ear.mix)
+        let result = try await CheckRequest(cuts: true, listen: true).run(on: h.service, context: h.context)
+        let listened = try XCTUnwrap(result.listened)
+        XCTAssertEqual(listened.engine, "fake")
+        XCTAssertEqual(listened.joins.map(\.time), [t(0), t(30), t(60)], "the take's start, the cut and its end")
+        XCTAssertEqual(listened.heard, 3)
+        XCTAssertEqual(listened.cached, 0)
+        let join = listened.joins[1]
+        XCTAssertEqual(join.said, "that | Now")
+        XCTAssertEqual(join.heard, "that | be Now.")
+        XCTAssertTrue(join.clipped)
+        XCTAssertEqual(join.clipIDs, ["clip_voc1", "clip_voc2"])
+        XCTAssertEqual(listened.joins[0].findings, [], "\(listened.joins[0])")
+
+        let heard = result.problems.filter { $0.kind == .heardCutOff }
+        XCTAssertEqual(heard.map(\.start), [t(30)])
+        let message = try XCTUnwrap(heard.first?.message)
+        XCTAssertTrue(message.contains("\"be\" is heard, which the take doesn't keep here (sounds like part of \"because\", which is cut)"), message)
+        XCTAssertFalse(result.ok)
+
+        let text = result.readableText
+        XCTAssertTrue(text.contains("Heard across 3 joins with fake (3 heard, "), text)
+        XCTAssertTrue(text.contains("  00:30.000  cut off\n    take:  that | Now\n    heard: that | be Now."), text)
+        let json = String(decoding: try JSONEncoder().encode(result), as: UTF8.self)
+        XCTAssertTrue(json.contains(#""listened":{"#), json)
+
+        // Nothing changed: every join comes from the cache.
+        let again = try await CheckRequest(cuts: true, listen: true).run(on: h.service, context: h.context)
+        XCTAssertEqual(again.listened?.cached, 3)
+        XCTAssertEqual(again.listened?.heard, 0)
+        XCTAssertEqual(ear.calls, 3, "nothing heard again")
+        XCTAssertEqual(again.problems.filter { $0.kind == .heardCutOff }.map(\.start), [t(30)])
+    }
+
     func testACutInAShortGapBetweenWordsIsFine() async throws {
         // "convex. [It's]": the first piece ends at 30, in the 40 ms gap
         // before the next word, which is cut. The sound alone can't tell
@@ -395,6 +475,35 @@ final class CheckAPITests: XCTestCase {
         XCTAssertTrue(text.contains(" s later, past \"time.\", into the pause after it."), text)
         let json = String(decoding: try JSONEncoder().encode(cut), as: UTF8.self)
         XCTAssertTrue(json.contains(#""lastWordCut":"time.""#), json)
+    }
+
+    func testAClipOpeningOnTheLastWordOfACutSentenceIsClipped() async throws {
+        // "that [I've not seen other places] do, but": the second piece
+        // starts in the gap before "do,", the end of the sentence the cut
+        // took. It sounds clean and reads wrong, so the fix drops "do,".
+        let h = try voicedHarness(words: [(1, 3.6), (29.5, 30.0), (31.4, 31.95), (32.03, 32.25), (32.32, 32.6), (33, 33.8)])
+        defer { h.close() }
+        h.analysis.transcripts["med_camera"] = Transcript(language: "en", engine: "fake", words: [
+            TranscriptWord(text: "that", start: t(29.5), end: t(30)),
+            TranscriptWord(text: "places", start: t(31.4), end: t(31.95)),
+            TranscriptWord(text: "do,", start: t(32.03), end: t(32.25)),
+            TranscriptWord(text: "but", start: t(32.32), end: t(32.6)),
+            TranscriptWord(text: "Now", start: t(33), end: t(33.8))
+        ])
+        let result = try await CheckRequest(cuts: true).run(on: h.service, context: h.context)
+        XCTAssertEqual(result.problems.map(\.kind), [.clippedWord])
+        let cut = try XCTUnwrap(result.problems.first?.cut)
+        XCTAssertEqual(cut.clipID, "clip_voc2")
+        XCTAssertEqual(cut.fragment, "do,")
+        XCTAssertEqual(cut.fixKind, .trimToPause)
+        let to = try XCTUnwrap(cut.to)
+        XCTAssertGreaterThan(to, t(30.25), "past \"do,\"")
+        XCTAssertLessThan(to, t(30.32), "before \"but\"")
+        let text = result.readableText
+        XCTAssertTrue(text.contains("Clipped word at the start of clip_voc2: it opens on \"do,\", the last word of the sentence cut before it. Trim the start "), text)
+        XCTAssertTrue(text.contains("past \"do,\", into the gap between words after it, dropping the leftover."), text)
+        let json = String(decoding: try JSONEncoder().encode(cut), as: UTF8.self)
+        XCTAssertTrue(json.contains(#""fragment":"do,""#), json)
     }
 
     func testTheLastWordIsntCutWhenTheNextClipPlaysIt() async throws {

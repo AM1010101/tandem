@@ -75,32 +75,7 @@ final class CutScorecardTests: XCTestCase {
         let wordsFolder = environment["TANDEM_CUT_WORDS"].map { URL(fileURLWithPath: $0, isDirectory: true) }
         let align = environment["TANDEM_CUT_ALIGN"] == "1"
 
-        // Levels per file from every window read, as `tandem check --cuts`
-        // works them out per take.
-        var results: [(Labelled, CutAudit.Edge)] = []
-        for (file, group) in Dictionary(grouping: edges, by: \.file).sorted(by: { $0.key < $1.key }) {
-            let url = media.appendingPathComponent(file)
-            let words = try wordsFolder.map {
-                try BarkWords.load($0.appendingPathComponent(url.deletingPathExtension().lastPathComponent + ".json"), aligningTo: align ? url : nil)
-            }
-            let windows = try group.map { try energy(url, from: $0.edge - Self.around, to: $0.edge + Self.around) }
-            let levels = SpeechLevels(of: windows)
-            for (labelled, window) in zip(group, windows) {
-                let removed = labelled.removed.flatMap { $0.count == 2 ? $0[0]...$0[1] : nil }
-                let side: CutAudit.Side = labelled.keeps == "before" ? .before : .after
-                let edge: CutAudit.Edge
-                if let words {
-                    // As `tandem check --cuts` passes them: the words its 3 s
-                    // either side of the edge reach.
-                    let near = (labelled.edge - CutAudit.around)...(labelled.edge + CutAudit.around)
-                    let nearby = words.filter { $0.range.overlaps(near) }
-                    edge = CutAudit.judge(window, levels: levels, at: labelled.edge, keeps: side, removed: removed, transcript: nearby)
-                } else {
-                    edge = CutAudit.judge(window, levels: levels, at: labelled.edge, keeps: side, removed: removed)
-                }
-                results.append((labelled, edge))
-            }
-        }
+        var results = try judgeAll(edges, media: media, wordsFolder: wordsFolder, align: align).results
         results.sort { ($0.0.file, $0.0.edge) < ($1.0.file, $1.0.edge) }
 
         var lines = ["Cut scorecard: \(results.count) edges, " + (wordsFolder == nil ? "no transcript" : align ? "aligned transcript" : "transcript in the engine's times")]
@@ -146,7 +121,7 @@ final class CutScorecardTests: XCTestCase {
             case .putBack: fixed = "putBack"
             case .unknown: fixed = "-"
             }
-            return "    \(labelled.id) \(String(format: "%.3f", labelled.edge)) keeps \(labelled.keeps): \(edge.verdict.rawValue), \(margin), lost \(lost), gap \(gap), fix \(fixName(edge.fix)) \(to)\(edge.betweenWords ? " between words" : "")\(edge.drops.map { " drops \"\($0)\"" } ?? "")\(edge.lastWordCut.map { " last word \"\($0)\"" } ?? "") (worked: \(fixed)) [\(labelled.kind ?? "")\(labelled.under.map { " under " + $0.joined(separator: "+") } ?? "")]"
+            return "    \(labelled.id) \(String(format: "%.3f", labelled.edge)) keeps \(labelled.keeps): \(edge.verdict.rawValue), \(margin), lost \(lost), gap \(gap), fix \(fixName(edge.fix)) \(to)\(edge.betweenWords ? " between words" : "")\(edge.drops.map { " drops \"\($0)\"" } ?? "")\(edge.lastWordCut.map { " last word \"\($0)\"" } ?? "")\(edge.firstWordCut.map { " first word \"\($0)\"" } ?? "")\(edge.fragment.map { " fragment \"\($0)\"" } ?? "")\(edge.beforeFiller.map { " before a filler \"\($0)\"" } ?? "") (worked: \(fixed)) [\(labelled.kind ?? "")\(labelled.under.map { " under " + $0.joined(separator: "+") } ?? "")]"
         }
         let missed = results.filter { $0.0.label == "clipped" && !$0.1.clipped && $0.0.source != "fixed" }
         let falseAlarms = results.filter { $0.0.label == "clean" && $0.1.clipped }
@@ -157,6 +132,15 @@ final class CutScorecardTests: XCTestCase {
         let lastWord = results.filter { $0.1.lastWordCut != nil }
         lines.append("  ending just before the last word of a sentence (\(lastWord.count)):")
         lines += lastWord.map { "  \($0.0.source ?? $0.0.label)" + row($0) }
+        let firstWord = results.filter { $0.1.firstWordCut != nil }
+        lines.append("  starting just after the first word of a sentence (\(firstWord.count)):")
+        lines += firstWord.map { "  \($0.0.source ?? $0.0.label)" + row($0) }
+        let fragment = results.filter { $0.1.fragment != nil }
+        lines.append("  starting on the last word of a cut sentence (\(fragment.count)):")
+        lines += fragment.map { "  \($0.0.source ?? $0.0.label)" + row($0) }
+        let beforeFiller = results.filter { $0.1.beforeFiller != nil }
+        lines.append("  cutting a filler and the word before it (\(beforeFiller.count)):")
+        lines += beforeFiller.map { "  \($0.0.source ?? $0.0.label)" + row($0) }
         if environment["TANDEM_CUT_ALL"] == "1" {
             for label in ["clipped", "marginal", "clean"] {
                 lines.append("  every \(label) edge:")
@@ -165,6 +149,167 @@ final class CutScorecardTests: XCTestCase {
         }
         print(lines.joined(separator: "\n"))
         XCTAssertFalse(results.isEmpty)
+    }
+
+    /// How `check --cuts --listen` does on the same edit: each join whose
+    /// two sides come from one file (an edge with a `removed` range says
+    /// both, whichever of them is labelled) is spliced from the mic as the
+    /// edit plays it (the kept sound before the out-edge, then from the
+    /// in-edge on, butt joined), heard with Bark 3.0 Pro, and compared with
+    /// the take's transcript (TANDEM_CUT_WORDS, needed here) as `CutListen`
+    /// compares them. Joins between files are skipped and counted. Each
+    /// line says whether the levels (`testScorecard`'s judgement) flag
+    /// either edge too, since `--listen` runs beside them.
+    ///
+    /// Needs Bark's model in Tandem's folder, or TANDEM_CUT_LISTEN_WITH: a
+    /// command that hears `<key>.f32` files (16 kHz mono float, padding and
+    /// all) and writes `<key>.json` beside each, as `[{"text", "start",
+    /// "end"}]`, for another runtime of the model where CoreML can't run.
+    /// What's heard is kept in TANDEM_CUT_LISTEN_CACHE (default
+    /// `$TMPDIR/tandem-listen-scorecard`), so a second run only compares.
+    func testListeningScorecard() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let edgesPath = environment["TANDEM_CUT_EDGES"], let mediaPath = environment["TANDEM_CUT_MEDIA"],
+              let wordsPath = environment["TANDEM_CUT_WORDS"] else {
+            throw XCTSkip("set TANDEM_CUT_EDGES, TANDEM_CUT_MEDIA and TANDEM_CUT_WORDS to score listening")
+        }
+        let listener = BarkListener.standard
+        guard listener.isReady || environment["TANDEM_CUT_LISTEN_WITH"] != nil else { throw XCTSkip("Bark 3.0 Pro isn't downloaded") }
+        let edges = try JSONDecoder().decode([Labelled].self, from: Data(contentsOf: URL(fileURLWithPath: edgesPath)))
+        let media = URL(fileURLWithPath: mediaPath, isDirectory: true)
+        let cache = CutListenCache(folder: environment["TANDEM_CUT_LISTEN_CACHE"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("tandem-listen-scorecard", isDirectory: true))
+        let (judged, transcripts) = try judgeAll(edges, media: media, wordsFolder: URL(fileURLWithPath: wordsPath, isDirectory: true), align: environment["TANDEM_CUT_ALIGN"] == "1")
+        let levels = Dictionary(judged.map { ($0.0.id, $0.1) }, uniquingKeysWith: { a, _ in a })
+
+        /// One join: the out-edge and the in-edge of one stretch cut out of
+        /// a file.
+        struct Join {
+            var file: String
+            var removed: ClosedRange<Double>
+            var out: [Labelled] = []
+            var into: [Labelled] = []
+            var all: [Labelled] { out + into }
+        }
+        var joins: [Join] = []
+        var betweenFiles = 0
+        for edge in edges {
+            guard let range = edge.removed, range.count == 2, range[1] > range[0] else {
+                betweenFiles += 1
+                continue
+            }
+            let removed = range[0]...range[1]
+            var index = joins.firstIndex { $0.file == edge.file && abs($0.removed.lowerBound - removed.lowerBound) < 0.0015 && abs($0.removed.upperBound - removed.upperBound) < 0.0015 }
+            if index == nil {
+                joins.append(Join(file: edge.file, removed: removed))
+                index = joins.count - 1
+            }
+            if edge.keeps == "before" { joins[index!].out.append(edge) } else { joins[index!].into.append(edge) }
+        }
+
+        // Every join's splice first, so what isn't in the cache is heard in
+        // one go.
+        let external = environment["TANDEM_CUT_LISTEN_WITH"]
+        let engine = external == nil ? BarkListener.engine : BarkListener.engine + " (\(external!))"
+        let ordered = joins.sorted(by: { ($0.file, $0.removed.lowerBound) < ($1.file, $1.removed.lowerBound) })
+        var splices: [(input: [Float], key: String, offset: Double)] = []
+        for join in ordered {
+            let url = media.appendingPathComponent(join.file)
+            let (before, rate) = try samples(url, from: join.removed.lowerBound - CutListen.span, to: join.removed.lowerBound)
+            let (after, _) = try samples(url, from: join.removed.upperBound, to: join.removed.upperBound + CutListen.span)
+            let input = try CutListen.prepare(before + after, rate: rate)
+            splices.append((input, CutListenCache.key(input, engine: engine), CutListen.padding + Double(before.count) / rate))
+        }
+        let missing = splices.filter { cache.heard($0.key) == nil }
+        let started = Date()
+        if let external, !missing.isEmpty {
+            // Another runtime of the same model, where CoreML can't run (a
+            // sandbox that can't write its compile cache): it reads each
+            // `<key>.f32` (16 kHz mono float) and writes `<key>.json`.
+            try FileManager.default.createDirectory(at: cache.folder, withIntermediateDirectories: true)
+            var paths: [String] = []
+            for splice in missing {
+                let path = cache.folder.appendingPathComponent("\(splice.key).f32")
+                try splice.input.withUnsafeBufferPointer { Data(buffer: $0) }.write(to: path)
+                paths.append(path.path)
+            }
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = ["-c", external + " \"$@\"", "listen"] + paths
+            try process.run()
+            process.waitUntilExit()
+            for path in paths { try? FileManager.default.removeItem(atPath: path) }
+        } else {
+            for splice in missing { cache.store(try await listener.listen(splice.input), for: splice.key) }
+        }
+        let heardSeconds = Date().timeIntervalSince(started), listened = missing.count
+
+        var rows: [(join: Join, heard: CutListen.Join)] = []
+        for (join, splice) in zip(ordered, splices) {
+            let out = join.removed.lowerBound, into = join.removed.upperBound
+            let heard = try XCTUnwrap(cache.heard(splice.key), "nothing heard for \(join.file) \(join.removed)")
+            // The splice's own time: the join at 0.
+            let heardWords = heard.map { CutListen.Word(text: $0.text, start: $0.start - splice.offset, end: $0.end - splice.offset) }
+            let words = transcripts[join.file] ?? []
+            func middle(_ word: CutAudit.Word) -> Double { (word.start + word.end) / 2 }
+            let said = words.filter { middle($0) < out && $0.end > out - CutListen.span }.map { CutListen.Word(text: $0.text, start: $0.start - out, end: $0.end - out) }
+                + words.filter { middle($0) >= into && $0.start < into + CutListen.span }.map { CutListen.Word(text: $0.text, start: $0.start - into, end: $0.end - into) }
+            let cut = words.filter { middle($0) >= out && middle($0) < into }.map(\.text)
+            let result = CutListen.compare(said: said, heard: heardWords, at: 0, cutPast: Array(cut.prefix(2)), cutBefore: Array(cut.suffix(2)))
+            rows.append((join, result))
+        }
+
+        func source(_ join: Join) -> String {
+            if join.all.contains(where: { $0.source == "heard" && !$0.isEditorial }) { return "heard" }
+            if join.all.contains(where: { $0.source == "heard" }) { return "heard, editorial" }
+            if join.all.allSatisfy({ $0.source == "approved" }) { return "approved" }
+            return "fixed"
+        }
+        func byLevels(_ join: Join) -> Bool { join.all.contains { levels[$0.id]?.clipped == true } }
+        func line(_ row: (join: Join, heard: CutListen.Join)) -> String {
+            let ids = row.join.all.map(\.id).joined(separator: "+")
+            let findings = row.heard.findings.map { "\($0.slip ? "note" : "CLIP") \($0.summary) (\($0.why))" }.joined(separator: "; ")
+            return String(format: "    %@ %@ %.3f-%.3f [%@]%@\n      said:  %@\n      heard: %@%@", ids, String(row.join.file.suffix(12)), row.join.removed.lowerBound, row.join.removed.upperBound,
+                          row.join.all.compactMap(\.kind).joined(separator: ","), byLevels(row.join) ? " (levels: clipped)" : "",
+                          row.heard.said, row.heard.heard, findings.isEmpty ? "" : "\n      " + findings)
+        }
+        var lines = ["Listening scorecard: \(rows.count) joins cut out of one file heard (\(betweenFiles) edges between files, skipped)"]
+        lines.append("  engine: \(engine)")
+        if listened > 0 { lines.append(String(format: "  listened to %d joins in %.1f s, %.2f s a join (the rest from the cache)", listened, heardSeconds, heardSeconds / Double(listened))) }
+        for kind in ["heard", "heard, editorial", "fixed", "approved"] {
+            let these = rows.filter { source($0.join) == kind }
+            guard !these.isEmpty else { continue }
+            let listen = these.filter(\.heard.clipped).count
+            let notes = these.filter { !$0.heard.clipped && !$0.heard.findings.isEmpty }.count
+            let either = these.filter { $0.heard.clipped || byLevels($0.join) }.count
+            lines.append("  \(kind) (\(these.count)): listening flags \(listen), notes only \(notes); levels \(these.filter { byLevels($0.join) }.count); either \(either)")
+        }
+        for kind in ["heard", "heard, editorial"] {
+            lines.append("  every \(kind) join:")
+            lines += rows.filter { source($0.join) == kind }.map(line)
+        }
+        lines.append("  approved joins listening flags:")
+        lines += rows.filter { source($0.join) == "approved" && $0.heard.clipped }.map(line)
+        lines.append("  approved joins with notes only:")
+        lines += rows.filter { source($0.join) == "approved" && !$0.heard.clipped && !$0.heard.findings.isEmpty }.map(line)
+        if environment["TANDEM_CUT_ALL"] == "1" {
+            lines.append("  every other join:")
+            lines += rows.filter { source($0.join) == "fixed" || (source($0.join) == "approved" && $0.heard.findings.isEmpty) }.map(line)
+        }
+        print(lines.joined(separator: "\n"))
+        XCTAssertFalse(rows.isEmpty)
+    }
+
+    /// Mono samples of the file from `from` to `to`, and their rate.
+    private func samples(_ url: URL, from: Double, to: Double) throws -> ([Float], Double) {
+        let file = try AVAudioFile(forReading: url)
+        let rate = file.processingFormat.sampleRate
+        let start = max(0, from)
+        file.framePosition = AVAudioFramePosition((start * rate).rounded())
+        let count = AVAudioFrameCount(((to - start) * rate).rounded())
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: count))
+        try file.read(into: buffer, frameCount: count)
+        return (Array(UnsafeBufferPointer(start: try XCTUnwrap(buffer.floatChannelData)[0], count: Int(buffer.frameLength))), rate)
     }
 
     /// How `CutPlanner` (`tandem cut`) does on the same edit: for every
@@ -289,6 +434,39 @@ final class CutScorecardTests: XCTestCase {
         }
         print(lines.joined(separator: "\n"))
         XCTAssertFalse(joins.isEmpty)
+    }
+
+    /// Every edge judged, levels per file from every window read, as
+    /// `tandem check --cuts` works them out per take; and each file's
+    /// transcript, when there's one.
+    private func judgeAll(_ edges: [Labelled], media: URL, wordsFolder: URL?, align: Bool) throws -> (results: [(Labelled, CutAudit.Edge)], words: [String: [CutAudit.Word]]) {
+        var results: [(Labelled, CutAudit.Edge)] = []
+        var transcripts: [String: [CutAudit.Word]] = [:]
+        for (file, group) in Dictionary(grouping: edges, by: \.file).sorted(by: { $0.key < $1.key }) {
+            let url = media.appendingPathComponent(file)
+            let words = try wordsFolder.map {
+                try BarkWords.load($0.appendingPathComponent(url.deletingPathExtension().lastPathComponent + ".json"), aligningTo: align ? url : nil)
+            }
+            transcripts[file] = words
+            let windows = try group.map { try energy(url, from: $0.edge - Self.around, to: $0.edge + Self.around) }
+            let levels = SpeechLevels(of: windows)
+            for (labelled, window) in zip(group, windows) {
+                let removed = labelled.removed.flatMap { $0.count == 2 ? $0[0]...$0[1] : nil }
+                let side: CutAudit.Side = labelled.keeps == "before" ? .before : .after
+                let edge: CutAudit.Edge
+                if let words {
+                    // As `tandem check --cuts` passes them: the words its 3 s
+                    // either side of the edge reach.
+                    let near = (labelled.edge - CutAudit.around)...(labelled.edge + CutAudit.around)
+                    let nearby = words.filter { $0.range.overlaps(near) }
+                    edge = CutAudit.judge(window, levels: levels, at: labelled.edge, keeps: side, removed: removed, transcript: nearby)
+                } else {
+                    edge = CutAudit.judge(window, levels: levels, at: labelled.edge, keeps: side, removed: removed)
+                }
+                results.append((labelled, edge))
+            }
+        }
+        return (results, transcripts)
     }
 
     /// The final cut's set by where each edge came from: what Mike heard,

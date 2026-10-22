@@ -172,7 +172,8 @@ export class Tandem {
   search = (phrase: string) => this.call<SearchResult>("search", { phrase });
   pauses = (min = 0.6) => this.call<PausesResult>("pauses", { min });
   history = async () => (await this.call<{ events: HistoryEvent[] }>("history")).events;
-  check = (opts: { from?: number | string; to?: number | string; changed?: boolean; quick?: boolean } = {}) =>
+  /** cuts: words clipped at cuts; listen: hear each join too (`listened` in the result). */
+  check = (opts: { from?: number | string; to?: number | string; changed?: boolean; quick?: boolean; cuts?: boolean; listen?: boolean } = {}) =>
     this.call<CheckResult>("check", opts);
   frame = (time: number | string, output: string) => this.call("frame", { time, output });
   /** Several frames on one contact sheet PNG, each labelled with its time. */

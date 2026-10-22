@@ -173,12 +173,34 @@ file, or there's none); two clips of a take meeting at different speeds
 may play it, so that doesn't count. "like" and "know" don't count:
 cutting a "you know," or "like." filler is what Mike does.
 
+Three more cuts leave a sentence wrong however clean they sound, all found
+on the Ian video's final cut after it was signed off:
+
+- The mirror of that: a clip that starts just after the first word of its
+  sentence, with that word cut ("start TS. [It's] like the time"). The cut
+  word follows one ending in . ? or ! (a comma isn't enough: "when you,
+  [if] you were to" was a false start Mike kept cut), most of it is before
+  the edge, it ends within 0.15 s of it, and it isn't an opener Mike cuts
+  on its own ("So", "And", "Yeah"). The fix goes back before the word
+  (`firstWordCut`).
+- A clip that opens on the last word of the sentence cut before it: a
+  short word (four letters or fewer) ending a sentence or clause, starting
+  just after the edge, after a cut word that doesn't end one ("other
+  places [do,] but I want to start off"). The fix starts the clip after
+  it, dropping the leftover (`fragment`).
+- A cut of a filler that took the "the" (or another determiner) before it,
+  and nothing else ("And [the like,] challenge there"). The fix keeps both,
+  past the filler: Mike's fix did, since "the" runs straight into "like".
+  A cut that goes on through the word again ("the, like, the") is a false
+  start, cut whole on purpose (`beforeFiller`).
+
 The last line is a `tandem apply` that makes every fix (in `--json`,
 `commands`, latest first, and `revision`; each problem's `cut` has
 `clipID`, `edge`, `margin`, `fixKind`, `to`, `fix`, and `drops` (the kept
-word a trim back would drop) and `lastWordCut` (the sentence's last word,
-cut right after the clip) when they apply; a marginal join's note has
-`clipID`, `edge` and `margin`).
+word a trim back would drop), `lastWordCut` (the sentence's last word,
+cut right after the clip), `firstWordCut`, `fragment` and `beforeFiller`
+when they apply; a marginal join's note has `clipID`, `edge` and
+`margin`).
 
 ```
 Checked 00:00.000-01:00.000 (4 cut edges) in 0.1 s: 1 problem:
@@ -186,6 +208,56 @@ Checked 00:00.000-01:00.000 (4 cut edges) in 0.1 s: 1 problem:
 Notes (not problems):
   00:42.500  Marginal join at the end of clip_voc2: the clip's last 25 ms is 12.8 dB under the speech (clean is 15 or more, clipped under 9). Listen to it with tandem clip.  On: clip_voc2 take1-camera, clip_voc3 take1-camera
 Fix: tandem apply --expect 7 --label "Move clipped cuts into pauses" '[{"trim":{"clipID":"clip_voc1","edge":"end","ripple":true,"to":30.166667}}]'
+```
+
+### Hearing each join (`--listen`)
+
+The levels and the transcript's times can't hear everything. On the Ian
+video's final cut, after it was signed off, transcribing the rendered voice
+and reading the words across every join found five more cut-offs (and two
+of the five it flagged were the transcription's slips). `tandem check
+--cuts --listen` (MCP and HTTP `listen: true`) does that pass: for each
+join in the stretch it renders the voice 3 s either side as it plays (the
+speech tracks only, with 0.5 s of silence either side, which helps the
+engine), transcribes it with Bark 3.0 Pro (SpeechAnalyzer when Bark isn't
+downloaded), and lines the words up with the take's kept words there.
+
+- A kept word within 0.6 s of the join that isn't heard, or is heard cut
+  short ("extra" for "extract"), or part of a cut word heard by the join
+  ("oh" from the start of "okay"), is a `heardCutOff` problem.
+- A mismatch that's as likely the engine's slip is a `heardDifferently`
+  note: a short word or a filler left out or added, a near spelling, an
+  inflection ("happen" for "happened"), or a cut word heard whole (the
+  transcript's times put it in the cut, but the cut keeps all of it).
+- Words match loosely, and the finding says how: case, punctuation,
+  numbers ("15" and "fifteen"), spoken forms ("wanna" and "want to"),
+  letters spelled out ("t. s." and "TS").
+
+It always prints the take's words and the words heard across every join,
+`|` at the join, so read them all for anything that doesn't run on (a
+leftover heard as a whole word reads fine to the comparison), and listen
+to what reads wrong with `tandem clip`. A join takes about a second the
+first time. What's heard is kept in `.tandem/cache/listen` by the sound
+rendered, so a check after edits only listens again where the sound
+changed. In `--json`, `listened` has `engine`, `heard` and `cached` (how
+many joins were heard this time and how many came from the cache),
+`secondsPerJoin`, and `joins`: each with `time`, `said`, `heard`,
+`clipIDs`, `cached` and `findings` (`kind`: `notHeard`, `heardAs` or
+`extra`; `said`, `heard`, `time`, `slip` and `why`).
+
+```
+Checked 00:00.000-01:00.000 (4 cut edges) in 2.3 s: 1 problem:
+  00:30.000  Heard cut off at the join: "be" is heard, which the take doesn't keep here (sounds like part of "because", which is cut). Take: "that | Now". Heard: "that | be Now.". Listen with tandem clip and recut it.  On: clip_voc1 take1-camera, clip_voc2 take1-camera
+Heard across 3 joins with Bark 3.0 Pro (3 heard, 0.9 s a join, 0 unchanged since the last check):
+  00:00.000
+    take:  | So
+    heard: | So
+  00:30.000  cut off
+    take:  that | Now
+    heard: that | be Now.
+  01:00.000
+    take:  Now |
+    heard: Now. |
 ```
 
 ## What changed, and putting it back

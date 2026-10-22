@@ -192,7 +192,10 @@ enum CutCheck {
         let level = margin.map {
             "the clip's \(isEnd ? "last" : "first") 25 ms is " + ($0 < 1 ? "at speech level" : "\(String(format: "%.1f", $0)) dB under the speech")
         } ?? ""
-        var cut = CheckProblem.CutEdge(clipID: clip.id, edge: edge.edge, margin: margin, drops: verdict.drops, lastWordCut: verdict.lastWordCut)
+        var cut = CheckProblem.CutEdge(
+            clipID: clip.id, edge: edge.edge, margin: margin, drops: verdict.drops, lastWordCut: verdict.lastWordCut,
+            firstWordCut: verdict.firstWordCut, fragment: verdict.fragment, beforeFiller: verdict.beforeFiller
+        )
         guard verdict.clipped else {
             return CheckProblem(
                 kind: .marginalJoin, start: edge.time, end: edge.time,
@@ -202,8 +205,16 @@ enum CutCheck {
         }
 
         var what: String
+        // The sentence rules say what's wrong whatever the sound does.
+        let sentence = verdict.lastWordCut ?? verdict.firstWordCut ?? verdict.fragment ?? verdict.beforeFiller
         if let word = verdict.lastWordCut {
             what = "it ends just before \"\(word)\", the last word of the sentence, which is cut"
+        } else if let word = verdict.firstWordCut {
+            what = "it starts just after \"\(word)\", the first word of the sentence, which is cut"
+        } else if let word = verdict.fragment {
+            what = "it opens on \"\(word)\", the last word of the sentence cut before it"
+        } else if let word = verdict.beforeFiller {
+            what = "the cut takes \"\(word)\" with the filler after it, and the sentence needs it"
         } else if let lost = verdict.lost {
             what = isEnd
                 ? "the voice runs on \(String(format: "%.2f", lost)) s past the cut"
@@ -213,11 +224,11 @@ enum CutCheck {
                 ? "the voice runs on past the cut with no pause within \(String(format: "%.1f", CutAudit.reach)) s"
                 : "the voice was already going \(String(format: "%.1f", CutAudit.reach)) s before the cut"
         }
-        if verdict.highBandOnly, verdict.lastWordCut == nil { what += ", heard only above 4 kHz (an \"s\" or a \"t\")" }
-        if let gap = verdict.gap, verdict.lastWordCut == nil {
+        if verdict.highBandOnly, sentence == nil { what += ", heard only above 4 kHz (an \"s\" or a \"t\")" }
+        if let gap = verdict.gap, sentence == nil {
             what += "; the cut is in a \(String(format: "%.2f", gap)) s gap inside a word, not a pause"
         }
-        if !level.isEmpty, verdict.lastWordCut == nil { what += "; \(level)" }
+        if !level.isEmpty, sentence == nil { what += "; \(level)" }
         let dropping = verdict.drops.map { " Trimming back to a pause would drop \"\($0)\"." } ?? ""
 
         let reach = String(format: "%.1f", CutAudit.reach)
@@ -239,10 +250,10 @@ enum CutCheck {
             let into: String
             let pause = verdict.betweenWords ? "gap between words" : "pause"
             switch (isEnd, later) {
-            case (true, true): into = verdict.lastWordCut.map { "past \"\($0)\", into the \(pause) after it." } ?? "into the \(pause) after it."
+            case (true, true): into = (verdict.lastWordCut ?? verdict.beforeFiller).map { "past \"\($0)\", into the \(pause) after it." } ?? "into the \(pause) after it."
             case (true, false): into = "into the \(pause) before it, dropping the start of the word."
-            case (false, false): into = "into the \(pause) before it."
-            case (false, true): into = "into the \(pause) after it, dropping the end of the word."
+            case (false, false): into = verdict.firstWordCut.map { "back before \"\($0)\", into the \(pause) before it." } ?? "into the \(pause) before it."
+            case (false, true): into = verdict.fragment.map { "past \"\($0)\", into the \(pause) after it, dropping the leftover." } ?? "into the \(pause) after it, dropping the end of the word."
             }
             advice = "Trim the \(isEnd ? "end" : "start") \(amount) s \(later ? "later" : "earlier"), \(into)"
         } else if verdict.lost != nil || verdict.kept <= CutAudit.reach {

@@ -221,11 +221,19 @@ public struct CutPlacer: Sendable {
         var near = around(time)
         // Before the pause check: a clip ending in a real pause before the
         // sentence's last word leaves it hanging as much as one ending in a
-        // gap between words does.
-        let lastWord = side == .before ? CutAudit.lastWordCut(transcript, at: time, cutAway: cutAway ?? removed) : nil
-        if lastWord == nil, near.isPause(keptFrame) || near.isPause(lostFrame) { return .clean }
+        // gap between words does, and the same goes for the other ways a
+        // cut leaves a sentence wrong.
+        let gone = cutAway ?? removed
+        let lastWord = side == .before ? CutAudit.lastWordCut(transcript, at: time, cutAway: gone) : nil
+        let beforeFiller = side == .before && lastWord == nil ? CutAudit.wordBeforeFiller(transcript, at: time, removed: removed) : nil
+        let firstWord = side == .after ? CutAudit.firstWordCut(transcript, at: time, cutAway: gone) : nil
+        let fragment = side == .after && firstWord == nil ? CutAudit.fragment(transcript, at: time, cutAway: gone) : nil
+        // A word cut that has to come back: past it, into the cut material.
+        let lostWord = lastWord ?? beforeFiller ?? firstWord
+        let sentence = lostWord != nil || fragment != nil
+        if !sentence, near.isPause(keptFrame) || near.isPause(lostFrame) { return .clean }
         near.wordGapFrames = betweenWords(transcript, in: near)
-        if lastWord == nil, near.isWordGap(keptFrame) || near.isWordGap(lostFrame) {
+        if !sentence, near.isWordGap(keptFrame) || near.isWordGap(lostFrame) {
             var edge = CutAudit.Edge.clean
             edge.betweenWords = true
             return edge
@@ -236,10 +244,21 @@ public struct CutPlacer: Sendable {
         // search for a pause starts at the word's end, less the slack in its
         // times: the gap or pause between the edge and the word (the edge
         // can be in it, or before it in the word it keeps) still cuts it.
+        // The first word of the clip's sentence the other way: from its
+        // start, plus the slack. A leftover the clip opens on is dropped:
+        // the search into what the clip keeps starts at its end.
         var lostFrom = lostFrame
-        if let lastWord { lostFrom = max(lostFrame, energy.index(of: lastWord.end - CutAudit.endSlack)) }
-        let lost = run(from: lostFrom, lostStep, edge: time, in: near)
-        let kept = run(from: keptFrame, keptStep, edge: time, in: near)
+        if let lostWord {
+            lostFrom = side == .before
+                ? max(lostFrame, energy.index(of: lostWord.end - CutAudit.endSlack))
+                : min(lostFrame, energy.index(of: lostWord.start + CutAudit.startSlack))
+        }
+        var keptFrom = keptFrame
+        if let fragment { keptFrom = max(keptFrame, energy.index(of: fragment.end - CutAudit.endSlack)) }
+        // The word before a filler can be well past an edge in a pause, so
+        // the reach is from the word.
+        let lost = run(from: lostFrom, lostStep, edge: beforeFiller == nil ? time : energy.start + Double(lostFrom) * step, in: near)
+        let kept = run(from: keptFrom, keptStep, edge: time, in: near)
         let lostSpeech = speech(Array(lost.frames.prefix(Int((CutAudit.reach / step).rounded()))), in: near)
         // Voice at speech level past the edge, before any real pause (or,
         // with a transcript, gap between words): the edge is inside a word,
@@ -249,7 +268,7 @@ public struct CutPlacer: Sendable {
         // where the clip's last 25 ms reads 15 to 24 dB under the speech.
         let runsOn = max(lostSpeech.full, lostSpeech.high) >= Int((CutAudit.minSpeech / step).rounded())
         let verdict: CutAudit.Verdict
-        if score.margin < CutAudit.clippedUnder || runsOn || lastWord != nil {
+        if score.margin < CutAudit.clippedUnder || runsOn || sentence {
             verdict = .clipped
         } else {
             verdict = score.margin < CutAudit.cleanFrom ? .marginal : .clean
@@ -268,6 +287,9 @@ public struct CutPlacer: Sendable {
             gap: gap, highBandOnly: runsOn && lostSpeech.full == 0, pause: nil, suggestion: nil, fix: nil
         )
         edge.lastWordCut = lastWord?.text
+        edge.beforeFiller = beforeFiller?.text
+        edge.firstWordCut = firstWord?.text
+        edge.fragment = fragment?.text
         guard verdict == .clipped else { return edge }
 
         // On past what's cut off, into a pause (or gap between words) in the
@@ -277,10 +299,16 @@ public struct CutPlacer: Sendable {
         // when more than a sliver of it is (`holdsWord`): it's what the clip
         // was cut in, and trimming back over it deletes it ("time" before
         // "And" on the Ian video, #64).
-        let cutIn = transcript.filter { $0.start + 1e-6 < time && time < $0.end - 1e-6 } + (lastWord.map { [$0] } ?? [])
+        // A word a cut of a filler took comes back with the filler it runs
+        // into, which is what the fix that worked on the Ian video kept.
+        var cutIn = transcript.filter { $0.start + 1e-6 < time && time < $0.end - 1e-6 } + (lostWord.map { [$0] } ?? [])
+        if let beforeFiller, let removed {
+            cutIn += transcript.filter { $0.start > beforeFiller.start && $0.end <= removed.upperBound + CutAudit.endSlack }
+        }
         var moves: [(to: Double, pause: ClosedRange<Double>, betweenWords: Bool)] = []
         var drops: String?
-        if lost.distance != nil {
+        // A leftover's fix drops it from the clip: nothing outward would.
+        if lost.distance != nil, fragment == nil {
             let pause = pause(at: lost.pause, in: near)
             let isPause = near.isPause(lost.pause)
             let to = target(in: pause, direction: lostStep, startOfClip: side == .after, inPause: isPause)
@@ -290,12 +318,12 @@ public struct CutPlacer: Sendable {
         }
         // Back into the kept side leaves the sentence as unfinished as it
         // was, so it's no fix for its last word.
-        if kept.distance != nil, lastWord == nil {
+        if kept.distance != nil, lostWord == nil {
             let pause = pause(at: kept.pause, in: near)
             let isPause = near.isPause(kept.pause)
             let to = target(in: pause, direction: keptStep, startOfClip: false, inPause: isPause)
             let stretch = min(time, to)...max(time, to)
-            if let word = transcript.first(where: { Self.holdsWord([$0.range], stretch) }) {
+            if let word = transcript.first(where: { $0 != fragment && Self.holdsWord([$0.range], stretch) }) {
                 drops = word.text.isEmpty ? nil : word.text
             } else {
                 moves.append((to, pause, !isPause))

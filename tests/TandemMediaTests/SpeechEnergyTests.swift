@@ -367,8 +367,11 @@ final class SpeechEnergyTests: XCTestCase {
             XCTAssertEqual(join.verdict, .clean, "\(kept) [\(cut)]: \(join)")
             XCTAssertNil(join.lastWordCut)
         }
-        // And it's only the end of a clip: a clip starting on "time." is fine.
-        XCTAssertEqual(judge(take, at: 10.93, keeps: .after, removed: 9...10.93, transcript: words("about", "time.")).verdict, .clean)
+        // And it's only the end of a clip: a clip starting on "time." opens
+        // on what's left of a cut sentence instead (`fragment`).
+        let start = judge(take, at: 10.93, keeps: .after, removed: 9...10.93, transcript: words("about", "time."))
+        XCTAssertNil(start.lastWordCut)
+        XCTAssertEqual(start.fragment, "time.")
     }
 
     func testTheLastWordIsOnlyCutWhenNothingPlaysItNext() {
@@ -429,6 +432,92 @@ final class SpeechEnergyTests: XCTestCase {
         XCTAssertGreaterThan(to, 11.22, "past \"time.\": \(edge)")
         XCTAssertLessThan(to, 11.29, "before \"And\": \(edge)")
         XCTAssertEqual(judge(take, at: 10.92, keeps: .before, removed: 10.92...13.5, transcript: words("about", "time")).verdict, .clean)
+    }
+
+    func testAClipStartingJustAfterTheFirstWordOfItsSentenceIsClipped() throws {
+        // "start TS. [It's] like the time": the clip starts in the gap
+        // between "It's" and "like", and the cut before it takes "It's",
+        // the first word of the sentence the clip keeps. The join sounds
+        // clean; the sentence reads "TS. like the time".
+        let take = Take(length: 6, words: [(10.5, 10.9), (10.955, 11.22), (11.29, 11.6), (11.65, 12.0), (13.6, 14)])
+        func words(_ before: String, _ cut: String) -> [CutAudit.Word] {
+            [word(before, 10.5, 10.9), word(cut, 10.96, 11.25), word("like", 11.3, 11.6), word("the", 11.65, 12.0), word("time", 13.6, 14)]
+        }
+        let edge = judge(take, at: 11.26, keeps: .after, removed: 9.0...11.26, transcript: words("TS.", "It's"))
+        XCTAssertTrue(edge.clipped, "\(edge)")
+        XCTAssertEqual(edge.firstWordCut, "It's")
+        let to = try XCTUnwrap(edge.suggestion, "\(edge)")
+        XCTAssertGreaterThan(to, 10.9, "after \"TS.\": \(edge)")
+        XCTAssertLessThan(to, 10.96, "before \"It's\": \(edge)")
+
+        // Mid-sentence, a word that ends its own sentence, or an opener
+        // Mike cuts ("So", "And"): a gap between words, clean.
+        for (before, cut) in [("TS", "It's"), ("TS.", "Right."), ("TS.", "So"), ("TS.", "And")] {
+            let join = judge(take, at: 11.26, keeps: .after, removed: 9.0...11.26, transcript: words(before, cut))
+            XCTAssertEqual(join.verdict, .clean, "\(before) [\(cut)]: \(join)")
+            XCTAssertNil(join.firstWordCut)
+        }
+        // Only when the word is really gone: nothing says it's cut here.
+        XCTAssertEqual(judge(take, at: 11.26, keeps: .after, transcript: words("TS.", "It's")).verdict, .clean)
+        // And only at the start of a clip.
+        XCTAssertNil(judge(take, at: 11.26, keeps: .before, removed: 11.26...13.5, transcript: words("TS.", "It's")).firstWordCut)
+    }
+
+    func testAClipStartingInAPauseAfterTheFirstWordIsClipped() throws {
+        // The same, with a real pause between "It's" and "like".
+        let take = Take(length: 6, words: [(10.5, 10.9), (10.955, 11.2), (11.32, 11.6), (11.65, 12.0), (13.6, 14)])
+        let words = [word("TS.", 10.5, 10.9), word("It's", 10.96, 11.2), word("like", 11.33, 11.6), word("the", 11.65, 12.0), word("time", 13.6, 14)]
+        let edge = judge(take, at: 11.27, keeps: .after, removed: 9.0...11.27, transcript: words)
+        XCTAssertTrue(edge.clipped, "\(edge)")
+        XCTAssertEqual(edge.firstWordCut, "It's")
+        let to = try XCTUnwrap(edge.suggestion, "\(edge)")
+        XCTAssertLessThan(to, 10.96, "before \"It's\": \(edge)")
+    }
+
+    func testAClipStartingOnTheLastWordOfACutSentenceIsClipped() throws {
+        // "other places [do,] but I want": the clip starts in the closure
+        // gap before "do,", the last word of the sentence the cut before it
+        // takes, so the kept side opens on a fragment of it. The fix starts
+        // the clip after "do,", in the gap before "but".
+        let take = Take(length: 6, words: [(10.5, 10.9), (10.955, 11.22), (11.29, 11.6), (11.65, 12.0), (13.6, 14)])
+        func words(_ cut: String, _ first: String) -> [CutAudit.Word] {
+            [word(cut, 10.5, 10.9), word(first, 10.96, 11.22), word("but", 11.3, 11.6), word("I", 11.65, 12.0), word("want", 13.6, 14)]
+        }
+        let edge = judge(take, at: 10.93, keeps: .after, removed: 9.0...10.93, transcript: words("places", "do,"))
+        XCTAssertTrue(edge.clipped, "\(edge)")
+        XCTAssertEqual(edge.fragment, "do,")
+        let to = try XCTUnwrap(edge.suggestion, "\(edge)")
+        XCTAssertGreaterThan(to, 11.22, "past \"do,\": \(edge)")
+        XCTAssertLessThan(to, 11.29, "before \"but\": \(edge)")
+
+        // A sentence that ended before it, an opener ("Yeah,"), or a word
+        // that doesn't end the clause: clean.
+        for (cut, first) in [("places.", "do,"), ("places", "Yeah,"), ("places", "do")] {
+            let join = judge(take, at: 10.93, keeps: .after, removed: 9.0...10.93, transcript: words(cut, first))
+            XCTAssertEqual(join.verdict, .clean, "[\(cut)] \(first): \(join)")
+            XCTAssertNil(join.fragment)
+        }
+    }
+
+    func testACutOfAFillerAndTheWordBeforeItIsClipped() throws {
+        // "And [the like,] challenge there": the cut was for the filler, but
+        // took "the" with it, which runs straight into "like". The fix keeps
+        // "the" (and the filler it runs into): past them, into the pause.
+        let take = Take(length: 6, words: [(10.5, 10.9), (11.0, 11.3), (11.3, 11.6), (12.6, 13.0), (13.1, 13.4)])
+        let words = [word("And", 10.5, 10.9), word("the", 11.0, 11.3), word("like,", 11.3, 11.6), word("challenge", 12.6, 13.0), word("there", 13.1, 13.4)]
+        let edge = judge(take, at: 10.95, keeps: .before, removed: 10.95...12.55, transcript: words)
+        XCTAssertTrue(edge.clipped, "\(edge)")
+        XCTAssertEqual(edge.beforeFiller, "the")
+        let to = try XCTUnwrap(edge.suggestion, "\(edge)")
+        XCTAssertGreaterThan(to, 11.6, "past \"the, like,\": \(edge)")
+        XCTAssertLessThan(to, 12.6, "before \"challenge\": \(edge)")
+
+        // "the, like, the challenge": a false start Mike cuts, word and all.
+        let restart = Take(length: 6, words: [(10.5, 10.9), (11.0, 11.3), (11.3, 11.6), (12.0, 12.3), (12.6, 13.0)])
+        let restartWords = [word("And", 10.5, 10.9), word("the", 11.0, 11.3), word("like,", 11.3, 11.6), word("the", 12.0, 12.3), word("challenge", 12.6, 13.0)]
+        let falseStart = judge(restart, at: 10.95, keeps: .before, removed: 10.95...12.55, transcript: restartWords)
+        XCTAssertEqual(falseStart.verdict, .clean, "\(falseStart)")
+        XCTAssertNil(falseStart.beforeFiller)
     }
 
     func testAnEdgeInARealPauseIsClean() {

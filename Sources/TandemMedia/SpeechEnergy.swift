@@ -326,9 +326,100 @@ public enum CutAudit {
         return word
     }
 
+    static func endsSentence(_ text: String) -> Bool {
+        guard let last = text.trimmingCharacters(in: .whitespaces).last else { return false }
+        return ".?!".contains(last)
+    }
+
     static func endsClause(_ text: String) -> Bool {
         guard let last = text.trimmingCharacters(in: .whitespaces).last else { return false }
         return ".?!,;:".contains(last)
+    }
+
+    /// Words a sentence or clause often opens with that Mike cuts on their
+    /// own ("So", "And", "Yeah,"), so losing one, or a clip opening on one,
+    /// isn't a sentence cut short.
+    static let openers: Set<String> = [
+        "so", "and", "but", "or", "yeah", "yes", "no", "okay", "ok", "right", "well", "now", "oh", "um", "uh", "like", "sure", "cool", "anyway", "then",
+    ]
+
+    static func bare(_ text: String) -> String { text.lowercased().filter { $0.isLetter || $0 == "'" } }
+
+    /// The mirror of `lastWordCut`: the first word of a sentence or clause,
+    /// cut whole, ending right before a clip that starts just after it. On
+    /// the Ian video the clip starting at 1298.325 dropped "It's" (1298.17
+    /// to 1298.36) from "start TS. [It's] like the time", and the fix moved
+    /// it back to 1298.173. The word follows one that ends a sentence or
+    /// clause, doesn't end one itself, and isn't an opener Mike cuts.
+    ///
+    /// `cutAway` is the stretch of the file before the edge that nothing
+    /// plays: the word has to be all inside it, so the clip before doesn't
+    /// play it.
+    static func firstWordCut(_ words: [Word], at time: Double, cutAway: ClosedRange<Double>?) -> Word? {
+        guard let cutAway else { return nil }
+        let sorted = words.sorted { $0.start < $1.start }
+        // Most of the word before the edge is cut: "It's" was 1298.14 to
+        // 1298.42 in the aligned transcript, against the edge at 1298.325.
+        guard let index = sorted.lastIndex(where: { ($0.start + $0.end) / 2 <= time }), index > 0 else { return nil }
+        let before = sorted[index - 1], word = sorted[index]
+        // A comma isn't enough here: "when you, [if] you were to" was a
+        // false start Mike kept cut.
+        guard time - word.end <= lastWordReach, endsSentence(before.text), !endsClause(word.text) else { return nil }
+        guard !openers.contains(bare(word.text)), !fillers.contains(bare(word.text)) else { return nil }
+        guard word.start - startSlack >= cutAway.lowerBound, min(time, word.end) <= cutAway.upperBound + 1e-6 else { return nil }
+        return word
+    }
+
+    /// A clip that opens on the last word of the sentence the cut before it
+    /// takes: a short word ending a sentence or clause, starting just after
+    /// the edge, after a cut word that doesn't end one, and before a kept
+    /// word. On the Ian video the clip starting at 157.47 opened on "do,"
+    /// (157.53 to 157.67), the end of "I've not seen other places do,",
+    /// and read "filled out, do, but I want to start off"; the fix started
+    /// it in the gap after "do," (157.715). An opener ("Yeah,", "So,")
+    /// isn't one.
+    static func fragment(_ words: [Word], at time: Double, cutAway: ClosedRange<Double>?) -> Word? {
+        guard let cutAway else { return nil }
+        let sorted = words.sorted { $0.start < $1.start }
+        // Most of the word after the edge: "do," was 157.41 to 157.69 in
+        // the aligned transcript, against the edge at 157.47.
+        guard let index = sorted.firstIndex(where: { ($0.start + $0.end) / 2 > time }), index > 0, index + 1 < sorted.count else { return nil }
+        let cut = sorted[index - 1], word = sorted[index]
+        guard word.start - time <= lastWordReach, endsClause(word.text), !endsClause(cut.text) else { return nil }
+        let letters = bare(word.text).filter(\.isLetter)
+        guard (1...fragmentLetters).contains(letters.count), !openers.contains(bare(word.text)), !fillers.contains(letters) else { return nil }
+        guard cut.start - startSlack >= cutAway.lowerBound, cut.end <= cutAway.upperBound + endSlack else { return nil }
+        return word
+    }
+
+    /// The longest word `fragment` takes for a leftover: "do,", "it.",
+    /// "too." (a guess; longer words left over read as a choice).
+    static let fragmentLetters = 4
+
+    static let determiners: Set<String> = ["the", "a", "an", "this", "that", "these", "those", "my", "your", "our", "their", "his", "her", "its"]
+
+    /// Fillers a cut aims at, which take a word with them when it runs
+    /// straight into one.
+    static let cutFillers: Set<String> = ["like", "um", "uh", "uhm", "erm", "er", "ah", "mm", "hmm"]
+
+    /// A cut that takes a filler and the "the" (or another determiner)
+    /// before it, and nothing else: the word was meant to stay. On the Ian
+    /// video the cut from 611.81 to 614.33 took "the like" from "And [the,
+    /// like,] challenge there", where "the" runs straight into "like"; the
+    /// fix kept both (612.67). A cut that goes on through the word again
+    /// ("the, like, the") is a false start, cut whole on purpose.
+    static func wordBeforeFiller(_ words: [Word], at time: Double, removed: ClosedRange<Double>?) -> Word? {
+        guard let removed else { return nil }
+        let sorted = words.sorted { $0.start < $1.start }
+        let inside = sorted.filter { $0.start >= removed.lowerBound - lastWordLead && $0.end <= removed.upperBound + endSlack }
+        guard inside.count >= 2, let index = sorted.firstIndex(of: inside[0]), index > 0 else { return nil }
+        let kept = sorted[index - 1], word = inside[0]
+        // Only a word the rest of the sentence needs: on the Ian video's
+        // final cut, cuts of "is um", "of like." and "gets like" before a
+        // word that carries on were all fine.
+        guard !endsClause(kept.text), determiners.contains(bare(word.text)) else { return nil }
+        guard inside.dropFirst().allSatisfy({ cutFillers.contains(bare($0.text)) }) else { return nil }
+        return word
     }
 
 
@@ -386,6 +477,13 @@ public enum CutAudit {
         /// The last word of a sentence or clause the clip ends just before,
         /// cut with what follows (`lastWordCut`), when that's what clips it.
         public var lastWordCut: String?
+        /// The first word of the sentence or clause the clip starts in, cut
+        /// with what comes before (`firstWordCut`).
+        public var firstWordCut: String?
+        /// The last word of a cut sentence the clip opens on (`fragment`).
+        public var fragment: String?
+        /// The word a cut of a filler took with it (`wordBeforeFiller`).
+        public var beforeFiller: String?
 
         static let clean = Edge(verdict: .clean, margin: nil, kept: 0, lost: 0, gap: nil, highBandOnly: false, pause: nil, suggestion: nil, fix: nil)
     }

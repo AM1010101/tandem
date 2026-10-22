@@ -381,6 +381,35 @@ public enum MixMeter {
     }
 }
 
+/// The mix as export plays it, read a stretch at a time and mixed to mono:
+/// what `tandem check --cuts --listen` hears at each join. The composition
+/// is built once, so each join is a short read.
+public final class MixReader: @unchecked Sendable {
+    public static let sampleRate = MixMeter.rate
+    let built: BuiltComposition
+
+    public init(_ context: RenderContext) async throws {
+        let (ready, _) = await ConvertedMedia.prepare(context)
+        built = try await CompositionAssembler.build(ready)
+    }
+
+    /// Timeline seconds `from` to `to`, silence where nothing plays.
+    public func mono(from: Double, to: Double) async throws -> [Float] {
+        var out: [Float] = []
+        out.reserveCapacity(Int((to - from) * Self.sampleRate) + 1)
+        let channels = MixMeter.channels
+        try await MixMeter.readMix(built, from: from, to: to) { chunk in
+            let frames = chunk.count / channels
+            for frame in 0..<frames {
+                var sum: Float = 0
+                for channel in 0..<channels { sum += chunk[frame * channels + channel] }
+                out.append(sum / Float(channels))
+            }
+        }
+        return out
+    }
+}
+
 extension TrackGain {
     /// True when a segment plays at `time`.
     func covers(_ time: Double) -> Bool {

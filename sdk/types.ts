@@ -136,11 +136,24 @@ export type ApplyResult = {
 
 export type HistoryEvent = { seq: number; revision: number; kind: string; label?: string; author: string; date: string };
 
+export type HeardJoin = {
+  time: number;
+  /** The take's kept words across the join, " | " at it. */
+  said: string;
+  /** What was heard across it. */
+  heard: string;
+  clipIDs: string[];
+  cached: boolean;
+  findings: { kind: "notHeard" | "heardAs" | "extra"; said?: string; heard?: string; time: number; slip: boolean; why: string }[];
+};
+
 export type CheckResult = {
   ok: boolean;
   frames: number;
   problems: unknown[];
   notes: unknown[];
   ranges: { start: number; duration: number }[];
+  /** With listen: what was heard across each join. */
+  listened?: { engine: string; heard: number; cached: number; secondsPerJoin?: number; joins: HeardJoin[] };
   [k: string]: unknown;
 };

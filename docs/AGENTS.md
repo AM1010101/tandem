@@ -251,7 +251,8 @@ follows.
 - `tandem check --changed` before handing back: black frames, flickers
   (with a `holdFrame` fix where it can), failed keys, gaps and slivers,
   with notes on dead air, page changes and low frame rate screen
-  recordings; `--cuts` finds clipped words at cuts.
+  recordings; `--cuts` finds clipped words at cuts, and `--listen` hears
+  each join and prints what's heard there.
 - `tandem diff --since <revision>` for what Mike changed since your last
   round, and `tandem comments` for the notes he left on the timeline.
 
@@ -297,7 +298,7 @@ One line each; `tandem help <command>` has the options and what they do.
 | `tandem diff --since <ref>` | what changed since a revision, backup or export |
 | `tandem restore --from <ref>` | put clips back as they were (dry run without `--apply`) |
 | `tandem validate` | check the project for problems |
-| `tandem check` | what Mike would catch in review (`--changed`, `--quick`, `--cuts`) |
+| `tandem check` | what Mike would catch in review (`--changed`, `--quick`, `--cuts`, `--listen`) |
 | `tandem sync [<seconds> \| <file>...]` | how late each camera's picture is, or set it; or line another angle or mic up with the camera by sound |
 | `tandem comments` | Mike's timeline comments (`resolve <id>`) |
 | `tandem frame <time>` | one frame as a PNG |

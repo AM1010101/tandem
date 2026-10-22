@@ -35,6 +35,12 @@ public struct CheckProblem: Codable, Equatable, Sendable {
         /// A cut whose clip side is near enough the speech level to be worth
         /// a listen, but not clipped (`tandem check --cuts`).
         case marginalJoin
+        /// Heard across a join (`tandem check --cuts --listen`): a kept word
+        /// that isn't heard or is heard cut short, or part of a cut word left in.
+        case heardCutOff
+        /// Heard differently across a join, but as likely the transcription
+        /// engine's slip as a cut-off: a short word, a filler, a near spelling.
+        case heardDifferently
         /// A screen recording playing at a low frame rate while its picture
         /// moves, so it looks choppy.
         case lowFrameRate
@@ -45,6 +51,7 @@ public struct CheckProblem: Codable, Equatable, Sendable {
         /// push. So these don't fail a check.
         public var isNote: Bool {
             self == .soft || self == .deadAir || self == .pageChange || self == .sliver || self == .lowFrameRate || self == .marginalJoin
+                || self == .heardDifferently
         }
     }
 
@@ -105,10 +112,17 @@ public struct CheckProblem: Codable, Equatable, Sendable {
         /// The last word of a sentence or clause the clip ends just before,
         /// cut with what follows, when that's what clips it.
         public var lastWordCut: String?
+        /// The first word of the sentence the clip starts in, cut with what
+        /// comes before, when that's what clips it.
+        public var firstWordCut: String?
+        /// The last word of a cut sentence the clip opens on: a leftover.
+        public var fragment: String?
+        /// The word ("the") a cut of the filler after it took with it.
+        public var beforeFiller: String?
 
         public init(
             clipID: String, edge: ClipEdge, margin: Double? = nil, fixKind: FixKind? = nil, to: Time? = nil, fix: EditCommand? = nil,
-            drops: String? = nil, lastWordCut: String? = nil
+            drops: String? = nil, lastWordCut: String? = nil, firstWordCut: String? = nil, fragment: String? = nil, beforeFiller: String? = nil
         ) {
             self.clipID = clipID
             self.edge = edge
@@ -118,6 +132,9 @@ public struct CheckProblem: Codable, Equatable, Sendable {
             self.fix = fix
             self.drops = drops
             self.lastWordCut = lastWordCut
+            self.firstWordCut = firstWordCut
+            self.fragment = fragment
+            self.beforeFiller = beforeFiller
         }
     }
 }

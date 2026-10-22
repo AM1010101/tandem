@@ -98,7 +98,8 @@ the take, with `--changed` or `--from`/`--to` as above. Most of Mike's
 "word gets cut off" comments were cuts placed from transcript word times,
 which are 30 to 100 ms off the sound (0.2 s for "processed" on the Ian
 video), or snapped to the quietest point near a word's end, which lands in
-the gaps inside words. So it goes by the sound alone. For every cut edge
+the gaps inside words. So the sound says where the voice is, and the
+transcript only whether a word boundary can be there. For every cut edge
 on the speech tracks (two pieces of the take meeting, not a through-edit,
 or a piece beside a gap) it reads the file's own sound either side of the
 edit, in 5 ms frames, over the full band and again above 4 kHz, where a
@@ -106,19 +107,27 @@ final "s" or "t" is heard. Levels come from the 3 s either side of each
 edge, since a take's loudness drifts: quiet is 9 dB over the noise floor
 there (the quietest tenth), or 20 dB over it above 4 kHz, where breath
 and mouth noise reach too. A real pause is quiet for 0.08 s or more in
-both bands; a shorter gap (the closure before the "t" of "extract", which
-ran to 0.095 s on the Ian video) is inside a word. A take with no voice in
-it (a screen recording's system sound) isn't judged.
+both bands. A shorter quiet gap of 0.025 s or more is a gap between words
+when the transcript has a word boundary by it: after one word's end, less
+0.05 s, and before the next word's start, plus 0.05 s (Bark's word ends land
+within about 30 ms of the sound, and its starts after a short gap about
+110 ms late, which still leaves the gap after the earlier word's end). Any
+other short gap is inside a word: the closure before the "t" of "extract",
+which ran to 0.095 s on the Ian video, or the dip in "time" before its "m".
+Without a transcript every short gap counts as inside a word. A take with
+no voice in it (a screen recording's system sound) isn't judged.
 
-An edge with the frame on either side of it in a real pause is fine: the
-clip ends in silence, or ends right as a word it doesn't keep starts.
-Any other edge is in sound. Voice at speech level (within 10 dB of it)
-past the edge, in what's cut away, before a pause, clips it whatever the
-clip's own side sounds like: that's the rest of the word or the next word
-of fluent speech, like the "t" released after the closure a cut is in, or
-the "pro" left before a clip that started on the transcript's time for
-"processed". On the Ian video most of the cuts a quiet clip's side passed
-were like that. Otherwise it's judged by its margin: how far the clip's
+An edge with the frame on either side of it in a real pause, or in a gap
+between words, is fine: the clip ends in silence, or ends right as a word
+it doesn't keep starts, even if that word starts 0.04 s on. Only the side
+the clip keeps is judged. Any other edge is in sound. Voice at speech
+level (within 10 dB of it) past the edge, in what's cut away, before a
+pause or a gap between words, clips it whatever the clip's own side sounds
+like: that's the rest of the kept word, like the "t" released after the
+closure a cut is in, or the "pro" left before a clip that started on the
+transcript's time for "processed". Voice past a gap between words is the
+next word's, which the cut is meant to take. On the Ian video most of the
+cuts a quiet clip's side passed were like that. Otherwise it's judged by its margin: how far the clip's
 25 ms beside the edge is under the speech level (the loud end, 92nd
 percentile, of the 3 s either side). The cut-offs Mike heard there were
 within about 3 dB, and the clean joins 15 dB or more under. Under 9 dB is
@@ -129,22 +138,42 @@ Each clipped edge says which clip's start or end, how much voice is cut
 off, the margin, and its fix (`fixKind`):
 
 - `trimToPause`: the trim (with ripple) that moves the edge into a real
-  pause within 0.5 s, on a frame. It goes on past the cut-off sound into a
-  pause in the cut material, 0.03 s in (the start of a clip goes 0.08 s
-  before its word, since a "p" or "t" bursts after a silent closure), or
-  back into a pause in what the clip keeps, dropping a fragment. The
-  transcript is used only to rule out a trim that would bring a cut word
-  back or drop a kept one, never to place the edge.
-- `putBack`: no such pause, and the stretch cut at that join is 2 s or
+  pause or a gap between words within 0.5 s, on a frame. It goes outward
+  first, on past the cut-off sound into the cut material, finishing the
+  word the edge is in: to the gap before the next cut word (for the end of
+  a clip) or after the last one (for the start), even when that gap is
+  under 0.08 s. It goes 0.03 s into the gap from the kept word's side (or
+  halfway, in a shorter gap); into a real pause, the start of a clip goes
+  0.08 s before its word, since a "p" or "t" bursts after a silent
+  closure. Failing that, it goes back into a pause in what the clip keeps,
+  dropping a fragment. It never brings back a cut word other than the one
+  the edge is in, and never drops a kept word, including the one the edge
+  is in when more than a sliver of it is kept.
+- `putBack`: no such move, and the stretch cut at that join is 2 s or
   less, so the fix puts it back, filler and all, by trimming the end of
   the clip before the join on to where the next one starts in the take.
   On the Ian video that's what sounded right.
 - `nothingNearby`: neither. Listen with `tandem clip` and recut it by hand.
 
+When a trim back would drop a kept word, the problem names it (`drops` in
+`--json`) and says so.
+
+One clipped word the sound can't hear: a clip that ends right before the
+last word of its sentence or clause, with that word cut. "a couple of lies
+about [time.]" on the Ian video ended in the 0.055 s gap between "about"
+and the "t" of "time", as clean to the ear as the "that [you know]" joins
+Mike approved, but he heard the sentence cut off. So when the first word
+cut (starting within 0.15 s of the edge, and cut whole) ends with . ? ! ,
+; or : and the kept word before the edge doesn't, the edge is clipped and
+the fix finishes that word, to the gap after it. "like" and "know" don't
+count: cutting a "you know," or "like." filler is what Mike does.
+
 The last line is a `tandem apply` that makes every fix (in `--json`,
 `commands`, latest first, and `revision`; each problem's `cut` has
-`clipID`, `edge`, `margin`, `fixKind`, `to` and `fix`, and a marginal
-join's note has `clipID`, `edge` and `margin`).
+`clipID`, `edge`, `margin`, `fixKind`, `to`, `fix`, and `drops` (the kept
+word a trim back would drop) and `lastWordCut` (the sentence's last word,
+cut right after the clip) when they apply; a marginal join's note has
+`clipID`, `edge` and `margin`).
 
 ```
 Checked 00:00.000-01:00.000 (4 cut edges) in 0.1 s: 1 problem:

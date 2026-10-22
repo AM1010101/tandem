@@ -139,7 +139,11 @@ in the order the commands made them.
 `revision`. Each problem's `cut` has `clipID`, `edge`, `margin` (dB under
 the speech level), `fixKind` (`trimToPause`, `putBack` or
 `nothingNearby`), and `to` and `fix` when there's a fix; a `putBack`
-fix trims the clip before the join, which may not be `clipID`. Marginal
+fix trims the clip before the join, which may not be `clipID`. `drops`
+is the kept word (the transcript's text) a trim back would have dropped,
+when that's why the fix isn't a trim; it's missing otherwise.
+`lastWordCut` is the last word of a sentence or clause the clip ends just
+before, cut with what follows, when that's what clips it. Marginal
 joins are notes of kind `marginalJoin`, with `cut.margin`.
 A plain `tandem check --json` has `commands` and `revision` too when it
 can fix a flicker, and that problem's `fix` is the `holdFrame`.

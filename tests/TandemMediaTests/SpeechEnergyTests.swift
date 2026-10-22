@@ -80,6 +80,17 @@ final class SpeechEnergyTests: XCTestCase {
         return CutAudit.judge(energy, levels: SpeechLevels(of: [energy]), at: time, keeps: side, removed: removed, words: words)
     }
 
+    private func judge(
+        _ take: Take, at time: Double, keeps side: CutAudit.Side, removed: ClosedRange<Double>? = nil, transcript: [CutAudit.Word]
+    ) -> CutAudit.Edge {
+        let energy = take.energy
+        return CutAudit.judge(energy, levels: SpeechLevels(of: [energy]), at: time, keeps: side, removed: removed, transcript: transcript)
+    }
+
+    private func word(_ text: String, _ start: Double, _ end: Double) -> CutAudit.Word {
+        CutAudit.Word(text: text, start: start, end: end)
+    }
+
     private func around(_ energy: SpeechEnergy, _ time: Double) -> CutPlacer.Around {
         CutPlacer(energy, levels: SpeechLevels(of: [energy])).around(time)
     }
@@ -232,6 +243,129 @@ final class SpeechEnergyTests: XCTestCase {
         XCTAssertEqual(far.fix, .nothingNearby, "2.5 s is too much to put back")
         // With no transcript to say a word's there, the audio can't tell.
         XCTAssertEqual(try XCTUnwrap(judge(take, at: 11.5, keeps: .before, removed: 11.5...12.4).suggestion), 11.79, accuracy: 0.015)
+    }
+
+    // MARK: - Word boundaries from the transcript and the sound together
+
+    func testADipInsideAWordWithNoWordBoundaryIsClipped() throws {
+        // "time" with a 50 ms dip before its "m", and the transcript's word
+        // running right over it: no word boundary there, so it's inside a
+        // word, however quiet the clip's last 25 ms is.
+        let take = Take(words: [(10.5, 10.9), (11.0, 11.2), (11.25, 11.4), (12.0, 12.4)])
+        let words = [word("about", 10.5, 10.93), word("time", 11.0, 11.43), word("and", 12.1, 12.4)]
+        let edge = judge(take, at: 11.22, keeps: .before, transcript: words)
+        XCTAssertTrue(edge.clipped, "\(edge)")
+        XCTAssertEqual(try XCTUnwrap(edge.gap), 0.05, accuracy: 0.015)
+        XCTAssertTrue(judge(take, at: 11.22, keeps: .after, transcript: words).clipped, "and the start of a clip there keeps the end of a word")
+    }
+
+    func testAGapBetweenTwoWordsIsCleanForTheSideKept() throws {
+        // "convex. It's": 40 ms between the words, too short for a pause,
+        // with the transcript's boundary there. Bark has "It's" starting
+        // 110 ms late, as it does after a short gap.
+        let take = Take(words: [(10.6, 11.3), (11.34, 11.8), (12.4, 12.8)])
+        let words = [word("convex.", 10.6, 11.3), word("It's", 11.45, 11.8), word("true", 12.4, 12.8)]
+        // The clip keeps "convex." and the cut takes "It's" away, or the
+        // other way round: either way what's kept is whole.
+        let end = judge(take, at: 11.32, keeps: .before, removed: 11.32...12.3, transcript: words)
+        XCTAssertEqual(end.verdict, .clean, "\(end)")
+        let start = judge(take, at: 11.32, keeps: .after, removed: 10.0...11.32, transcript: words)
+        XCTAssertEqual(start.verdict, .clean, "\(start)")
+        // The sound alone can't tell the gap from a closure inside a word.
+        XCTAssertTrue(judge(take, at: 11.32, keeps: .before).clipped)
+        // And a word boundary 0.2 s from the gap isn't this one.
+        let off = [word("convex.", 10.6, 11.55), word("It's", 11.55, 11.8), word("true", 12.4, 12.8)]
+        XCTAssertTrue(judge(take, at: 11.32, keeps: .before, transcript: off).clipped)
+    }
+
+    func testVoicePastAGapBetweenWordsIsntTheKeptWords() throws {
+        // "convex." trails off 18 dB under the speech, and the clip ends
+        // 10 ms before it's done. Past that tail is the 40 ms gap, then
+        // "It's" at full voice: that's the next word's voice, not the kept
+        // one's, so only the quiet tail says how the join sounds.
+        let take = Take(words: [(10.6, 11.24), (11.34, 11.8), (12.4, 12.8)], softWords: [(11.24, 11.3, 18)])
+        let words = [word("convex.", 10.6, 11.3), word("It's", 11.45, 11.8), word("true", 12.4, 12.8)]
+        let edge = judge(take, at: 11.29, keeps: .before, removed: 11.29...12.3, transcript: words)
+        XCTAssertFalse(edge.clipped, "\(edge)")
+        // The sound alone hears the voice going on with no pause first.
+        XCTAssertTrue(judge(take, at: 11.29, keeps: .before, removed: 11.29...12.3).clipped)
+
+        // Cut while "convex." is still at full voice, it's clipped, and the
+        // fix goes on into the gap before "It's", short as it is.
+        let loud = Take(words: [(10.6, 11.3), (11.34, 11.8), (12.4, 12.8)])
+        let chopped = judge(loud, at: 11.27, keeps: .before, removed: 11.27...12.3, transcript: words)
+        XCTAssertTrue(chopped.clipped, "\(chopped)")
+        XCTAssertEqual(try XCTUnwrap(chopped.suggestion), 11.32, accuracy: 0.015)
+    }
+
+    func testAFixInsideAWordMovesOnToTheGapBeforeTheNextWord() throws {
+        // "lies about time. And": the clip ends in the dip inside "time",
+        // and the cut takes "And" and on. The gap between "time." and "And"
+        // is 70 ms, under a pause, but it's where the word ends: the fix
+        // goes on into it, never back over "time".
+        let take = Take(length: 6, words: [(10.5, 10.9), (11.0, 11.2), (11.25, 11.4), (11.47, 11.8), (11.85, 12.3), (13.6, 14)])
+        let words = [
+            word("about", 10.5, 10.93), word("time.", 11.0, 11.43), word("And", 11.58, 11.8), word("this", 11.85, 12.3), word("is", 13.6, 14)
+        ]
+        let edge = judge(take, at: 11.22, keeps: .before, removed: 11.22...13.6, transcript: words)
+        XCTAssertTrue(edge.clipped, "\(edge)")
+        let to = try XCTUnwrap(edge.suggestion, "\(edge)")
+        XCTAssertGreaterThan(to, 11.40, "past the end of \"time.\"")
+        XCTAssertLessThan(to, 11.47, "before \"And\"")
+        XCTAssertEqual(to, 11.43, accuracy: 0.015, "nearer \"time.\", by the pad")
+        XCTAssertEqual(edge.fix, .trim(to: to))
+        let pause = try XCTUnwrap(edge.pause)
+        XCTAssertEqual(pause.lowerBound, 11.40, accuracy: 0.015)
+        XCTAssertEqual(pause.upperBound, 11.47, accuracy: 0.015)
+
+        // The same for the start of a clip that keeps "And" on: back to the
+        // gap after "time.", 30 ms before "And".
+        let start = judge(take, at: 11.55, keeps: .after, removed: 10.0...11.55, transcript: words)
+        XCTAssertTrue(start.clipped, "\(start)")
+        XCTAssertEqual(try XCTUnwrap(start.suggestion), 11.44, accuracy: 0.015)
+    }
+
+    func testATrimThatWouldDropAKeptWordIsRefused() throws {
+        // "time because": "time" is kept, cut 0.1 s before its end, and runs
+        // straight into "because", which is cut. On is past "because";
+        // back is before "time", which drops it. Neither: put the cut back,
+        // and say it's "time" that a trim back would drop.
+        let take = Take(length: 6, words: [(10.9, 11.4), (11.4, 11.75), (13.5, 14)])
+        let words = [word("time", 10.9, 11.4), word("because", 11.42, 11.75), word("so", 13.5, 14)]
+        let edge = judge(take, at: 11.3, keeps: .before, removed: 11.3...12.5, transcript: words)
+        XCTAssertTrue(edge.clipped)
+        XCTAssertNil(edge.suggestion, "\(edge)")
+        XCTAssertEqual(edge.fix, .putBack)
+        XCTAssertEqual(edge.drops, "time")
+        // With no transcript the sound can't tell "because" from the rest
+        // of "time", and goes on past it.
+        XCTAssertEqual(try XCTUnwrap(judge(take, at: 11.3, keeps: .before, removed: 11.3...12.5).suggestion), 11.78, accuracy: 0.015)
+    }
+
+    func testAClipEndingJustBeforeTheLastWordOfItsSentenceIsClipped() throws {
+        // "lies about [time.] And this": the clip ends in the 55 ms gap
+        // between "about" and the "t" of "time", and the cut takes "time."
+        // and on. To the ear the join is as clean as any, but the sentence
+        // is left hanging, and on the Ian video Mike heard it cut off.
+        let take = Take(length: 6, words: [(10.5, 10.9), (10.955, 11.22), (11.29, 11.6), (11.65, 12.0), (13.6, 14)])
+        func words(_ kept: String, _ cut: String) -> [CutAudit.Word] {
+            [word(kept, 10.5, 10.96), word(cut, 10.96, 11.25), word("And", 11.41, 11.6), word("this", 11.65, 12.0), word("is", 13.6, 14)]
+        }
+        let edge = judge(take, at: 10.93, keeps: .before, removed: 10.93...13.5, transcript: words("about", "time."))
+        XCTAssertTrue(edge.clipped, "\(edge)")
+        XCTAssertEqual(edge.lastWordCut, "time.")
+        XCTAssertEqual(try XCTUnwrap(edge.suggestion), 11.25, accuracy: 0.015, "past \"time.\", into the gap before \"And\"")
+        XCTAssertTrue(edge.betweenWords)
+
+        // A word that doesn't end the sentence, after one that does, or a
+        // filler Mike cuts: the gap between words is clean.
+        for (kept, cut) in [("about", "time"), ("about,", "time."), ("you", "know.")] {
+            let join = judge(take, at: 10.93, keeps: .before, removed: 10.93...13.5, transcript: words(kept, cut))
+            XCTAssertEqual(join.verdict, .clean, "\(kept) [\(cut)]: \(join)")
+            XCTAssertNil(join.lastWordCut)
+        }
+        // And it's only the end of a clip: a clip starting on "time." is fine.
+        XCTAssertEqual(judge(take, at: 10.93, keeps: .after, removed: 9...10.93, transcript: words("about", "time.")).verdict, .clean)
     }
 
     func testAnEdgeInARealPauseIsClean() {

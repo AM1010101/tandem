@@ -4,16 +4,19 @@ import TandemMedia
 
 /// `tandem check --cuts`: does a cut on the speech tracks clip a word?
 ///
-/// Transcript word edges can be half a second out and a final "s" barely
+/// Transcript word edges can be well out and a final "s" barely
 /// registers below 4 kHz, so cuts placed from the transcript (or snapped to
 /// the quietest point near a word's end) clipped words Mike then heard in
 /// review: "takes" cut to "ta", "example", "They're", and on the Ian video
 /// "extract" cut to "extrac" and "pro" off "processed" (#64). This reads
 /// each file's own sound either side of every edit (no render, so it's
 /// quick), judges it with `CutAudit`, and gives the fix for each clipped
-/// edge: a trim into a real pause, or putting a short cut back. It passes
-/// `CutAudit` the stretch cut at the join and the transcript's words only
-/// so a fix never brings a cut word back.
+/// edge: a trim into a real pause (or a gap between words), or putting a
+/// short cut back. It passes `CutAudit` the stretch cut at the join and the
+/// transcript's words, which say where a word boundary can be (the sound
+/// says where it is), so a cut in a short gap between two words isn't read
+/// as one inside a word, and a fix never brings a cut word back or drops a
+/// kept one.
 enum CutCheck {
     /// Sound read either side of each edge: the 3 s its noise floor and
     /// speech level are taken over, which is room to find a pause too.
@@ -89,19 +92,21 @@ enum CutCheck {
     }
 
     /// The transcript's words for each file on the speech tracks, in media
-    /// time, by media ID.
-    static func words(in project: Project, analysis: AnalysisSource) -> [String: [ClosedRange<Double>]] {
-        var words: [String: [ClosedRange<Double>]] = [:]
+    /// time, by media ID. They're as Tandem reads them, aligned to the voice
+    /// (`TranscriptAlignment`): on the Ian video's final cut that flagged 9
+    /// of the 290 joins Mike approved, against 12 with Bark's own times.
+    static func words(in project: Project, analysis: AnalysisSource) -> [String: [CutAudit.Word]] {
+        var words: [String: [CutAudit.Word]] = [:]
         for id in Set(TranscriptTools.speechTracks(project).flatMap(\.clips).compactMap(\.mediaID)) {
             guard let item = project.media(id), let transcript = analysis.transcript(for: item) else { continue }
-            words[id] = transcript.words.filter { $0.end > $0.start }.map { $0.start.seconds...$0.end.seconds }
+            words[id] = transcript.words.filter { $0.end > $0.start }.map { CutAudit.Word(text: $0.text, start: $0.start.seconds, end: $0.end.seconds) }
         }
         return words
     }
 
     /// - Parameter words: each file's transcript words (media time), by
-    ///   media ID, so fixes never bring a cut word back.
-    static func run(project: Project, folder: ProjectFolder, ranges: [TimeRange], words: [String: [ClosedRange<Double>]] = [:]) async -> Outcome {
+    ///   media ID.
+    static func run(project: Project, folder: ProjectFolder, ranges: [TimeRange], words: [String: [CutAudit.Word]] = [:]) async -> Outcome {
         let edges = edges(in: project, ranges: ranges)
         var outcome = Outcome(checked: edges.count)
         var found: [(edge: Edge, verdict: CutAudit.Edge)] = []
@@ -136,7 +141,8 @@ enum CutCheck {
                 guard let placer = placers.first(where: { $0.energy.start <= edge.mediaTime && edge.mediaTime <= $0.energy.end }) else { continue }
                 let near = (edge.mediaTime - window)...(edge.mediaTime + window)
                 let verdict = placer.judge(
-                    at: edge.mediaTime, keeps: edge.edge == .end ? .before : .after, removed: edge.removed, words: said.filter { $0.overlaps(near) }
+                    at: edge.mediaTime, keeps: edge.edge == .end ? .before : .after, removed: edge.removed,
+                    transcript: said.filter { $0.end >= near.lowerBound && $0.start <= near.upperBound }
                 )
                 guard verdict.verdict != .clean else { continue }
                 found.append((edge, verdict))
@@ -172,7 +178,7 @@ enum CutCheck {
         let level = margin.map {
             "the clip's \(isEnd ? "last" : "first") 25 ms is " + ($0 < 1 ? "at speech level" : "\(String(format: "%.1f", $0)) dB under the speech")
         } ?? ""
-        var cut = CheckProblem.CutEdge(clipID: clip.id, edge: edge.edge, margin: margin)
+        var cut = CheckProblem.CutEdge(clipID: clip.id, edge: edge.edge, margin: margin, drops: verdict.drops, lastWordCut: verdict.lastWordCut)
         guard verdict.clipped else {
             return CheckProblem(
                 kind: .marginalJoin, start: edge.time, end: edge.time,
@@ -182,7 +188,9 @@ enum CutCheck {
         }
 
         var what: String
-        if let lost = verdict.lost {
+        if let word = verdict.lastWordCut {
+            what = "it ends just before \"\(word)\", the last word of the sentence, which is cut"
+        } else if let lost = verdict.lost {
             what = isEnd
                 ? "the voice runs on \(String(format: "%.2f", lost)) s past the cut"
                 : "the voice starts \(String(format: "%.2f", lost)) s before the cut"
@@ -191,11 +199,12 @@ enum CutCheck {
                 ? "the voice runs on past the cut with no pause within \(String(format: "%.1f", CutAudit.reach)) s"
                 : "the voice was already going \(String(format: "%.1f", CutAudit.reach)) s before the cut"
         }
-        if verdict.highBandOnly { what += ", heard only above 4 kHz (an \"s\" or a \"t\")" }
-        if let gap = verdict.gap {
+        if verdict.highBandOnly, verdict.lastWordCut == nil { what += ", heard only above 4 kHz (an \"s\" or a \"t\")" }
+        if let gap = verdict.gap, verdict.lastWordCut == nil {
             what += "; the cut is in a \(String(format: "%.2f", gap)) s gap inside a word, not a pause"
         }
-        if !level.isEmpty { what += "; \(level)" }
+        if !level.isEmpty, verdict.lastWordCut == nil { what += "; \(level)" }
+        let dropping = verdict.drops.map { " Trimming back to a pause would drop \"\($0)\"." } ?? ""
 
         let reach = String(format: "%.1f", CutAudit.reach)
         var advice = "No pause within \(reach) s either side: listen with tandem clip and recut it by hand."
@@ -205,7 +214,7 @@ enum CutCheck {
             let to = outgoing.end + Time(seconds: length / outgoing.speed)
             cut.fixKind = .putBack
             cut.fix = .trim(clipID: outgoing.id, edge: .end, to: to, ripple: true, includeLinked: nil)
-            advice = "No pause it can reach without bringing back a cut word: put back the \(String(format: "%.2f", length)) s cut here, filler and all (the end of \(outgoing.id) \(String(format: "%.3f", (to - outgoing.end).seconds)) s later)."
+            advice = "No pause it can reach without bringing back a cut word: put back the \(String(format: "%.2f", length)) s cut here, filler and all (the end of \(outgoing.id) \(String(format: "%.3f", (to - outgoing.end).seconds)) s later).\(dropping)"
         } else if let delta = shift(edge, verdict, project: project) {
             let to = edge.time + delta
             cut.fixKind = .trimToPause
@@ -214,18 +223,19 @@ enum CutCheck {
             let later = delta > .zero
             let amount = String(format: "%.3f", abs(delta.seconds))
             let into: String
+            let pause = verdict.betweenWords ? "gap between words" : "pause"
             switch (isEnd, later) {
-            case (true, true): into = "into the pause after it."
-            case (true, false): into = "into the pause before it, dropping the start of the word."
-            case (false, false): into = "into the pause before it."
-            case (false, true): into = "into the pause after it, dropping the end of the word."
+            case (true, true): into = verdict.lastWordCut.map { "past \"\($0)\", into the \(pause) after it." } ?? "into the \(pause) after it."
+            case (true, false): into = "into the \(pause) before it, dropping the start of the word."
+            case (false, false): into = "into the \(pause) before it."
+            case (false, true): into = "into the \(pause) after it, dropping the end of the word."
             }
             advice = "Trim the \(isEnd ? "end" : "start") \(amount) s \(later ? "later" : "earlier"), \(into)"
         } else if verdict.lost != nil || verdict.kept <= CutAudit.reach {
             // There's a pause in reach, but moving there brings a cut word
             // back or drops a kept one.
             let tooLong = edge.removed.map { " The \(String(format: "%.2f", $0.upperBound - $0.lowerBound)) s cut here is too long to put back." } ?? ""
-            advice = "No pause within \(reach) s that doesn't bring back a cut word or drop a kept one.\(tooLong) Listen with tandem clip and recut it by hand."
+            advice = "No pause within \(reach) s that doesn't bring back a cut word or drop a kept one.\(dropping)\(tooLong) Listen with tandem clip and recut it by hand."
         }
         return CheckProblem(
             kind: .clippedWord, start: edge.time, end: edge.time,

@@ -99,14 +99,25 @@ public struct CheckProblem: Codable, Equatable, Sendable {
         /// the end of the clip before the join, as far as the next one
         /// starts in the take.
         public var fix: EditCommand?
+        /// The kept word (the transcript's text) a trim back into a pause
+        /// would drop, when that's why the fix isn't a trim.
+        public var drops: String?
+        /// The last word of a sentence or clause the clip ends just before,
+        /// cut with what follows, when that's what clips it.
+        public var lastWordCut: String?
 
-        public init(clipID: String, edge: ClipEdge, margin: Double? = nil, fixKind: FixKind? = nil, to: Time? = nil, fix: EditCommand? = nil) {
+        public init(
+            clipID: String, edge: ClipEdge, margin: Double? = nil, fixKind: FixKind? = nil, to: Time? = nil, fix: EditCommand? = nil,
+            drops: String? = nil, lastWordCut: String? = nil
+        ) {
             self.clipID = clipID
             self.edge = edge
             self.margin = margin
             self.fixKind = fixKind
             self.to = to
             self.fix = fix
+            self.drops = drops
+            self.lastWordCut = lastWordCut
         }
     }
 }

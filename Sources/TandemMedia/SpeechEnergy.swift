@@ -152,19 +152,25 @@ public struct SpeechLevels: Equatable, Sendable {
     }
 }
 
-/// Whether a cut clips a word, judged from the file's own sound and never
-/// the transcript's times (they're 30 to 100 ms off, sometimes 0.2 s).
+/// Whether a cut clips a word, judged from the file's own sound. The
+/// transcript's times are 30 to 100 ms off (sometimes 0.2 s, and Bark's
+/// starts after a short gap about 110 ms late), so they never place
+/// anything: they only say whether a word boundary can be where the sound
+/// has a gap.
 ///
 /// An edge in a real pause is clean: quiet for `minPause` or more in the
 /// full band and above 4 kHz alike, where quiet is `overFloor` over the
 /// quietest tenth of the sound `around` either side (`highOverFloor` above
-/// 4 kHz). Shorter quiet gaps are inside words (the closure before the "t"
-/// of "extract").
+/// 4 kHz). So is one in a shorter quiet gap of `minWordGap` or more with a
+/// transcript word boundary by it (`boundaries`): a gap between words.
+/// Other short gaps are inside words (the closure before the "t" of
+/// "extract"), and without a transcript every one is.
 ///
 /// Any other edge is in sound, and two things say how it sounds:
 /// - voice at speech level (`runOnUnder`) past the edge, in the material
-///   cut away, before a pause: the rest of the word, or the next word of
-///   fluent speech, so it's clipped however quiet the clip's own side is.
+///   cut away, before a pause or a gap between words: the rest of the word,
+///   or (with no transcript to say otherwise) the next word of fluent
+///   speech, so it's clipped however quiet the clip's own side is.
 ///   That's the "t" released after the closure an edge is in, and the
 ///   "pro" of "processed" left before a clip that started on the
 ///   transcript's time for it;
@@ -180,12 +186,21 @@ public struct SpeechLevels: Equatable, Sendable {
 /// flag 4 of the 25 clean ones (two of them joins the edit kept at 6 to
 /// 7 dB under the speech, which any level check flags).
 ///
-/// A clipped edge's fix moves it into a real pause (`CutPlacer`): past the
-/// cut-off sound into a pause in the cut material, unless that would bring
-/// a cut word back, or back into a pause in what the clip keeps, unless
-/// that would drop a kept word. With neither, a cut of `putBackLimit` or
-/// less is better put back whole, filler and all, which is what sounded
-/// right on the Ian video.
+/// A clip that ends just before the last word of its sentence, with that
+/// word cut (`lastWordCut`), is clipped too, however clean it sounds.
+///
+/// With the Ian video's Bark transcripts, aligned as Tandem reads them, its
+/// final cut's 290 joins Mike approved went from 25 flagged to 9 (the gap
+/// between words, and voice past it being the next word's), and the edges
+/// he heard clipped stayed caught.
+///
+/// A clipped edge's fix moves it into a real pause or a gap between words
+/// (`CutPlacer`): on past the cut-off sound into the cut material,
+/// finishing the word the edge is in, unless that would bring another cut
+/// word back, or back into what the clip keeps, unless that would drop a
+/// kept word. With neither, a cut of `putBackLimit` or less is better put
+/// back whole, filler and all, which is what sounded right on the Ian
+/// video.
 public enum CutAudit {
     /// The quiet a real pause lasts. #64 measured 70 ms on the Ian video,
     /// but closures inside words there ran to 95 ms; 80 ms catches most of
@@ -239,6 +254,76 @@ public enum CutAudit {
     /// inside (or half of a shorter word): its times can be off by this
     /// much without it counting.
     public static let wordTolerance = 0.05
+    /// A quiet gap this long or longer, shorter than a pause, is a gap
+    /// between words when the transcript has a word boundary by it (see
+    /// `boundary`). Shorter quiet is flicker inside a syllable.
+    public static let minWordGap = 0.025
+    /// How far a word boundary can be from the gap in the sound and still
+    /// be that gap: a gap between words lies after the earlier word ends,
+    /// less `endSlack`, and before the later one starts, plus `startSlack`.
+    /// Bark 3.0's word ends land within about 30 ms of the sound on Ian's
+    /// mic, and its starts after a short gap about 110 ms late (October
+    /// 2026), so a late start needs no slack of its own: the gap is still
+    /// after the earlier word's end. Its times move in 80 ms steps.
+    public static let endSlack = 0.05
+    public static let startSlack = 0.05
+    /// A sentence's last word starting this soon after the end of a clip,
+    /// or this little before it, is the next word (`lastWordCut`).
+    public static let lastWordReach = 0.15
+    static let lastWordLead = 0.02
+    /// Clause-ending words that are fillers Mike cuts ("you know,", "like.").
+    static let fillers: Set<String> = ["like", "know", "um", "uh"]
+
+    /// A transcript word near an edge, in media time.
+    public struct Word: Equatable, Sendable {
+        public var text: String
+        public var start: Double
+        public var end: Double
+
+        public init(text: String, start: Double, end: Double) {
+            self.text = text
+            self.start = start
+            self.end = end
+        }
+
+        var range: ClosedRange<Double> { start...max(start, end) }
+    }
+
+    /// Where the gap between two neighbouring words can be in the sound,
+    /// given how far the transcript's times can be off. Only between two
+    /// words: before the first one given, or after the last, a word may be
+    /// missing rather than not there.
+    static func boundaries(_ words: [Word]) -> [ClosedRange<Double>] {
+        let sorted = words.sorted { $0.start < $1.start }
+        return zip(sorted, sorted.dropFirst()).map { a, b in
+            (min(a.end, b.start) - endSlack)...(max(a.end, b.start) + startSlack)
+        }
+    }
+
+    /// The last word of a sentence or clause, cut whole, starting right
+    /// after a clip that ends just before it: the sentence is left hanging
+    /// however clean the join sounds. On the Ian video "a couple of lies
+    /// about [time.]" ended in the 55 ms gap between "about" and the "t" of
+    /// "time", and Mike heard it cut off; on its final cut this matched
+    /// that edge and five an agent fixed, and none of the 290 joins Mike
+    /// approved once "like" and "know" fillers are left out.
+    static func lastWordCut(_ words: [Word], at time: Double, removed: ClosedRange<Double>?) -> Word? {
+        let sorted = words.sorted { $0.start < $1.start }
+        // A word starting a frame or so before the edge is still after it:
+        // its first sound is past the edge, or the edge is mid-word anyway.
+        guard let next = sorted.firstIndex(where: { $0.start >= time - lastWordLead }), next > 0 else { return nil }
+        let kept = sorted[next - 1], word = sorted[next]
+        guard word.start - time <= lastWordReach, endsClause(word.text), !endsClause(kept.text) else { return nil }
+        guard !fillers.contains(word.text.lowercased().filter(\.isLetter)) else { return nil }
+        if let removed, removed.upperBound < word.end + endSlack { return nil }
+        return word
+    }
+
+    static func endsClause(_ text: String) -> Bool {
+        guard let last = text.trimmingCharacters(in: .whitespaces).last else { return false }
+        return ".?!,;:".contains(last)
+    }
+
 
     /// Which side of the edge the clip plays: `before` for a clip's end
     /// (it plays up to the edge), `after` for a clip's start.
@@ -285,6 +370,15 @@ public enum CutAudit {
         public var suggestion: Double?
         /// For a clipped edge.
         public var fix: Fix?
+        /// The edge sits in a gap between words, not a real pause, when
+        /// it's clean; or the suggested edge goes into one.
+        public var betweenWords = false
+        /// The kept word a trim back would drop, when that's why there's no
+        /// trim: the transcript's text for it.
+        public var drops: String?
+        /// The last word of a sentence or clause the clip ends just before,
+        /// cut with what follows (`lastWordCut`), when that's what clips it.
+        public var lastWordCut: String?
 
         static let clean = Edge(verdict: .clean, margin: nil, kept: 0, lost: 0, gap: nil, highBandOnly: false, pause: nil, suggestion: nil, fix: nil)
     }
@@ -292,12 +386,19 @@ public enum CutAudit {
     /// - Parameters:
     ///   - removed: at a cut between two pieces of one take, the stretch of
     ///     the file cut out between them; a fix only reaches into it.
-    ///   - words: transcript words around the edge, in media time, only so
-    ///     a fix never brings a cut word back or drops a kept one.
+    ///   - words: transcript words around the edge, in media time, with no
+    ///     text (see `CutPlacer.judge(at:keeps:removed:transcript:)`).
     public static func judge(
         _ energy: SpeechEnergy, levels: SpeechLevels, at time: Double, keeps side: Side,
         removed: ClosedRange<Double>? = nil, words: [ClosedRange<Double>] = []
     ) -> Edge {
         CutPlacer(energy, levels: levels).judge(at: time, keeps: side, removed: removed, words: words)
+    }
+
+    public static func judge(
+        _ energy: SpeechEnergy, levels: SpeechLevels, at time: Double, keeps side: Side,
+        removed: ClosedRange<Double>? = nil, transcript: [Word]
+    ) -> Edge {
+        CutPlacer(energy, levels: levels).judge(at: time, keeps: side, removed: removed, transcript: transcript)
     }
 }

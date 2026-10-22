@@ -346,6 +346,54 @@ final class CheckAPITests: XCTestCase {
         XCTAssertEqual(unheard.problems.first?.cut?.fixKind, .trimToPause)
     }
 
+    func testACutInAShortGapBetweenWordsIsFine() async throws {
+        // "convex. [It's]": the first piece ends at 30, in the 40 ms gap
+        // before the next word, which is cut. The sound alone can't tell
+        // that gap from a closure inside a word; the transcript's word
+        // boundary by it can ("It's" starts late, as Bark has it).
+        let h = try voicedHarness(words: [(1, 3.6), (29.4, 30.0), (30.04, 30.6), (33, 33.8)])
+        defer { h.close() }
+        h.analysis.transcripts["med_camera"] = nil
+        let unheard = try await CheckRequest(cuts: true).run(on: h.service, context: h.context)
+        XCTAssertEqual(unheard.problems.map(\.kind), [.clippedWord], "without the transcript")
+
+        h.analysis.transcripts["med_camera"] = Transcript(language: "en", engine: "fake", words: [
+            TranscriptWord(text: "convex.", start: t(29.4), end: t(30)),
+            TranscriptWord(text: "It's", start: t(30.15), end: t(30.6)),
+            TranscriptWord(text: "Now", start: t(33), end: t(33.8))
+        ])
+        let result = try await CheckRequest(cuts: true).run(on: h.service, context: h.context)
+        XCTAssertTrue(result.ok, "\(result.problems)")
+        XCTAssertTrue(result.notes.isEmpty, "\(result.notes)")
+    }
+
+    func testAClipEndingJustBeforeTheLastWordOfItsSentenceIsClipped() async throws {
+        // "lies about [time.]": the same gap, but the word cut after it ends
+        // the sentence and the kept one doesn't. It sounds clean and leaves
+        // the sentence hanging, so the fix finishes it.
+        let h = try voicedHarness(words: [(1, 3.6), (29.4, 30.0), (30.04, 30.4), (33, 33.8)])
+        defer { h.close() }
+        h.analysis.transcripts["med_camera"] = Transcript(language: "en", engine: "fake", words: [
+            TranscriptWord(text: "about", start: t(29.4), end: t(30)),
+            TranscriptWord(text: "time.", start: t(30), end: t(30.4)),
+            TranscriptWord(text: "Now", start: t(33), end: t(33.8))
+        ])
+        let result = try await CheckRequest(cuts: true).run(on: h.service, context: h.context)
+        XCTAssertEqual(result.problems.map(\.kind), [.clippedWord])
+        let cut = try XCTUnwrap(result.problems.first?.cut)
+        XCTAssertEqual(cut.lastWordCut, "time.")
+        XCTAssertNil(cut.drops)
+        XCTAssertEqual(cut.fixKind, .trimToPause)
+        let to = try XCTUnwrap(cut.to)
+        XCTAssertGreaterThan(to, t(30.4), "past \"time.\"")
+        XCTAssertLessThan(to, t(30.5))
+        let text = result.readableText
+        XCTAssertTrue(text.contains("Clipped word at the end of clip_voc1: it ends just before \"time.\", the last word of the sentence, which is cut. Trim the end "), text)
+        XCTAssertTrue(text.contains(" s later, past \"time.\", into the pause after it."), text)
+        let json = String(decoding: try JSONEncoder().encode(cut), as: UTF8.self)
+        XCTAssertTrue(json.contains(#""lastWordCut":"time.""#), json)
+    }
+
     func testAMarginalJoinIsANote() async throws {
         // The first piece's last 30 ms trail off 12 dB under the speech, and
         // what's cut after them is the rest of that soft tail, then a pause:

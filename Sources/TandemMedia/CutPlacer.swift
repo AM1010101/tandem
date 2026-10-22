@@ -39,6 +39,9 @@ public struct CutPlacer: Sendable {
         let frames: Range<Int>
         let quietFrames: [Bool]
         let pauseFrames: [Bool]
+        /// Quiet gaps shorter than a pause with a transcript word boundary
+        /// by them (`CutPlacer.betweenWords`): none without a transcript.
+        var wordGapFrames: [Bool] = []
         /// How many frames were read.
         let count: Int
 
@@ -49,6 +52,13 @@ public struct CutPlacer: Sendable {
             if index < 0 || index >= count { return true }
             return frames.contains(index) && pauseFrames[index - frames.lowerBound]
         }
+
+        func isWordGap(_ index: Int) -> Bool {
+            frames.contains(index) && !wordGapFrames.isEmpty && wordGapFrames[index - frames.lowerBound]
+        }
+
+        /// A real pause or a gap between words: where a word has ended.
+        func isStop(_ index: Int) -> Bool { isPause(index) || isWordGap(index) }
 
         func isQuiet(_ index: Int) -> Bool {
             if index < 0 || index >= count { return true }
@@ -90,7 +100,7 @@ public struct CutPlacer: Sendable {
         )
     }
 
-    /// The pause holding frame `index`, in media time.
+    /// The pause (or gap between words) holding frame `index`, in media time.
     func pause(at index: Int, in near: Around) -> ClosedRange<Double> {
         let count = energy.full.count
         // Past the frames read: the file's start or end, of no known length,
@@ -98,8 +108,8 @@ public struct CutPlacer: Sendable {
         if index < 0 { return (energy.start - 1)...energy.start }
         if index >= count { return energy.end...(energy.end + 1) }
         var low = index, high = index
-        while low - 1 >= 0, near.isPause(low - 1) { low -= 1 }
-        while high + 1 < count, near.isPause(high + 1) { high += 1 }
+        while low - 1 >= 0, near.isStop(low - 1) { low -= 1 }
+        while high + 1 < count, near.isStop(high + 1) { high += 1 }
         return (energy.start + Double(low) * Self.step)...(energy.start + Double(high + 1) * Self.step)
     }
 
@@ -137,7 +147,8 @@ public struct CutPlacer: Sendable {
     }
 
     /// The frames from one beside an edge, going away from it, up to the
-    /// first frame of a pause, or `reach` and no further.
+    /// first frame of a pause or a gap between words, or `reach` and no
+    /// further.
     struct Run {
         var frames: [Int]
         var pause: Int
@@ -149,13 +160,13 @@ public struct CutPlacer: Sendable {
         var frames: [Int] = []
         var index = frame
         let limit = Int((CutAudit.reach / Self.step).rounded()) + 1
-        while !near.isPause(index), frames.count <= limit {
+        while !near.isStop(index), frames.count <= limit {
             frames.append(index)
             index += direction
         }
         let boundary = energy.start + Double(direction > 0 ? index : index + 1) * Self.step
         let distance = abs(boundary - time)
-        return Run(frames: frames, pause: index, distance: near.isPause(index) && distance <= CutAudit.reach + 1e-9 ? distance : nil)
+        return Run(frames: frames, pause: index, distance: near.isStop(index) && distance <= CutAudit.reach + 1e-9 ? distance : nil)
     }
 
     /// Frames at speech level, in the full band and above 4 kHz. Never
@@ -168,30 +179,68 @@ public struct CutPlacer: Sendable {
         return (inside.filter { energy.full[$0] >= full }.count, inside.filter { energy.high[$0] >= high }.count)
     }
 
+    /// - Parameter words: transcript words around the edge, with no text.
     public func judge(
         at time: Double, keeps side: CutAudit.Side, removed: ClosedRange<Double>? = nil, words: [ClosedRange<Double>] = []
+    ) -> CutAudit.Edge {
+        judge(at: time, keeps: side, removed: removed, transcript: words.map { CutAudit.Word(text: "", start: $0.lowerBound, end: $0.upperBound) })
+    }
+
+    /// How an edge sounds, and the fix when it's clipped.
+    ///
+    /// With no transcript, it's the sound alone: a quiet gap shorter than a
+    /// pause can't be told from the closure inside a word, so it's judged
+    /// as one. With one, a quiet gap of `minWordGap` or more by a word
+    /// boundary (`betweenWords`) is a gap between words. An edge in it is
+    /// clean, whatever the next word does 40 ms on, and voice past an edge
+    /// only clips it up to such a gap: past it is the next word's voice,
+    /// which the cut is meant to take. Of the 25 joins Mike approved on the
+    /// Ian video's final cut that the sound alone flagged, that cleared 16.
+    ///
+    /// - Parameters:
+    ///   - removed: at a cut between two pieces of one take, the stretch of
+    ///     the file cut out between them; a fix only reaches into it.
+    ///   - transcript: the words around the edge, in media time. Their times
+    ///     only say where a word boundary can be; the sound says where it
+    ///     is. They also keep a fix from bringing a cut word back or
+    ///     dropping a kept one.
+    public func judge(
+        at time: Double, keeps side: CutAudit.Side, removed: ClosedRange<Double>? = nil, transcript: [CutAudit.Word]
     ) -> CutAudit.Edge {
         let step = Self.step
         let x = (time - energy.start) / step
         let before = Int((x - 1e-6).rounded(.up)) - 1
         let after = Int((x + 1e-6).rounded(.down))
         let (keptFrame, keptStep, lostFrame, lostStep) = side == .before ? (before, -1, after, 1) : (after, 1, before, -1)
-        let near = around(time)
+        var near = around(time)
         if near.isPause(keptFrame) || near.isPause(lostFrame) { return .clean }
+        near.wordGapFrames = betweenWords(transcript, in: near)
+        let lastWord = side == .before ? CutAudit.lastWordCut(transcript, at: time, removed: removed) : nil
+        if lastWord == nil, near.isWordGap(keptFrame) || near.isWordGap(lostFrame) {
+            var edge = CutAudit.Edge.clean
+            edge.betweenWords = true
+            return edge
+        }
 
         let score = score(at: time, keeps: side, speech: near.speech)
-        let lost = run(from: lostFrame, lostStep, edge: time, in: near)
+        // Past the sentence's last word, from the edge's own gap if it's in
+        // one, is where a fix that finishes it goes.
+        var lostFrom = lostFrame
+        if lastWord != nil {
+            while near.isWordGap(lostFrom), abs(lostFrom - lostFrame) < Int((CutAudit.reach / step).rounded()) { lostFrom += lostStep }
+        }
+        let lost = run(from: lostFrom, lostStep, edge: time, in: near)
         let kept = run(from: keptFrame, keptStep, edge: time, in: near)
         let lostSpeech = speech(Array(lost.frames.prefix(Int((CutAudit.reach / step).rounded()))), in: near)
-        // Voice at speech level past the edge, before any real pause: the
-        // edge is inside a word, or in fluent speech, whatever the clip's
-        // side sounds like. On the Ian video most of the cuts the level
-        // passed were in a quiet gap inside a word (the closure in
-        // "extract", "because", "index"), where the clip's last 25 ms reads
-        // 15 to 24 dB under the speech.
+        // Voice at speech level past the edge, before any real pause (or,
+        // with a transcript, gap between words): the edge is inside a word,
+        // or in fluent speech, whatever the clip's side sounds like. On the
+        // Ian video most of the cuts the level passed were in a quiet gap
+        // inside a word (the closure in "extract", "because", "index"),
+        // where the clip's last 25 ms reads 15 to 24 dB under the speech.
         let runsOn = max(lostSpeech.full, lostSpeech.high) >= Int((CutAudit.minSpeech / step).rounded())
         let verdict: CutAudit.Verdict
-        if score.margin < CutAudit.clippedUnder || runsOn {
+        if score.margin < CutAudit.clippedUnder || runsOn || lastWord != nil {
             verdict = .clipped
         } else {
             verdict = score.margin < CutAudit.cleanFrom ? .marginal : .clean
@@ -209,42 +258,92 @@ public struct CutPlacer: Sendable {
             verdict: verdict, margin: score.margin, kept: kept.distance ?? Double(kept.frames.count) * step, lost: lost.distance,
             gap: gap, highBandOnly: runsOn && lostSpeech.full == 0, pause: nil, suggestion: nil, fix: nil
         )
+        edge.lastWordCut = lastWord?.text
         guard verdict == .clipped else { return edge }
 
-        // On past what's cut off, into a pause in the cut material; or back
-        // into a pause in what the clip keeps, dropping a fragment.
-        var moves: [(to: Double, pause: ClosedRange<Double>)] = []
+        // On past what's cut off, into a pause (or gap between words) in the
+        // cut material, finishing the word the edge is in but bringing no
+        // other cut word back; or back into one in what the clip keeps,
+        // dropping no kept word. A word the edge is inside counts as kept
+        // when more than a sliver of it is (`holdsWord`): it's what the clip
+        // was cut in, and trimming back over it deletes it ("time" before
+        // "And" on the Ian video, #64).
+        let cutIn = transcript.filter { $0.start + 1e-6 < time && time < $0.end - 1e-6 } + (lastWord.map { [$0] } ?? [])
+        var moves: [(to: Double, pause: ClosedRange<Double>, betweenWords: Bool)] = []
+        var drops: String?
         if lost.distance != nil {
             let pause = pause(at: lost.pause, in: near)
-            let to = target(in: pause, direction: lostStep, startOfClip: side == .after)
+            let isPause = near.isPause(lost.pause)
+            let to = target(in: pause, direction: lostStep, startOfClip: side == .after, inPause: isPause)
             let inCut = removed.map { $0.lowerBound - 1e-6 <= to && to <= $0.upperBound + 1e-6 } ?? true
-            if inCut, !Self.holdsWord(words, min(time, to)...max(time, to)) { moves.append((to, pause)) }
+            let others = transcript.filter { !cutIn.contains($0) }.map(\.range)
+            if inCut, !Self.holdsWord(others, min(time, to)...max(time, to)) { moves.append((to, pause, !isPause)) }
         }
         if kept.distance != nil {
             let pause = pause(at: kept.pause, in: near)
-            let to = target(in: pause, direction: keptStep, startOfClip: false)
-            if !Self.holdsWord(words, min(time, to)...max(time, to)) { moves.append((to, pause)) }
+            let isPause = near.isPause(kept.pause)
+            let to = target(in: pause, direction: keptStep, startOfClip: false, inPause: isPause)
+            let stretch = min(time, to)...max(time, to)
+            if let word = transcript.first(where: { Self.holdsWord([$0.range], stretch) }) {
+                drops = word.text.isEmpty ? nil : word.text
+            } else {
+                moves.append((to, pause, !isPause))
+            }
         }
         if let move = moves.first {
             edge.pause = move.pause
             edge.suggestion = move.to
             edge.fix = .trim(to: move.to)
-        } else if let removed, removed.upperBound - removed.lowerBound <= CutAudit.putBackLimit + 1e-6 {
-            edge.fix = .putBack
+            edge.betweenWords = move.betweenWords
         } else {
-            edge.fix = .nothingNearby
+            edge.drops = drops
+            if let removed, removed.upperBound - removed.lowerBound <= CutAudit.putBackLimit + 1e-6 {
+                edge.fix = .putBack
+            } else {
+                edge.fix = .nothingNearby
+            }
         }
         return edge
+    }
+
+    /// Frames in a quiet gap of `minWordGap` or more, shorter than a pause,
+    /// with a transcript word boundary by it: a gap between words. A quiet
+    /// dip with no boundary near it is inside a word (the closure before
+    /// the "t" of "extract", the dip in "time" before its "m").
+    func betweenWords(_ words: [CutAudit.Word], in near: Around) -> [Bool] {
+        var gaps = [Bool](repeating: false, count: near.quietFrames.count)
+        let boundaries = CutAudit.boundaries(words)
+        guard !boundaries.isEmpty else { return gaps }
+        let shortest = Int((CutAudit.minWordGap / Self.step).rounded())
+        var index = 0
+        while index < gaps.count {
+            guard near.quietFrames[index], !near.pauseFrames[index] else {
+                index += 1
+                continue
+            }
+            var end = index
+            while end < gaps.count, near.quietFrames[end] { end += 1 }
+            let from = energy.start + Double(near.frames.lowerBound + index) * Self.step
+            let to = energy.start + Double(near.frames.lowerBound + end) * Self.step
+            if end - index >= shortest, boundaries.contains(where: { $0.overlaps(from...to) }) {
+                for k in index..<end { gaps[k] = true }
+            }
+            index = end
+        }
+        return gaps
     }
 
     /// Where in `pause` an edge moving `direction` goes: `pad` into it, so
     /// the sound it moved past isn't right on the cut. The start of a clip
     /// moving back into the pause before its word goes `lead` before the
     /// word instead, as near as a frame to the far side of a short pause:
-    /// what's there is cut material, so it costs nothing to be near it.
-    func target(in pause: ClosedRange<Double>, direction: Int, startOfClip: Bool) -> Double {
+    /// what's there is cut material, so it costs nothing to be near it. In
+    /// a gap between words, which is shorter than `lead`, it goes `pad`
+    /// before the word (or halfway, in a gap under twice that), nearer the
+    /// word it keeps.
+    func target(in pause: ClosedRange<Double>, direction: Int, startOfClip: Bool, inPause: Bool = true) -> Double {
         let length = pause.upperBound - pause.lowerBound
-        if startOfClip, direction < 0 {
+        if startOfClip, direction < 0, inPause {
             return max(pause.upperBound - CutAudit.lead, pause.lowerBound + min(Self.step, length / 2))
         }
         let pad = min(CutAudit.pad, length / 2)

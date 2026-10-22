@@ -14,13 +14,22 @@ import XCTest
 ///
 /// Add TANDEM_CUT_ALL=1 for a line on every edge, not just the misses.
 ///
+/// TANDEM_CUT_WORDS=<folder> scores it with a transcript: one JSON per
+/// file, named for it (`<name>.json` for `<name>.wav`), as
+/// `{"words": [{"start", "end", "text"}]}` in the engine's own times.
+/// TANDEM_CUT_ALIGN=1 aligns them to the file's sound first, as Tandem does
+/// when it reads a transcript (`TranscriptAlignment`).
+///
 /// Each edge is `{"id", "file", "edge", "keeps": "before"|"after",
 /// "removed": [start, end] or null, "label": "clipped"|"marginal"|"clean",
 /// "fixedEdge", "fix", "kind"}`, times in the file's own media time.
 /// `fixedEdge` is where the edit moved the edge (null where the cut was put
 /// back), and when an edge there is labelled too, it's that edge's fix that
 /// counts: on the Ian video most of the first round's fixes were flagged
-/// again and put back in the second.
+/// again and put back in the second. The final cut's set adds `source`
+/// (`heard`: Mike heard it clipped; `fixed`: an agent fixed it; `approved`:
+/// a join in the final cut) and `under` (music or a sound effect playing
+/// over an approved join).
 final class CutScorecardTests: XCTestCase {
     struct Labelled: Decodable {
         var id: String
@@ -32,10 +41,16 @@ final class CutScorecardTests: XCTestCase {
         var fixedEdge: Double?
         var fix: String?
         var kind: String?
+        var source: String?
+        var under: [String]?
+        var fixedBy: String?
 
         /// Mike heard something an audio check can't: a sentence left
-        /// hanging, an off-mic question, a breath cut short.
-        var isEditorial: Bool { kind.map { $0.hasPrefix("editorial") || $0.hasPrefix("other") } ?? false }
+        /// hanging, an off-mic question, a breath cut short, a leftover
+        /// fragment of a cut phrase.
+        var isEditorial: Bool {
+            kind.map { $0.hasPrefix("editorial") || $0.hasPrefix("other") || $0 == "fragment" || $0 == "halfThought" } ?? false
+        }
     }
 
     /// What finally worked for an edge: a trim to a time, or putting the
@@ -57,23 +72,39 @@ final class CutScorecardTests: XCTestCase {
         }
         let edges = try JSONDecoder().decode([Labelled].self, from: Data(contentsOf: URL(fileURLWithPath: edgesPath)))
         let media = URL(fileURLWithPath: mediaPath, isDirectory: true)
+        let wordsFolder = environment["TANDEM_CUT_WORDS"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let align = environment["TANDEM_CUT_ALIGN"] == "1"
 
         // Levels per file from every window read, as `tandem check --cuts`
         // works them out per take.
         var results: [(Labelled, CutAudit.Edge)] = []
         for (file, group) in Dictionary(grouping: edges, by: \.file).sorted(by: { $0.key < $1.key }) {
             let url = media.appendingPathComponent(file)
+            let words = try wordsFolder.map {
+                try BarkWords.load($0.appendingPathComponent(url.deletingPathExtension().lastPathComponent + ".json"), aligningTo: align ? url : nil)
+            }
             let windows = try group.map { try energy(url, from: $0.edge - Self.around, to: $0.edge + Self.around) }
             let levels = SpeechLevels(of: windows)
             for (labelled, window) in zip(group, windows) {
                 let removed = labelled.removed.flatMap { $0.count == 2 ? $0[0]...$0[1] : nil }
                 let side: CutAudit.Side = labelled.keeps == "before" ? .before : .after
-                results.append((labelled, CutAudit.judge(window, levels: levels, at: labelled.edge, keeps: side, removed: removed)))
+                let edge: CutAudit.Edge
+                if let words {
+                    // As `tandem check --cuts` passes them: the words its 3 s
+                    // either side of the edge reach.
+                    let near = (labelled.edge - CutAudit.around)...(labelled.edge + CutAudit.around)
+                    let nearby = words.filter { $0.range.overlaps(near) }
+                    edge = CutAudit.judge(window, levels: levels, at: labelled.edge, keeps: side, removed: removed, transcript: nearby)
+                } else {
+                    edge = CutAudit.judge(window, levels: levels, at: labelled.edge, keeps: side, removed: removed)
+                }
+                results.append((labelled, edge))
             }
         }
         results.sort { ($0.0.file, $0.0.edge) < ($1.0.file, $1.0.edge) }
 
-        var lines = ["Cut scorecard: \(results.count) edges"]
+        var lines = ["Cut scorecard: \(results.count) edges, " + (wordsFolder == nil ? "no transcript" : align ? "aligned transcript" : "transcript in the engine's times")]
+        if results.contains(where: { $0.0.source != nil }) { lines += bySource(results, edges: edges) }
         for label in ["clipped", "marginal", "clean"] {
             for editorial in [false, true] {
                 let these = results.filter { $0.0.label == label && $0.0.isEditorial == editorial }
@@ -115,11 +146,11 @@ final class CutScorecardTests: XCTestCase {
             case .putBack: fixed = "putBack"
             case .unknown: fixed = "-"
             }
-            return "    \(labelled.id) \(String(format: "%.3f", labelled.edge)) keeps \(labelled.keeps): \(edge.verdict.rawValue), \(margin), lost \(lost), gap \(gap), fix \(fixName(edge.fix)) \(to) (worked: \(fixed)) [\(labelled.kind ?? "")]"
+            return "    \(labelled.id) \(String(format: "%.3f", labelled.edge)) keeps \(labelled.keeps): \(edge.verdict.rawValue), \(margin), lost \(lost), gap \(gap), fix \(fixName(edge.fix)) \(to)\(edge.betweenWords ? " between words" : "")\(edge.drops.map { " drops \"\($0)\"" } ?? "") (worked: \(fixed)) [\(labelled.kind ?? "")\(labelled.under.map { " under " + $0.joined(separator: "+") } ?? "")]"
         }
-        let missed = results.filter { $0.0.label == "clipped" && !$0.1.clipped }
+        let missed = results.filter { $0.0.label == "clipped" && !$0.1.clipped && $0.0.source != "fixed" }
         let falseAlarms = results.filter { $0.0.label == "clean" && $0.1.clipped }
-        lines.append("  clipped edges not judged clipped (\(missed.count)):")
+        lines.append("  clipped edges not judged clipped (\(missed.count))" + (results.contains { $0.0.source == "fixed" } ? ", leaving out the ones an agent fixed:" : ":"))
         lines += missed.map(row)
         lines.append("  clean edges flagged (\(falseAlarms.count)):")
         lines += falseAlarms.map(row)
@@ -257,6 +288,42 @@ final class CutScorecardTests: XCTestCase {
         XCTAssertFalse(joins.isEmpty)
     }
 
+    /// The final cut's set by where each edge came from: what Mike heard,
+    /// by kind; the joins he approved that are flagged, plain and under
+    /// music or a sound effect; and how near the fixes land to the ones the
+    /// edit made.
+    private func bySource(_ results: [(Labelled, CutAudit.Edge)], edges: [Labelled]) -> [String] {
+        var lines: [String] = []
+        let heard = results.filter { $0.0.source == "heard" }
+        for kind in Array(Set(heard.compactMap(\.0.kind))).sorted() {
+            let these = heard.filter { $0.0.kind == kind }
+            let what = these[0].0.isEditorial ? " (content, no audio check hears it)" : ""
+            lines.append("  heard \(kind)\(what): caught \(these.filter(\.1.clipped).count) of \(these.count)" + (these.contains { $0.1.verdict == .marginal } ? ", marginal \(these.filter { $0.1.verdict == .marginal }.count)" : ""))
+        }
+        let acoustic = heard.filter { !$0.0.isEditorial }
+        lines.append("  heard, acoustic: caught \(acoustic.filter(\.1.clipped).count) of \(acoustic.count)")
+        let fixed = results.filter { $0.0.source == "fixed" }
+        lines.append("  fixed by an agent: judged clipped \(fixed.filter(\.1.clipped).count) of \(fixed.count), marginal \(fixed.filter { $0.1.verdict == .marginal }.count) ("
+            + Array(Set(fixed.compactMap(\.0.kind))).sorted().map { kind in "\(kind) \(fixed.filter { $0.0.kind == kind && $0.1.clipped }.count) of \(fixed.filter { $0.0.kind == kind }.count)" }.joined(separator: ", ") + ")")
+        let approved = results.filter { $0.0.source == "approved" }
+        let plain = approved.filter { ($0.0.under ?? []).isEmpty }, under = approved.filter { !($0.0.under ?? []).isEmpty }
+        lines.append("  approved flagged: \(approved.filter(\.1.clipped).count) of \(approved.count) (plain \(plain.filter(\.1.clipped).count) of \(plain.count), under music or sfx \(under.filter(\.1.clipped).count) of \(under.count)); marginal \(approved.filter { $0.1.verdict == .marginal }.count)")
+        for source in ["heard", "fixed"] {
+            let caught = results.filter { $0.0.source == source && !$0.0.isEditorial && $0.1.clipped }
+            let offsets = caught.compactMap { pair -> Double? in
+                guard case .trim(let fixed) = Self.worked(pair.0, in: edges), let to = pair.1.suggestion else { return nil }
+                return abs(to - fixed)
+            }.sorted()
+            let withTrim = caught.filter { if case .trim = Self.worked($0.0, in: edges) { true } else { false } }.count
+            let putBack = caught.filter { Self.worked($0.0, in: edges) == .putBack || $0.0.fixedBy == "putBack" }
+            lines.append(String(
+                format: "  %@ and caught, where the edit trimmed (%d): trimmed too %d, median %.0f ms from it, within 60 ms %d, over 150 ms %d; where it put the cut back (%d): ",
+                source, withTrim, offsets.count, offsets.isEmpty ? 0 : offsets[offsets.count / 2] * 1000, offsets.filter { $0 <= 0.0605 }.count, offsets.filter { $0 > 0.15 }.count, putBack.count
+            ) + Dictionary(grouping: putBack, by: { fixName($0.1.fix) }).mapValues(\.count).sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }.joined(separator: ", "))
+        }
+        return lines
+    }
+
     /// Follows an edge's fix on to the labelled edge it made, if any, and
     /// says what finally worked there.
     static func worked(_ edge: Labelled, in edges: [Labelled]) -> Worked {
@@ -266,9 +333,12 @@ final class CutScorecardTests: XCTestCase {
             guard let next = edges.first(where: {
                 !seen.contains($0.id) && $0.file == current.file && $0.keeps == current.keeps && abs($0.edge - fixed) < 0.0015
             }) else { return .trim(fixed) }
+            // A join in the final cut is where the fix ended up.
+            if next.source == "approved" { return .trim(next.edge) }
             seen.insert(next.id)
             current = next
         }
+        if current.fixedBy == "putBack" { return .putBack }
         return current.fix?.contains("restor") == true ? .putBack : .unknown
     }
 

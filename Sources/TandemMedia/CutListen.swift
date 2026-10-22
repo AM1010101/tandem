@@ -42,6 +42,10 @@ public enum CutListen {
     public static let near = 0.6
     /// What the engines hear at.
     public static let sampleRate = 16_000.0
+    /// How the sound is prepared and heard (the padding, the span, Bark's
+    /// short encoder and lead-in): part of every cache key, so a change to
+    /// any of it hears every join again. Bump it with them.
+    public static let version = 1
 
     /// A word, in seconds: timeline time for the take's words, and from the
     /// start of the samples for what an engine hears.
@@ -126,16 +130,63 @@ public enum CutListen {
     /// Lines up what's heard across the join at `join` with the take's kept
     /// words there, both in timeline time.
     ///
+    /// A join can only cut off two kept words: the end of the last one
+    /// before it and the start of the first one after it. It can also
+    /// leave a piece of a cut word right at it. So only those are problems:
+    /// one of the two not heard, the word before heard missing its end, the
+    /// word after heard missing its start, or a word heard between them
+    /// that the take doesn't keep. Anything else that differs (a word
+    /// further off, a word missing the end the cut can't reach, a near
+    /// spelling, a name heard as something else) is a note. On the Tandem
+    /// video Bark heard "Filmora" before a join as "for mora", and
+    /// "filmore", two words after one, as "filmwater": neither is the cut.
+    ///
     /// - Parameters:
     ///   - cutPast: the take's words cut just past the end of the clip
     ///     before the join, in order: what it would have said next.
     ///   - cutBefore: the take's words cut just before the start of the
     ///     clip after the join, in order.
-    public static func compare(said: [Word], heard: [Word], at join: Double, cutPast: [String] = [], cutBefore: [String] = []) -> Join {
+    ///   - otherJoins: other joins near this one. A word with one between
+    ///     it and this join is that join's, and a word between the two is
+    ///     blamed on the nearer, so two joins closer than the window don't
+    ///     both report it.
+    public static func compare(
+        said: [Word], heard: [Word], at join: Double, cutPast: [String] = [], cutBefore: [String] = [], otherJoins: [Double] = []
+    ) -> Join {
         let said = said.sorted { $0.start < $1.start }
         let heard = heard.sorted { $0.start < $1.start }
         let steps = align(said.map(\.text), said.map(\.middle), heard.map(\.text), heard.map(\.middle))
         func isNear(_ word: Word) -> Bool { word.end >= join - near && word.start <= join + near }
+        // Another join between a word and this one: the word is that join's.
+        func pastAnother(_ word: Word) -> Bool {
+            otherJoins.contains { other in word.middle <= join ? word.middle < other && other < join : join < other && other < word.middle }
+        }
+
+        // The two kept words the join can cut into, and where they are
+        // among the steps.
+        var stepOfSaid: [Int: Int] = [:]
+        for (index, step) in steps.enumerated() {
+            switch step {
+            case .match(let s, _, _), .missing(let s): stepOfSaid[s] = stepOfSaid[s] ?? index
+            case .extra: break
+            }
+        }
+        func step(of s: Int) -> Int? {
+            // A word heard as one with the word before it has no step of its
+            // own: it's the step that covers them both.
+            var s = s
+            while s >= 0 {
+                if let index = stepOfSaid[s] { return index }
+                s -= 1
+            }
+            return nil
+        }
+        let beforeIndex = said.lastIndex { $0.middle <= join }.flatMap { isNear(said[$0]) && !pastAnother(said[$0]) ? $0 : nil }
+        let afterIndex = said.firstIndex { $0.middle > join }.flatMap { isNear(said[$0]) && !pastAnother(said[$0]) ? $0 : nil }
+        // The steps between the two: what's heard right at the join.
+        let fromStep = beforeIndex.flatMap(step(of:)) ?? -1
+        let toStep = afterIndex.flatMap(step(of:)) ?? steps.count
+
         // The cut words beside the join a word heard there could be: the
         // ones cut past the clip before it, and before the clip after it.
         func cutBeside(_ time: Double) -> [String] {
@@ -161,12 +212,86 @@ public enum CutListen {
             }
         }
 
+        // A join word heard as two or three ("for mora" for "Filmora"):
+        // the words heard either side of its step that, with what's lined
+        // up with it, spell it or nearly.
+        var absorbed = Set<Int>()
+        func spelled(_ s: Int, at index: Int) -> String? {
+            let target = canonical(said[s].text)
+            guard !target.isEmpty else { return nil }
+            var middle: [Int] = []
+            if case .match(_, let h, let how) = steps[index] {
+                if how == nil { return nil }
+                if case .loose = how { return nil }
+                middle = [h]
+            }
+            func extras(_ side: Int) -> [Int] {
+                var found: [Int] = []
+                var next = index + side
+                while next >= 0, next < steps.count, found.count < 2, case .extra(let h) = steps[next] {
+                    found.append(h)
+                    next += side
+                }
+                return found
+            }
+            let left = Array(extras(-1).reversed()), right = extras(1)
+            for count in 1...4 {
+                for l in 0...min(count, left.count) {
+                    let r = count - l
+                    guard r <= right.count, middle.count + count <= 3 else { continue }
+                    let run = Array(left.suffix(l)) + middle + Array(right.prefix(r))
+                    let joined = run.map { canonical(heard[$0].text) }.joined()
+                    guard joined == target || similar(joined, target) else { continue }
+                    run.forEach { absorbed.insert($0) }
+                    return run.map { heard[$0].text }.joined(separator: " ")
+                }
+            }
+            return nil
+        }
+
+        // A name, by the transcript's capitals: a capital that isn't the
+        // start of a sentence ("Filmora", "TS"). The engines hear names as
+        // other words more than anything.
+        func isName(_ s: Int) -> Bool {
+            let text = said[s].text.filter { $0.isLetter }
+            guard let first = text.first, first.isUppercase, !["I", "Im", "Ive", "Ill", "Id"].contains(text) else { return false }
+            if text.count > 1, text.allSatisfy(\.isUppercase) { return true }
+            return s > 0 && !CutListen.endsSentence(said[s - 1].text)
+        }
+
         var findings: [Finding] = []
-        for step in steps {
+        // Which join words are this join's to report not heard: a word
+        // between two joins goes to the nearer.
+        func owns(_ s: Int) -> Bool {
+            let word = said[s]
+            let mine = word.middle <= join ? join - word.end : word.start - join
+            return !otherJoins.contains { other in
+                let theirs = word.middle <= other ? other - word.end : word.start - other
+                let between = word.middle <= join ? other < word.middle : other > word.middle
+                return between && theirs < mine
+            }
+        }
+        var heardTwice: [Int: String] = [:]
+        for s in [beforeIndex, afterIndex].compactMap({ $0 }) {
+            guard let index = stepOfSaid[s] else { continue }
+            if let text = spelled(s, at: index) { heardTwice[s] = text }
+        }
+
+        for (index, step) in steps.enumerated() {
             switch step {
             case .match(let s, let h, let how):
-                guard isNear(said[s]) || isNear(heard[h]) else { continue }
-                let saidText = said[s].text, heardText = heard[h].text
+                guard isNear(said[s]) || isNear(heard[h]), !pastAnother(said[s]) else { continue }
+                let saidText = said[s].text
+                let isBefore = s == beforeIndex, isAfter = s == afterIndex
+                if let twice = heardTwice[s] {
+                    let same = canonical(twice.replacingOccurrences(of: " ", with: "")) == canonical(saidText)
+                    if !same {
+                        findings.append(Finding(kind: .heardAs, said: saidText, heard: twice, time: said[s].middle, slip: true,
+                                                why: "heard as more than one word that spell it nearly: the engine's"))
+                    }
+                    continue
+                }
+                let heardText = heard[h].text
                 // The same word, or written differently: nothing to say.
                 guard let how else { continue }
                 if case .loose = how { continue }
@@ -175,41 +300,74 @@ public enum CutListen {
                     findings.append(Finding(kind: .heardAs, said: saidText, heard: heardText, time: said[s].middle, slip: slip, why: why))
                 }
                 if let part = truncation(of: a, b) {
-                    add(false, "only \"\(part)\" of it: cut short")
+                    // Only the end the join is at can be cut off.
+                    if isBefore, a.hasPrefix(b) {
+                        add(false, "only \"\(part)\" of it: its end is cut off")
+                    } else if isAfter, a.hasSuffix(b) {
+                        add(false, "only \"\(part)\" of it: its start is cut off")
+                    } else {
+                        add(true, isBefore || isAfter ? "part of it, but not the part the join can cut: the engine's" : "part of it, away from the join, where the cut can't reach")
+                    }
                 } else if let cut = wholeCut(heardText, at: heard[h].middle) {
                     add(true, "\"\(cut)\" is heard whole, which the take's transcript has in the cut: its times are off, or the cut keeps it")
-                } else if let cut = partOfCut(heardText, at: heard[h].middle), how == .different {
+                } else if (isBefore || isAfter), how == .different, let cut = partOfCut(heardText, at: heard[h].middle) {
                     add(false, "sounds like part of \"\(cut)\", which is cut")
                 } else if b.hasPrefix(a) {
                     add(true, "more of the word than the transcript has")
+                } else if isBefore || isAfter, how == .different, !isName(s) {
+                    // A plain word at the join heard as another: on the Ian
+                    // video "new" heard as "nude." and "processed" as "just"
+                    // were cut-offs an agent fixed.
+                    let slip = isFunctionWord(saidText) || isFunctionWord(heardText) || a.count <= 2 || b.count <= 2
+                    add(slip, "a different word")
+                } else if isBefore || isAfter {
+                    add(true, how == .different ? "a name heard as something else, which the engine does: nothing of it short" : how.why)
                 } else {
-                    let slip = how != .different || isFunctionWord(saidText) || isFunctionWord(heardText) || a.count <= 2 || b.count <= 2
-                    add(slip, how.why)
+                    add(true, how == .different ? "a different word, away from the join, where the cut can't reach" : how.why)
                 }
             case .missing(let s):
-                guard isNear(said[s]) else { continue }
+                guard isNear(said[s]), !pastAnother(said[s]) else { continue }
                 let text = said[s].text
-                let slip = isFunctionWord(text) || canonical(text).count <= 2
-                findings.append(Finding(kind: .notHeard, said: text, time: said[s].middle, slip: slip,
-                                        why: slip ? "a short or filler word the engine often leaves out" : "nothing heard for it"))
+                if let twice = heardTwice[s] {
+                    findings.append(Finding(kind: .heardAs, said: text, heard: twice, time: said[s].middle, slip: true,
+                                            why: "heard as more than one word that spell it nearly: the engine's"))
+                    continue
+                }
+                let atJoin = s == beforeIndex || s == afterIndex
+                // A word between two joins is the nearer one's to report.
+                if atJoin, !owns(s) { continue }
+                let short = isFunctionWord(text) || canonical(text).count <= 2
+                let why = short ? "a short or filler word the engine often leaves out"
+                    : atJoin ? "nothing heard for it" : "nothing heard for it, away from the join, where the cut can't reach"
+                findings.append(Finding(kind: .notHeard, said: text, time: said[s].middle, slip: short || !atJoin, why: why))
             case .extra(let h):
-                guard isNear(heard[h]) else { continue }
+                guard isNear(heard[h]), !absorbed.contains(h), !pastAnother(heard[h]) else { continue }
                 let text = heard[h].text
+                let atJoin = fromStep < index && index < toStep
                 func add(_ slip: Bool, _ why: String) {
                     findings.append(Finding(kind: .extra, heard: text, time: heard[h].middle, slip: slip, why: why))
                 }
                 if let cut = wholeCut(text, at: heard[h].middle) {
                     add(true, "\"\(cut)\" is heard whole, which the take's transcript has in the cut: its times are off, or the cut keeps it")
+                } else if !atJoin {
+                    add(true, "away from the join, where nothing cut can be left")
                 } else if let cut = partOfCut(text, at: heard[h].middle) {
                     add(false, "sounds like part of \"\(cut)\", which is cut")
                 } else if isFunctionWord(text) || canonical(text).count <= 2 {
                     add(true, "a short or filler word the engine often adds")
                 } else {
-                    add(false, "a word the take doesn't keep here")
+                    // Heard between the two kept words either side of the
+                    // join, where only a cut word can be.
+                    add(false, "heard right at the join, between the kept words either side: what's left of a cut word")
                 }
             }
         }
         return Join(time: join, said: text(said, at: join), heard: text(heard, at: join), findings: findings)
+    }
+
+    static func endsSentence(_ text: String) -> Bool {
+        guard let last = text.trimmingCharacters(in: .whitespaces).last else { return false }
+        return ".?!".contains(last)
     }
 
     /// The words with " | " where the join falls.
@@ -443,6 +601,15 @@ public enum CutListen {
 /// (`BarkTranscription`): one piece, 0.25 s of lead-in, the short encoder.
 public struct BarkListener: Sendable {
     public static let engine = BarkTranscription.engine
+    /// The model heard with, for the cache: its pinned revision and its
+    /// files' checksums, which the download checks it against, and how
+    /// it's run (`CutListen.version`).
+    public static let model: String = {
+        var hasher = SHA256()
+        for file in BarkModelStore.files { hasher.update(data: Data("\(file.path)=\(file.sha256);".utf8)) }
+        let files = hasher.finalize().prefix(8).map { String(format: "%02x", $0) }.joined()
+        return "\(BarkModelStore.revision) \(files) v\(CutListen.version)"
+    }()
     var store: BarkModelStore
 
     /// Tandem's own copy of the model.
@@ -471,9 +638,11 @@ public struct BarkListener: Sendable {
 }
 
 /// What each join was heard as, by what was rendered: a hash of the
-/// samples the engine heard (as 16-bit, padding and all) and the engine's
-/// name. A re-check after edits renders every join again, which is quick,
-/// and only listens again where the sound changed.
+/// samples the engine heard (as 16-bit, padding and all), the engine's
+/// name and its model (`BarkListener.model`, say), so a new model or a
+/// change to how it's run hears again rather than keeping old mistakes. A
+/// re-check after edits renders every join again, which is quick, and only
+/// listens again where the sound changed.
 public struct CutListenCache: Sendable {
     public var folder: URL
 
@@ -486,9 +655,9 @@ public struct CutListenCache: Sendable {
         self.init(folder: project.cacheFolder.appendingPathComponent("listen", isDirectory: true))
     }
 
-    public static func key(_ samples: [Float], engine: String) -> String {
+    public static func key(_ samples: [Float], engine: String, model: String) -> String {
         var hasher = SHA256()
-        hasher.update(data: Data("\(engine)|\(CutListen.sampleRate)|".utf8))
+        hasher.update(data: Data("\(engine)|\(model)|\(CutListen.version)|\(CutListen.sampleRate)|".utf8))
         let quantised = samples.map { Int16(clamping: Int(($0 * 32767).rounded())) }
         quantised.withUnsafeBytes { hasher.update(bufferPointer: $0) }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
@@ -510,6 +679,9 @@ public struct CutListenCache: Sendable {
 @available(macOS 26, *)
 public struct SpeechAnalyzerListener: Sendable {
     public static let engine = SpeechTranscription.engine
+    /// The model heard with, for the cache: the system's, which comes and
+    /// updates with macOS.
+    public static var model: String { "\(ProcessInfo.processInfo.operatingSystemVersionString) v\(CutListen.version)" }
     public var localeID: String
 
     public init(localeID: String = "en-US") {
@@ -519,9 +691,14 @@ public struct SpeechAnalyzerListener: Sendable {
     /// The words in `samples` (16 kHz mono), times in seconds from the
     /// first sample.
     public func listen(_ samples: [Float]) async throws -> [CutListen.Word] {
-        guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: localeID)) else {
-            throw MediaError.notApplicable("SpeechAnalyzer doesn't support \(localeID)")
+        // As transcripts do: install the model when it isn't there, which
+        // a Mac that's always had Bark may never have needed.
+        try await SpeechTranscription.withModel(localeID: localeID) { locale in
+            try await Self.listen(samples, locale: locale)
         }
+    }
+
+    static func listen(_ samples: [Float], locale: Locale) async throws -> [CutListen.Word] {
         let transcriber = SpeechTranscription.makeTranscriber(locale)
         guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
             throw MediaError.failed("SpeechAnalyzer has no audio format for \(locale.identifier)")

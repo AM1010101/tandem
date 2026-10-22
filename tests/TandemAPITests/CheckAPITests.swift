@@ -355,10 +355,19 @@ final class CheckAPITests: XCTestCase {
         let lock = NSLock()
         var calls = 0
         let script: [Double: [CutListen.Word]]
+        let engine: String
+        let model: String
+        /// Throws for these joins (by render start), or every one when nil
+        /// is in it.
+        var failing: Set<Double?> = []
 
-        init(_ script: [Double: [CutListen.Word]]) {
+        init(_ script: [Double: [CutListen.Word]], engine: String = "fake", model: String = "1") {
             self.script = script
+            self.engine = engine
+            self.model = model
         }
+
+        struct Failed: Error {}
 
         /// A render whose every sample says where it starts, so the ear can
         /// tell which join it's hearing.
@@ -367,9 +376,10 @@ final class CheckAPITests: XCTestCase {
         }
 
         var ear: CutCheck.Ear {
-            CutCheck.Ear(engine: "fake") { samples in
+            CutCheck.Ear(engine: engine, model: model) { samples in
                 self.lock.withLock { self.calls += 1 }
                 let from = (Double(samples[Int(CutListen.padding * CutListen.sampleRate)]) * 1000).rounded()
+                if self.failing.contains(nil) || self.failing.contains(from) { throw Failed() }
                 return self.script[from] ?? []
             }
         }
@@ -395,7 +405,7 @@ final class CheckAPITests: XCTestCase {
                  CutListen.Word(text: "Now.", start: lead + 1, end: lead + 1.8)],
             -3: [CutListen.Word(text: "So", start: lead + 1, end: lead + 3.6)]
         ])
-        h.service.cutListening = (ear.ear, ear.mix)
+        h.service.cutListening = ([ear.ear], ear.mix)
         let result = try await CheckRequest(cuts: true, listen: true).run(on: h.service, context: h.context)
         let listened = try XCTUnwrap(result.listened)
         XCTAssertEqual(listened.engine, "fake")
@@ -427,6 +437,180 @@ final class CheckAPITests: XCTestCase {
         XCTAssertEqual(again.listened?.heard, 0)
         XCTAssertEqual(ear.calls, 3, "nothing heard again")
         XCTAssertEqual(again.problems.filter { $0.kind == .heardCutOff }.map(\.start), [t(30)])
+    }
+
+    /// The take of `testListeningHearsEachJoinAndFlagsWhatsCutOff`, and
+    /// what's heard at its joins: "that [because] Now", "be" heard.
+    private func listeningHarness(edit: (inout Project) -> Void = { _ in }) throws -> (ServiceHarness, [Double: [CutListen.Word]]) {
+        let h = try voicedHarness(words: [(1, 3.6), (29.5, 30.0), (30.02, 30.24), (33, 33.8)], edit: edit)
+        h.analysis.transcripts["med_camera"] = Transcript(language: "en", engine: "fake", words: [
+            TranscriptWord(text: "So", start: t(1), end: t(3.6)),
+            TranscriptWord(text: "that", start: t(29.5), end: t(30)),
+            TranscriptWord(text: "because", start: t(30.02), end: t(30.24)),
+            TranscriptWord(text: "Now", start: t(33), end: t(33.8))
+        ])
+        let lead = CutListen.padding + CutListen.span
+        return (h, [
+            27: [CutListen.Word(text: "that", start: lead - 0.5, end: lead), CutListen.Word(text: "be", start: lead + 0.01, end: lead + 0.1),
+                 CutListen.Word(text: "Now.", start: lead + 1, end: lead + 1.8)],
+            -3: [CutListen.Word(text: "So", start: lead + 1, end: lead + 3.6)]
+        ])
+    }
+
+    func testListeningDoesntCompareWhereTheTakeHasNoTranscript() async throws {
+        // Without the take's words, everything heard would read as a word
+        // the take doesn't keep.
+        let (h, script) = try listeningHarness()
+        defer { h.close() }
+        h.analysis.transcripts["med_camera"] = nil
+        let ear = FakeEar(script)
+        h.service.cutListening = ([ear.ear], ear.mix)
+        let result = try await CheckRequest(cuts: true, listen: true).run(on: h.service, context: h.context)
+        let listened = try XCTUnwrap(result.listened)
+        XCTAssertEqual(listened.joins.count, 3)
+        XCTAssertTrue(listened.joins.allSatisfy { $0.findings.isEmpty }, "\(listened.joins)")
+        XCTAssertEqual(listened.joins[1].heard, "that | be Now.", "still heard, to read")
+        XCTAssertEqual(listened.joins[1].skipped, "no transcript")
+        XCTAssertTrue(result.problems.filter { $0.kind == .heardCutOff }.isEmpty, "\(result.problems)")
+        let said = result.warnings.filter { $0.contains("No transcript") }
+        XCTAssertEqual(said.count, 1, "said once: \(result.warnings)")
+        XCTAssertTrue(said[0].contains("take1-camera.wav"), said[0])
+        XCTAssertTrue(result.readableText.contains("not compared: no transcript"), result.readableText)
+    }
+
+    func testListeningHearsWhatExportPlaysWhenATrackIsSoloed() throws {
+        var project = APIFixture.project()
+        var second = Track(id: "trk_voice2", kind: .audio, name: "Voice 2", clips: [])
+        second.rippleMode = .cut
+        project.audioTracks.insert(second, at: 1)
+        XCTAssertEqual(CutCheck.playedSpeechTracks(project).map(\.id), ["trk_voice", "trk_voice2"])
+        project.audioTracks[1].solo = true
+        XCTAssertEqual(CutCheck.playedSpeechTracks(project).map(\.id), ["trk_voice2"], "only the soloed one plays")
+        project.audioTracks[1].solo = false
+        let music = try XCTUnwrap(project.audioTracks.firstIndex { $0.id == "trk_music" })
+        project.audioTracks[music].solo = true
+        XCTAssertEqual(CutCheck.playedSpeechTracks(project).map(\.id), [], "the music plays alone")
+    }
+
+    func testListeningToASoloedTrackComparesItsWordsOnly() async throws {
+        // The voice track muted by another track's solo: nothing it says
+        // is played, so nothing of it is heard or compared.
+        let (h, script) = try listeningHarness { project in
+            let music = project.audioTracks.firstIndex { $0.id == "trk_music" }!
+            project.audioTracks[music].solo = true
+        }
+        defer { h.close() }
+        let ear = FakeEar(script)
+        h.service.cutListening = ([ear.ear], ear.mix)
+        let result = try await CheckRequest(cuts: true, listen: true).run(on: h.service, context: h.context)
+        XCTAssertNil(result.listened, "\(String(describing: result.listened))")
+        XCTAssertTrue(result.warnings.contains { $0.contains("soloed") }, "\(result.warnings)")
+        XCTAssertEqual(ear.calls, 0)
+    }
+
+    func testNothingHeardWhereTheTakeHasWordsIsntCachedOrBlamedOnTheCut() async throws {
+        let (h, _) = try listeningHarness()
+        defer { h.close() }
+        let ear = FakeEar([:])
+        h.service.cutListening = ([ear.ear], ear.mix)
+        let result = try await CheckRequest(cuts: true, listen: true).run(on: h.service, context: h.context)
+        let listened = try XCTUnwrap(result.listened)
+        XCTAssertTrue(result.problems.filter { $0.kind == .heardCutOff }.isEmpty, "\(result.problems)")
+        XCTAssertEqual(listened.joins.map(\.skipped), ["nothing heard", "nothing heard", nil], "the end has no words to hear")
+        // Asked twice where there are words, once where there aren't.
+        XCTAssertEqual(ear.calls, 5)
+        XCTAssertEqual(result.warnings.filter { $0.contains("Nothing was heard") }.count, 1, "\(result.warnings)")
+        // Not cached: asked again next time.
+        let again = try await CheckRequest(cuts: true, listen: true).run(on: h.service, context: h.context)
+        XCTAssertEqual(again.listened?.cached, 1)
+        XCTAssertEqual(ear.calls, 9)
+    }
+
+    func testNothingHeardFallsBackToTheNextEngine() async throws {
+        let (h, script) = try listeningHarness()
+        defer { h.close() }
+        let silent = FakeEar([:], engine: "silent")
+        let fallback = FakeEar(script, engine: "fallback")
+        h.service.cutListening = ([silent.ear, fallback.ear], silent.mix)
+        let result = try await CheckRequest(cuts: true, listen: true).run(on: h.service, context: h.context)
+        let listened = try XCTUnwrap(result.listened)
+        XCTAssertEqual(listened.joins.map(\.skipped), [nil, nil, nil])
+        XCTAssertEqual(result.problems.filter { $0.kind == .heardCutOff }.map(\.start), [t(30)])
+    }
+
+    func testAnEngineFailingAtOneJoinStillHearsTheRest() async throws {
+        let (h, script) = try listeningHarness()
+        defer { h.close() }
+        let ear = FakeEar(script)
+        ear.failing = [-3]
+        h.service.cutListening = ([ear.ear], ear.mix)
+        let result = try await CheckRequest(cuts: true, listen: true).run(on: h.service, context: h.context)
+        let listened = try XCTUnwrap(result.listened)
+        XCTAssertEqual(listened.joins.map(\.time), [t(0), t(30), t(60)])
+        XCTAssertEqual(listened.joins[0].skipped, "couldn't listen")
+        XCTAssertNil(listened.joins[1].skipped)
+        XCTAssertEqual(result.problems.filter { $0.kind == .heardCutOff }.map(\.start), [t(30)])
+        XCTAssertEqual(result.warnings.filter { $0.contains("couldn't listen") }.count, 1, "\(result.warnings)")
+
+        // Failing everywhere now: what was heard before still comes from
+        // the cache.
+        ear.failing = [nil]
+        let again = try await CheckRequest(cuts: true, listen: true).run(on: h.service, context: h.context)
+        XCTAssertEqual(again.listened?.cached, 2)
+        XCTAssertEqual(again.problems.filter { $0.kind == .heardCutOff }.map(\.start), [t(30)])
+    }
+
+    func testAnEngineThatKeepsFailingFallsBackToTheNext() async throws {
+        let (h, script) = try listeningHarness()
+        defer { h.close() }
+        let broken = FakeEar(script, engine: "broken")
+        broken.failing = [nil]
+        let fallback = FakeEar(script, engine: "fallback")
+        h.service.cutListening = ([broken.ear, fallback.ear], broken.mix)
+        let result = try await CheckRequest(cuts: true, listen: true).run(on: h.service, context: h.context)
+        let listened = try XCTUnwrap(result.listened)
+        XCTAssertEqual(listened.joins.map(\.skipped), [nil, nil, nil], "the second fails over, and the first is heard again with the fallback")
+        XCTAssertEqual(broken.calls, 2, "given up on after failing twice in a row")
+        XCTAssertEqual(listened.engine, "broken, then fallback")
+        XCTAssertEqual(result.problems.filter { $0.kind == .heardCutOff }.map(\.start), [t(30)])
+        XCTAssertTrue(result.warnings.contains { $0.contains("listening with fallback") }, "\(result.warnings)")
+    }
+
+    func testANewModelHearsAgain() async throws {
+        let (h, script) = try listeningHarness()
+        defer { h.close() }
+        let ear = FakeEar(script)
+        h.service.cutListening = ([ear.ear], ear.mix)
+        _ = try await CheckRequest(cuts: true, listen: true).run(on: h.service, context: h.context)
+        let updated = FakeEar(script, model: "2")
+        h.service.cutListening = ([updated.ear], updated.mix)
+        let again = try await CheckRequest(cuts: true, listen: true).run(on: h.service, context: h.context)
+        XCTAssertEqual(again.listened?.cached, 0)
+        XCTAssertEqual(updated.calls, 3)
+    }
+
+    func testACutOfAFillerAndTheWordBeforeItIsJudgedOverTheWholeCut() async throws {
+        // "And [the like,] challenge": a 4 s cut that took "the like" and
+        // nothing else said. The take's 3 s past the edge don't reach the
+        // cut's end, so the check reads the transcript over all of it.
+        let h = try voicedHarness(words: [(1, 3.6), (29.4, 29.8), (30.05, 30.35), (30.35, 30.65), (34.2, 34.8)]) { project in
+            for tracks in [\Project.videoTracks, \Project.audioTracks] {
+                for track in project[keyPath: tracks].indices {
+                    for clip in project[keyPath: tracks][track].clips.indices where project[keyPath: tracks][track].clips[clip].linkGroup == "lnk_b" {
+                        project[keyPath: tracks][track].clips[clip].sourceStart = t(34)
+                    }
+                }
+            }
+        }
+        defer { h.close() }
+        h.analysis.transcripts["med_camera"] = Transcript(language: "en", engine: "fake", words: [
+            TranscriptWord(text: "And", start: t(29.4), end: t(29.8)),
+            TranscriptWord(text: "the", start: t(30.05), end: t(30.35)),
+            TranscriptWord(text: "like,", start: t(30.35), end: t(30.65)),
+            TranscriptWord(text: "challenge", start: t(34.2), end: t(34.8))
+        ])
+        let result = try await CheckRequest(cuts: true).run(on: h.service, context: h.context)
+        XCTAssertEqual(result.problems.first?.cut?.beforeFiller, "the", "\(result.problems)")
     }
 
     func testACutInAShortGapBetweenWordsIsFine() async throws {

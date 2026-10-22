@@ -119,22 +119,35 @@ enum SpeechTranscription {
     static let engine = "SpeechAnalyzer"
 
     static func transcribe(source: URL, localeID: String, context: JobContext, timeRange: CMTimeRange?) async throws -> Transcript {
+        try await withModel(localeID: localeID, isCancelled: { context.isCancelled }, installing: { locale in
+            context.progress(0, message: "Installing the \(locale.identifier) speech model")
+        }) { locale in
+            try await attempt(source: source, locale: locale, context: context, timeRange: timeRange)
+        }
+    }
+
+    /// Runs `work` with the transcriber's model for `localeID`, installing
+    /// it and trying once more when it fails without it.
+    static func withModel<T>(
+        localeID: String, isCancelled: () -> Bool = { false }, installing: (Locale) -> Void = { _ in },
+        _ work: (Locale) async throws -> T
+    ) async throws -> T {
         guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: localeID)) else {
             throw MediaError.notApplicable("SpeechAnalyzer doesn't support \(localeID)")
         }
         let status = await AssetInventory.status(forModules: [makeTranscriber(locale)])
         guard status != .unsupported else { throw MediaError.notApplicable("SpeechAnalyzer can't transcribe \(localeID) on this Mac") }
         do {
-            return try await attempt(source: source, locale: locale, context: context, timeRange: timeRange)
-        } catch let error where status < .installed && !context.isCancelled && !(error is CancellationError) {
+            return try await work(locale)
+        } catch let error where status < .installed && !isCancelled() && !(error is CancellationError) {
             // The model usually works even when the inventory only says
             // "supported"; if it didn't, install it and try once more.
             let transcriber = makeTranscriber(locale)
             if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
-                context.progress(0, message: "Installing the \(locale.identifier) speech model")
+                installing(locale)
                 try await request.downloadAndInstall()
             }
-            return try await attempt(source: source, locale: locale, context: context, timeRange: timeRange)
+            return try await work(locale)
         }
     }
 

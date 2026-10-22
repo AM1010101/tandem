@@ -144,6 +144,8 @@ export type HeardJoin = {
   heard: string;
   clipIDs: string[];
   cached: boolean;
+  /** Why what's heard wasn't compared with the take, when it wasn't. */
+  skipped?: "no transcript" | "nothing heard" | "couldn't listen";
   findings: { kind: "notHeard" | "heardAs" | "extra"; said?: string; heard?: string; time: number; slip: boolean; why: string }[];
 };
 

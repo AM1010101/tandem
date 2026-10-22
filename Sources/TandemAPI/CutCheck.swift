@@ -153,10 +153,14 @@ enum CutCheck {
             let said = words[mediaID] ?? []
             for edge in group {
                 guard let placer = placers.first(where: { $0.energy.start <= edge.mediaTime && edge.mediaTime <= $0.energy.end }) else { continue }
+                // The words around the edge, and all of a cut between two
+                // pieces of the take with the word after it: what the cut
+                // takes is judged from all of it (`wordBeforeFiller`).
                 let near = (edge.mediaTime - window)...(edge.mediaTime + window)
+                let reach = edge.removed.map { min(near.lowerBound, $0.lowerBound)...max(near.upperBound, $0.upperBound + window) } ?? near
                 let verdict = placer.judge(
                     at: edge.mediaTime, keeps: edge.edge == .end ? .before : .after, removed: edge.removed, cutAway: edge.cutAway,
-                    transcript: said.filter { $0.end >= near.lowerBound && $0.start <= near.upperBound }
+                    transcript: said.filter { $0.end >= reach.lowerBound && $0.start <= reach.upperBound }
                 )
                 guard verdict.verdict != .clean else { continue }
                 found.append((edge, verdict))

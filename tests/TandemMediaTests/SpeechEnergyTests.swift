@@ -520,6 +520,21 @@ final class SpeechEnergyTests: XCTestCase {
         XCTAssertNil(falseStart.beforeFiller)
     }
 
+    func testACutOfAFillerIsOnlyJudgedWhenTheTranscriptCoversAllOfIt() {
+        // A long cut, 10.95 to 20, of "the like" and on to a false start
+        // ("the old approach") at 15. With only the 3 s of transcript either
+        // side of the edge, the cut looks like "the like" alone; it isn't.
+        let take = Take(length: 24, words: [(10.5, 10.9), (11.0, 11.3), (11.3, 11.6), (15.0, 15.3), (15.4, 16.0), (20.6, 21.0)])
+        let all = [word("And", 10.5, 10.9), word("the", 11.0, 11.3), word("like,", 11.3, 11.6), word("the", 15.0, 15.3), word("old", 15.4, 15.6),
+                   word("approach", 15.6, 16.0), word("challenge", 20.6, 21.0)]
+        let near = all.filter { $0.end >= 10.95 - CutAudit.around && $0.start <= 10.95 + CutAudit.around }
+        let partial = judge(take, at: 10.95, keeps: .before, removed: 10.95...20.0, transcript: near)
+        XCTAssertNil(partial.beforeFiller, "\(partial)")
+        // All of it: the false start shows, so it's a cut on purpose.
+        let whole = judge(take, at: 10.95, keeps: .before, removed: 10.95...20.0, transcript: all)
+        XCTAssertNil(whole.beforeFiller, "\(whole)")
+    }
+
     func testAnEdgeInARealPauseIsClean() {
         let take = Take(words: [(11.0, 11.5), (11.6, 12.0)])
         for side in [CutAudit.Side.before, .after] {

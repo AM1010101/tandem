@@ -171,7 +171,7 @@ extension CheckResult: ReadableResult {
             let timing = listened.secondsPerJoin.map { String(format: ", %.1f s a join", $0) } ?? ""
             lines.append("Heard across \(listened.joins.count) join\(listened.joins.count == 1 ? "" : "s") with \(listened.engine) (\(listened.heard) heard\(timing), \(listened.cached) unchanged since the last check):")
             for join in listened.joins {
-                let mark = join.clipped ? "  cut off" : join.findings.isEmpty ? "" : "  differs"
+                let mark = join.skipped.map { "  not compared: \($0)" } ?? (join.clipped ? "  cut off" : join.findings.isEmpty ? "" : "  differs")
                 lines.append("  \(join.time)\(mark)")
                 lines.append("    take:  \(join.said)")
                 lines.append("    heard: \(join.heard)")
@@ -227,14 +227,17 @@ extension TandemService {
             let why = note
             let words = toCheck.isEmpty ? [:] : CutCheck.words(in: project, analysis: analysis)
             let listens = request.listen == true && !toCheck.isEmpty
-            let said = listens ? CutCheck.said(in: project, analysis: analysis) : []
+            let said = listens ? CutCheck.said(in: project, analysis: analysis) : CutCheck.Said()
+            let playsSpeech = !CutCheck.playedSpeechTracks(project).isEmpty
             let listening = cutListening
             let mediaAnalysis = session.analysis
             return {
                 let started = Date()
                 var outcome = toCheck.isEmpty ? CutCheck.Outcome() : await CutCheck.run(project: project, folder: folder, ranges: toCheck, words: words)
                 var listened: ListenSummary?
-                if listens {
+                if listens, !playsSpeech {
+                    outcome.warnings.append("Nothing was listened to: a soloed track that isn't speech plays alone, so export plays no voice.")
+                } else if listens {
                     var mix = listening?.mix
                     if mix == nil {
                         do {
@@ -243,9 +246,10 @@ extension TandemService {
                             outcome.warnings.append("Couldn't render the voice to listen to it: \((error as? LocalizedError)?.errorDescription ?? "\(error)")")
                         }
                     }
-                    if let mix, let ear = listening?.ear ?? CutCheck.Ear.standard() {
+                    let ears = listening?.ears ?? CutCheck.Ear.standard()
+                    if let mix, !ears.isEmpty {
                         let heard = await CutCheck.listen(
-                            project: project, edges: CutCheck.edges(in: project, ranges: toCheck), said: said, words: words, mix: mix, ear: ear,
+                            project: project, edges: CutCheck.edges(in: project, ranges: toCheck), said: said, words: words, mix: mix, ears: ears,
                             cache: CutListenCache(project: folder)
                         )
                         listened = heard.summary

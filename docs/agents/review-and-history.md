@@ -222,13 +222,20 @@ speech tracks only, with 0.5 s of silence either side, which helps the
 engine), transcribes it with Bark 3.0 Pro (SpeechAnalyzer when Bark isn't
 downloaded), and lines the words up with the take's kept words there.
 
-- A kept word within 0.6 s of the join that isn't heard, or is heard cut
-  short ("extra" for "extract"), or part of a cut word heard by the join
-  ("oh" from the start of "okay"), is a `heardCutOff` problem.
-- A mismatch that's as likely the engine's slip is a `heardDifferently`
-  note: a short word or a filler left out or added, a near spelling, an
-  inflection ("happen" for "happened"), or a cut word heard whole (the
-  transcript's times put it in the cut, but the cut keeps all of it).
+- A join can only cut off the end of the last kept word before it and the
+  start of the first one after it, or leave a piece of a cut word there.
+  So a `heardCutOff` problem is one of those two words not heard, the word
+  before heard missing its end ("extra" for "extract"), the word after
+  heard missing its start, or a word heard between them that the take
+  doesn't keep ("oh" from the start of "okay").
+- Anything else that differs is a `heardDifferently` note: a word further
+  from the join, a word missing the end the join can't reach, a word heard
+  as something else with nothing of it short (a name: Bark hears
+  "Filmora" as "for mora"), a short word or a filler left out or added, a
+  near spelling, an inflection ("happen" for "happened"), or a cut word
+  heard whole (the transcript's times put it in the cut, but the cut keeps
+  all of it). With two joins closer than 1.2 s, a word between them is
+  blamed on the nearer one only.
 - Words match loosely, and the finding says how: case, punctuation,
   numbers ("15" and "fifteen"), spoken forms ("wanna" and "want to"),
   letters spelled out ("t. s." and "TS").
@@ -238,12 +245,22 @@ It always prints the take's words and the words heard across every join,
 leftover heard as a whole word reads fine to the comparison), and listen
 to what reads wrong with `tandem clip`. A join takes about a second the
 first time. What's heard is kept in `.tandem/cache/listen` by the sound
-rendered, so a check after edits only listens again where the sound
-changed. In `--json`, `listened` has `engine`, `heard` and `cached` (how
+rendered and the engine's model, so a check after edits only listens again
+where the sound changed, and a new model hears everything again. It plays
+what export plays: with a track soloed, only the soloed speech tracks.
+
+Where a join wasn't compared, it says why (`skipped`, and "not compared"
+in the list): "no transcript" (the take's words there aren't known yet:
+it's heard, to read, and a warning names the files), "nothing heard" (the
+engine heard nothing where the take has words, twice: its failure, never
+cached) or "couldn't listen" (the engine failed there). An engine failing
+at one join still hears the rest; Bark failing two joins in a row hands
+over to SpeechAnalyzer, which hears the joins Bark missed too. In `--json`, `listened` has `engine`, `heard` and `cached` (how
 many joins were heard this time and how many came from the cache),
 `secondsPerJoin`, and `joins`: each with `time`, `said`, `heard`,
-`clipIDs`, `cached` and `findings` (`kind`: `notHeard`, `heardAs` or
-`extra`; `said`, `heard`, `time`, `slip` and `why`).
+`clipIDs`, `cached`, `skipped` when it wasn't compared, and `findings`
+(`kind`: `notHeard`, `heardAs` or `extra`; `said`, `heard`, `time`, `slip`
+and `why`).
 
 ```
 Checked 00:00.000-01:00.000 (4 cut edges) in 2.3 s: 1 problem:

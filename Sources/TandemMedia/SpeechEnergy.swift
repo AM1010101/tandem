@@ -408,9 +408,15 @@ public enum CutAudit {
     /// like,] challenge there", where "the" runs straight into "like"; the
     /// fix kept both (612.67). A cut that goes on through the word again
     /// ("the, like, the") is a false start, cut whole on purpose.
+    ///
+    /// `words` have to reach past the end of `removed` (a word after it),
+    /// or a long cut looks like only the words near the edge: a 9 s cut
+    /// from "the like" on through a false start would read as "the like"
+    /// alone, and the fix would bring the false start back.
     static func wordBeforeFiller(_ words: [Word], at time: Double, removed: ClosedRange<Double>?) -> Word? {
         guard let removed else { return nil }
         let sorted = words.sorted { $0.start < $1.start }
+        guard sorted.contains(where: { $0.end > removed.upperBound + endSlack }) else { return nil }
         let inside = sorted.filter { $0.start >= removed.lowerBound - lastWordLead && $0.end <= removed.upperBound + endSlack }
         guard inside.count >= 2, let index = sorted.firstIndex(of: inside[0]), index > 0 else { return nil }
         let kept = sorted[index - 1], word = inside[0]

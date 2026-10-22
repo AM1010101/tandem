@@ -19,14 +19,20 @@ public struct HeardJoin: Codable, Equatable, Sendable {
     public var clipIDs: [String]
     /// Heard on an earlier check: the sound there hasn't changed since.
     public var cached: Bool
+    /// Why what's heard wasn't compared with the take, when it wasn't: "no
+    /// transcript" (the take's words there aren't known yet), "nothing
+    /// heard" (the engine heard nothing where the take has words, twice)
+    /// or "couldn't listen" (the engine failed).
+    public var skipped: String?
 
-    public init(time: Time, said: String, heard: String, findings: [CutListen.Finding], clipIDs: [String], cached: Bool) {
+    public init(time: Time, said: String, heard: String, findings: [CutListen.Finding], clipIDs: [String], cached: Bool, skipped: String? = nil) {
         self.time = time
         self.said = said
         self.heard = heard
         self.findings = findings
         self.clipIDs = clipIDs
         self.cached = cached
+        self.skipped = skipped
     }
 
     /// A finding that isn't slip-prone.
@@ -36,7 +42,8 @@ public struct HeardJoin: Codable, Equatable, Sendable {
 /// What `--listen` heard.
 public struct ListenSummary: Codable, Equatable, Sendable {
     /// The engine that heard them: Bark 3.0 Pro, or SpeechAnalyzer when
-    /// Bark's model isn't there.
+    /// Bark's model isn't there ("Bark 3.0 Pro, then SpeechAnalyzer" when
+    /// Bark kept failing part way).
     public var engine: String
     /// Every join checked, in timeline order.
     public var joins: [HeardJoin]
@@ -56,22 +63,31 @@ public struct ListenSummary: Codable, Equatable, Sendable {
 }
 
 extension CutCheck {
-    /// What `--listen` hears with: an engine's name and a call that hears
-    /// 16 kHz mono samples. Tests swap in their own.
+    /// What `--listen` hears with: an engine's name, its model (for the
+    /// cache) and a call that hears 16 kHz mono samples. Tests swap in
+    /// their own.
     struct Ear: Sendable {
         var engine: String
+        var model: String
         var listen: @Sendable ([Float]) async throws -> [CutListen.Word]
 
-        /// Bark 3.0 Pro when its model is ready, as transcripts use;
-        /// SpeechAnalyzer otherwise (macOS 26); nil with neither.
-        static func standard() -> Ear? {
+        init(engine: String, model: String = "", listen: @escaping @Sendable ([Float]) async throws -> [CutListen.Word]) {
+            self.engine = engine
+            self.model = model
+            self.listen = listen
+        }
+
+        /// Bark 3.0 Pro when its model is ready, as transcripts use, then
+        /// SpeechAnalyzer (macOS 26) to fall back on; empty with neither.
+        static func standard() -> [Ear] {
+            var ears: [Ear] = []
             let bark = BarkListener.standard
-            if bark.isReady { return Ear(engine: BarkListener.engine) { try await bark.listen($0) } }
+            if bark.isReady { ears.append(Ear(engine: BarkListener.engine, model: BarkListener.model) { try await bark.listen($0) }) }
             if #available(macOS 26, *) {
                 let speech = SpeechAnalyzerListener()
-                return Ear(engine: SpeechAnalyzerListener.engine) { try await speech.listen($0) }
+                ears.append(Ear(engine: SpeechAnalyzerListener.engine, model: SpeechAnalyzerListener.model) { try await speech.listen($0) })
             }
-            return nil
+            return ears
         }
     }
 
@@ -81,14 +97,23 @@ extension CutCheck {
         var rate: Double
         var render: @Sendable (_ from: Double, _ to: Double) async throws -> [Float]
 
-        /// The speech tracks as export plays them, every other audio track
-        /// muted, so music and sound effects don't get in the engine's way.
+        /// The speech tracks as export plays them (`playedSpeechTracks`),
+        /// every other audio track muted, so music and sound effects don't
+        /// get in the engine's way.
         static func speech(_ project: Project, folder: ProjectFolder, analysis: MediaAnalysis?) async throws -> Mix {
-            let speech = Set(TranscriptTools.speechTracks(project).map(\.id))
+            let speech = Set(playedSpeechTracks(project).map(\.id))
             let context = RenderContext(project: AudioLevels.soloing(project, audioTrackIDs: speech), folder: folder, analysis: analysis)
             let reader = try await MixReader(context)
             return Mix(rate: MixReader.sampleRate) { try await reader.mono(from: $0, to: $1) }
         }
+    }
+
+    /// The speech tracks export plays: with a track soloed, only soloed
+    /// ones, as `RenderPlan` mixes them. Empty when what's soloed isn't
+    /// speech.
+    static func playedSpeechTracks(_ project: Project) -> [Track] {
+        let soloing = project.audioTracks.contains { $0.solo && !$0.muted }
+        return TranscriptTools.speechTracks(project).filter { !soloing || $0.solo }
     }
 
     struct Listened: Sendable {
@@ -96,17 +121,38 @@ extension CutCheck {
         var warnings: [String] = []
     }
 
+    /// The take's words as the played speech tracks play them, and where
+    /// they aren't known.
+    struct Said: Sendable {
+        var words: [CutListen.Word] = []
+        /// Timeline seconds of speech clips whose transcript isn't ready.
+        var unknown: [ClosedRange<Double>] = []
+        /// Those clips' files, by name.
+        var untranscribed: [String] = []
+    }
+
+    /// An engine fails this many joins in a row, and the next takes over.
+    static let failuresBeforeFallback = 2
+
     /// Renders the voice `CutListen.span` either side of each join among
     /// `edges`, hears it (from the cache where that sound was heard before)
     /// and compares it with the take's words there.
     ///
+    /// Each join is heard on its own: an engine that fails at one still
+    /// hears the rest, and what the cache has comes from it whatever the
+    /// engine does now. One that fails `failuresBeforeFallback` joins in a
+    /// row hands over to the next of `ears`, which hears the joins it
+    /// missed too. Nothing heard where the take has words is the engine's
+    /// failure, not a cut-off: it's asked once more, then the next engine,
+    /// and it's never cached.
+    ///
     /// - Parameters:
     ///   - said: the transcript's words as the speech clips play them
-    ///     (timeline time).
+    ///     (timeline time), and where they aren't known.
     ///   - words: each file's transcript words (media time), by media ID:
     ///     for the cut words beside each join.
     static func listen(
-        project: Project, edges: [Edge], said: [CutListen.Word], words: [String: [CutAudit.Word]], mix: Mix, ear: Ear, cache: CutListenCache
+        project: Project, edges: [Edge], said: Said, words: [String: [CutAudit.Word]], mix: Mix, ears: [Ear], cache: CutListenCache
     ) async -> Listened {
         let tolerance = project.settings.frameRate.flicksPerFrame / 2
         var groups: [[Edge]] = []
@@ -117,55 +163,159 @@ extension CutCheck {
                 groups.append([edge])
             }
         }
-        var joins: [HeardJoin] = []
+        let times = groups.map { $0[0].time.seconds }
+        var joins: [HeardJoin?] = Array(repeating: nil, count: groups.count)
         var warnings: [String] = []
         var fresh = 0, cached = 0
         var seconds = 0.0
-        for group in groups {
+        var active = 0, failuresInARow = 0
+        var engines = ears.isEmpty ? [] : [ears[0].engine]
+        var failed: [(index: Int, input: [Float], error: String)] = []
+        var unheard: [Time] = []
+        var reported = Set<String>()
+
+        /// What's heard at one join, and by which engine; nil when nothing
+        /// is: the engine failed, or heard nothing where there's speech.
+        func hear(_ input: [Float], speech: Bool) async -> (words: [CutListen.Word]?, error: String?) {
+            var error: String?
+            var index = active
+            while index < ears.count {
+                let ear = ears[index]
+                do {
+                    var heard = try await ear.listen(input)
+                    if heard.isEmpty, speech { heard = try await ear.listen(input) }
+                    if index == active { failuresInARow = 0 }
+                    if heard.isEmpty, speech {
+                        index += 1
+                        continue
+                    }
+                    cache.store(heard, for: CutListenCache.key(input, engine: ear.engine, model: ear.model))
+                    return (heard, nil)
+                } catch let failure {
+                    error = (failure as? LocalizedError)?.errorDescription ?? "\(failure)"
+                    guard index == active else { break }
+                    failuresInARow += 1
+                    guard failuresInARow >= failuresBeforeFallback, index + 1 < ears.count else { break }
+                    active += 1
+                    failuresInARow = 0
+                    engines.append(ears[active].engine)
+                    warnings.append("\(ear.engine) failed \(failuresBeforeFallback) joins in a row, so I'm listening with \(ears[active].engine) from here: \(error!)")
+                    index = active
+                }
+            }
+            return (nil, error)
+        }
+
+        func compared(_ index: Int, input: [Float], heard: [CutListen.Word]?, wasCached: Bool, skipped: String?) -> HeardJoin {
+            let group = groups[index]
             let time = group[0].time
             let join = time.seconds
             let from = join - CutListen.span
-            let started = Date()
-            let input: [Float]
-            do {
-                input = try CutListen.prepare(try await mix.render(from, join + CutListen.span), rate: mix.rate)
-            } catch {
-                warnings.append("Couldn't render the voice at \(time) to listen to it: \((error as? LocalizedError)?.errorDescription ?? "\(error)")")
-                continue
-            }
-            let key = CutListenCache.key(input, engine: ear.engine)
-            var heard = cache.heard(key)
-            let wasCached = heard != nil
-            if heard == nil {
-                do {
-                    heard = try await ear.listen(input)
-                    cache.store(heard!, for: key)
-                } catch {
-                    // An engine that fails once (a model that won't load)
-                    // fails for every join: say so once.
-                    let left = groups.count - joins.count
-                    let what = left == 1 ? "1 join wasn't" : "\(left) joins weren't"
-                    warnings.append("\(ear.engine) couldn't listen at \(time), so \(what) heard: \((error as? LocalizedError)?.errorDescription ?? "\(error)")")
-                    break
-                }
-                fresh += 1
-                seconds += Date().timeIntervalSince(started)
-            } else {
-                cached += 1
-            }
             let offset = from - CutListen.padding
-            let heardWords = heard!.map { CutListen.Word(text: $0.text, start: $0.start + offset, end: $0.end + offset) }
+            let heardWords = (heard ?? []).map { CutListen.Word(text: $0.text, start: $0.start + offset, end: $0.end + offset) }
             let window = (join - CutListen.span)...(join + CutListen.span)
-            let kept = said.filter { $0.end > window.lowerBound && $0.start < window.upperBound }
+            let kept = said.words.filter { $0.end > window.lowerBound && $0.start < window.upperBound }
             let (past, before) = cutWords(beside: group, words: words)
-            let result = CutListen.compare(said: kept, heard: heardWords, at: join, cutPast: past, cutBefore: before)
+            let nearby = times.filter { $0 != join && abs($0 - join) < 2 * CutListen.span }
+            var result = CutListen.compare(said: kept, heard: heardWords, at: join, cutPast: past, cutBefore: before, otherJoins: nearby)
+            if skipped != nil { result.findings = [] }
+            // A word two joins could both see is said once, at the first.
+            result.findings = result.findings.filter { finding in
+                reported.insert("\(finding.kind)|\(finding.said ?? "")|\(finding.heard ?? "")|\(Int((finding.time * 1000).rounded()))").inserted
+            }
             var clipIDs: [String] = []
             for edge in group.sorted(by: { ($0.edge == .end ? 0 : 1) < ($1.edge == .end ? 0 : 1) }) where !clipIDs.contains(edge.clip.id) {
                 clipIDs.append(edge.clip.id)
             }
-            joins.append(HeardJoin(time: time, said: result.said, heard: result.heard, findings: result.findings, clipIDs: clipIDs, cached: wasCached))
+            return HeardJoin(time: time, said: result.said, heard: result.heard, findings: result.findings, clipIDs: clipIDs, cached: wasCached, skipped: skipped)
         }
-        let summary = ListenSummary(engine: ear.engine, joins: joins, heard: fresh, cached: cached, secondsPerJoin: fresh > 0 ? seconds / Double(fresh) : nil)
+
+        var untranscribed = 0
+        for (index, group) in groups.enumerated() {
+            let time = group[0].time
+            let join = time.seconds
+            let started = Date()
+            let input: [Float]
+            do {
+                input = try CutListen.prepare(try await mix.render(join - CutListen.span, join + CutListen.span), rate: mix.rate)
+            } catch {
+                warnings.append("Couldn't render the voice at \(time) to listen to it: \((error as? LocalizedError)?.errorDescription ?? "\(error)")")
+                continue
+            }
+            let window = (join - CutListen.span)...(join + CutListen.span)
+            // Without the take's words, everything heard would read as a
+            // word the take doesn't keep: it's heard, to read, not compared.
+            let known = !said.unknown.contains { $0.overlaps(window) }
+            if !known { untranscribed += 1 }
+            let speech = known && said.words.contains { $0.end > window.lowerBound && $0.start < window.upperBound }
+            var heard: [CutListen.Word]?
+            for ear in ears where heard == nil {
+                heard = cache.heard(CutListenCache.key(input, engine: ear.engine, model: ear.model))
+            }
+            // Nothing cached where there's speech came from an older check.
+            if heard?.isEmpty == true, speech { heard = nil }
+            let wasCached = heard != nil
+            var skipped: String? = known ? nil : "no transcript"
+            if heard == nil {
+                let (words, error) = await hear(input, speech: speech)
+                heard = words
+                if words == nil {
+                    if error != nil {
+                        failed.append((index, input, error!))
+                        skipped = "couldn't listen"
+                    } else {
+                        unheard.append(time)
+                        skipped = "nothing heard"
+                    }
+                } else {
+                    fresh += 1
+                    seconds += Date().timeIntervalSince(started)
+                }
+            } else {
+                cached += 1
+            }
+            joins[index] = compared(index, input: input, heard: heard, wasCached: wasCached, skipped: skipped)
+        }
+        // The joins an engine failed before the next took over: heard again
+        // with it.
+        var stillFailed: [(index: Int, error: String)] = []
+        for miss in failed {
+            guard active > 0 else {
+                stillFailed.append((miss.index, miss.error))
+                continue
+            }
+            let started = Date()
+            let window = (times[miss.index] - CutListen.span)...(times[miss.index] + CutListen.span)
+            let known = !said.unknown.contains { $0.overlaps(window) }
+            let speech = known && said.words.contains { $0.end > window.lowerBound && $0.start < window.upperBound }
+            let (words, error) = await hear(miss.input, speech: speech)
+            if let words {
+                fresh += 1
+                seconds += Date().timeIntervalSince(started)
+                joins[miss.index] = compared(miss.index, input: miss.input, heard: words, wasCached: false, skipped: known ? nil : "no transcript")
+            } else if let error {
+                stillFailed.append((miss.index, error))
+            } else {
+                unheard.append(groups[miss.index][0].time)
+                joins[miss.index]?.skipped = "nothing heard"
+            }
+        }
+        if untranscribed > 0, !said.untranscribed.isEmpty {
+            let what = untranscribed == 1 ? "1 join wasn't" : "\(untranscribed) joins weren't"
+            warnings.append("No transcript yet for \(said.untranscribed.joined(separator: ", ")), so what's heard at \(what) compared with the take.")
+        }
+        if let first = stillFailed.first {
+            let what = stillFailed.count == 1 ? "1 join" : "\(stillFailed.count) joins"
+            warnings.append("\(ears[active].engine) couldn't listen at \(what) (first at \(groups[first.index][0].time)), so they weren't heard: \(first.error)")
+        }
+        if !unheard.isEmpty {
+            let list = unheard.sorted().prefix(5).map { "\($0)" }.joined(separator: ", ") + (unheard.count > 5 ? " and \(unheard.count - 5) more" : "")
+            warnings.append("Nothing was heard at \(list), where the take has words: the engine's failure, not a cut-off, so \(unheard.count == 1 ? "it wasn't" : "they weren't") compared. Listen with tandem clip.")
+        }
+        let summary = ListenSummary(
+            engine: engines.joined(separator: ", then "), joins: joins.compactMap { $0 }, heard: fresh, cached: cached,
+            secondsPerJoin: fresh > 0 ? seconds / Double(fresh) : nil
+        )
         return Listened(summary: summary, warnings: warnings)
     }
 
@@ -188,21 +338,28 @@ extension CutCheck {
         return (past, before)
     }
 
-    /// The transcript's words as the speech tracks play them, in timeline
-    /// seconds. Where two tracks play the same voice (a camera's sound and
-    /// a mic), a word is said once.
-    static func said(in project: Project, analysis: AnalysisSource) -> [CutListen.Word] {
-        var words: [CutListen.Word] = []
-        for word in TranscriptTools.speechMap(project, analysis: analysis).words.sorted(by: { $0.start < $1.start }) {
+    /// The transcript's words as the speech tracks export plays play them
+    /// (`playedSpeechTracks`), in timeline seconds, and where they aren't
+    /// known yet. Where two tracks play the same voice (a camera's sound
+    /// and a mic), a word is said once.
+    static func said(in project: Project, analysis: AnalysisSource) -> Said {
+        let played = Set(playedSpeechTracks(project).flatMap(\.clips).map(\.id))
+        var soloed = project
+        soloed.audioTracks = project.audioTracks.filter { track in track.clips.contains { played.contains($0.id) } }
+        let map = TranscriptTools.speechMap(soloed, analysis: analysis)
+        var result = Said()
+        for word in map.words.sorted(by: { $0.start < $1.start }) where played.contains(word.clipID) {
             let candidate = CutListen.Word(text: word.text, start: word.start.seconds, end: word.end.seconds)
-            let twice = words.suffix(4).contains { earlier in
+            let twice = result.words.suffix(4).contains { earlier in
                 let overlap = min(earlier.end, candidate.end) - max(earlier.start, candidate.start)
                 return overlap > 0.5 * min(earlier.end - earlier.start, candidate.end - candidate.start)
                     && earlier.text.lowercased().filter(\.isLetter) == candidate.text.lowercased().filter(\.isLetter)
             }
-            if !twice { words.append(candidate) }
+            if !twice { result.words.append(candidate) }
         }
-        return words
+        result.unknown = map.unknown.map { $0.start.seconds...$0.end.seconds }
+        result.untranscribed = map.missing.compactMap { project.media($0).map { URL(fileURLWithPath: $0.path).lastPathComponent } }
+        return result
     }
 
     /// A problem for each join heard cut off, and a note for each heard

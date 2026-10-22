@@ -211,6 +211,8 @@ final class CutScorecardTests: XCTestCase {
         // one go.
         let external = environment["TANDEM_CUT_LISTEN_WITH"]
         let engine = external == nil ? BarkListener.engine : BarkListener.engine + " (\(external!))"
+        // Another runtime's model is its own: the command names it.
+        let model = external == nil ? BarkListener.model : "external v\(CutListen.version)"
         let ordered = joins.sorted(by: { ($0.file, $0.removed.lowerBound) < ($1.file, $1.removed.lowerBound) })
         var splices: [(input: [Float], key: String, offset: Double)] = []
         for join in ordered {
@@ -218,7 +220,7 @@ final class CutScorecardTests: XCTestCase {
             let (before, rate) = try samples(url, from: join.removed.lowerBound - CutListen.span, to: join.removed.lowerBound)
             let (after, _) = try samples(url, from: join.removed.upperBound, to: join.removed.upperBound + CutListen.span)
             let input = try CutListen.prepare(before + after, rate: rate)
-            splices.append((input, CutListenCache.key(input, engine: engine), CutListen.padding + Double(before.count) / rate))
+            splices.append((input, CutListenCache.key(input, engine: engine, model: model), CutListen.padding + Double(before.count) / rate))
         }
         let missing = splices.filter { cache.heard($0.key) == nil }
         let started = Date()
@@ -288,6 +290,8 @@ final class CutScorecardTests: XCTestCase {
             lines.append("  every \(kind) join:")
             lines += rows.filter { source($0.join) == kind }.map(line)
         }
+        lines.append("  fixed joins listening flags:")
+        lines += rows.filter { source($0.join) == "fixed" && $0.heard.clipped }.map(line)
         lines.append("  approved joins listening flags:")
         lines += rows.filter { source($0.join) == "approved" && $0.heard.clipped }.map(line)
         lines.append("  approved joins with notes only:")
@@ -456,8 +460,10 @@ final class CutScorecardTests: XCTestCase {
                 let edge: CutAudit.Edge
                 if let words {
                     // As `tandem check --cuts` passes them: the words its 3 s
-                    // either side of the edge reach.
-                    let near = (labelled.edge - CutAudit.around)...(labelled.edge + CutAudit.around)
+                    // either side of the edge reach, and all of the cut with
+                    // 3 s past it.
+                    let around = (labelled.edge - CutAudit.around)...(labelled.edge + CutAudit.around)
+                    let near = removed.map { min(around.lowerBound, $0.lowerBound)...max(around.upperBound, $0.upperBound + CutAudit.around) } ?? around
                     let nearby = words.filter { $0.range.overlaps(near) }
                     edge = CutAudit.judge(window, levels: levels, at: labelled.edge, keeps: side, removed: removed, transcript: nearby)
                 } else {

@@ -159,9 +159,12 @@ With `--listen` it has `listened` too:
 
 `kind` is `notHeard` (a kept word near the join that isn't heard, `said`),
 `heardAs` (`said` heard as `heard`) or `extra` (`heard`, which the take
-doesn't keep there). A `slip` finding is as likely the engine's mistake;
-a join with any other is a `heardCutOff` problem, and one with only slips
-a `heardDifferently` note.
+doesn't keep there). A `slip` finding is as likely the engine's mistake,
+or is somewhere the join can't cut; a join with any other is a
+`heardCutOff` problem, and one with only slips a `heardDifferently` note.
+A join that wasn't compared has `skipped`: `no transcript`, `nothing
+heard` or `couldn't listen`. `engine` reads `Bark 3.0 Pro, then
+SpeechAnalyzer` when Bark kept failing and SpeechAnalyzer took over.
 A plain `tandem check --json` has `commands` and `revision` too when it
 can fix a flicker, and that problem's `fix` is the `holdFrame`.
 

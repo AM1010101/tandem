@@ -45,7 +45,11 @@ final class RealCutTests: XCTestCase {
         let energy = try energy(mic, from: time - 3.5, to: time + 3.5)
         let levels = SpeechLevels(of: [energy])
         guard let words else { return CutAudit.judge(energy, levels: levels, at: time, keeps: side, removed: removed) }
-        let near = words.filter { $0.end >= time - CutAudit.around && $0.start <= time + CutAudit.around }
+        // As `tandem check --cuts` passes them: 3 s either side, and all of
+        // the cut with 3 s past it.
+        let reach = removed.map { min(time - CutAudit.around, $0.lowerBound)...max(time + CutAudit.around, $0.upperBound + CutAudit.around) }
+            ?? (time - CutAudit.around)...(time + CutAudit.around)
+        let near = words.filter { $0.end >= reach.lowerBound && $0.start <= reach.upperBound }
         return CutAudit.judge(energy, levels: levels, at: time, keeps: side, removed: removed, transcript: near)
     }
 

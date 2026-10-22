@@ -163,7 +163,13 @@ doesn't keep there). A `slip` finding is as likely the engine's mistake,
 or is somewhere the join can't cut; a join with any other is a
 `heardCutOff` problem, and one with only slips a `heardDifferently` note.
 A join that wasn't compared has `skipped`: `no transcript`, `nothing
-heard` or `couldn't listen`. `engine` reads `Bark 3.0 Pro, then
+heard` or `couldn't listen`. `cut` is the take's words cut beside the join
+(the first two past the clip before it, then the last two before the clip
+after it), when the transcript has any. Where a join is heard, a finding
+the take's transcript explains is marked `slip` with the reason in `why`;
+a `clippedWord` problem whose words are heard whole moves to the notes as
+kind `heardWhole` (with its `cut`, and no command); and one with a
+listening finding at its join stays, its message saying both. `engine` reads `Bark 3.0 Pro, then
 SpeechAnalyzer` when Bark kept failing and SpeechAnalyzer took over.
 A plain `tandem check --json` has `commands` and `revision` too when it
 can fix a flicker, and that problem's `fix` is the `holdFrame`.

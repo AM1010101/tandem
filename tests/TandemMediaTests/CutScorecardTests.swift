@@ -246,7 +246,7 @@ final class CutScorecardTests: XCTestCase {
         }
         let heardSeconds = Date().timeIntervalSince(started), listened = missing.count
 
-        var rows: [(join: Join, heard: CutListen.Join)] = []
+        var rows: [(join: Join, heard: CutListen.Join, cut: [String])] = []
         for (join, splice) in zip(ordered, splices) {
             let out = join.removed.lowerBound, into = join.removed.upperBound
             let heard = try XCTUnwrap(cache.heard(splice.key), "nothing heard for \(join.file) \(join.removed)")
@@ -256,9 +256,11 @@ final class CutScorecardTests: XCTestCase {
             func middle(_ word: CutAudit.Word) -> Double { (word.start + word.end) / 2 }
             let said = words.filter { middle($0) < out && $0.end > out - CutListen.span }.map { CutListen.Word(text: $0.text, start: $0.start - out, end: $0.end - out) }
                 + words.filter { middle($0) >= into && $0.start < into + CutListen.span }.map { CutListen.Word(text: $0.text, start: $0.start - into, end: $0.end - into) }
-            let cut = words.filter { middle($0) >= out && middle($0) < into }.map(\.text)
-            let result = CutListen.compare(said: said, heard: heardWords, at: 0, cutPast: Array(cut.prefix(2)), cutBefore: Array(cut.suffix(2)))
-            rows.append((join, result))
+            // As `CutCheck.cutWords`: a word the edge runs through counts.
+            let past = words.filter { $0.end > out && $0.start < into }.prefix(2).map(\.text)
+            let before = words.filter { $0.start < into && $0.end > out }.suffix(2).map(\.text)
+            let result = CutListen.compare(said: said, heard: heardWords, at: 0, cutPast: Array(past), cutBefore: Array(before))
+            rows.append((join, result, Array(past) + Array(before)))
         }
 
         func source(_ join: Join) -> String {
@@ -268,7 +270,7 @@ final class CutScorecardTests: XCTestCase {
             return "fixed"
         }
         func byLevels(_ join: Join) -> Bool { join.all.contains { levels[$0.id]?.clipped == true } }
-        func line(_ row: (join: Join, heard: CutListen.Join)) -> String {
+        func line(_ row: (join: Join, heard: CutListen.Join, cut: [String])) -> String {
             let ids = row.join.all.map(\.id).joined(separator: "+")
             let findings = row.heard.findings.map { "\($0.slip ? "note" : "CLIP") \($0.summary) (\($0.why))" }.joined(separator: "; ")
             return String(format: "    %@ %@ %.3f-%.3f [%@]%@\n      said:  %@\n      heard: %@%@", ids, String(row.join.file.suffix(12)), row.join.removed.lowerBound, row.join.removed.upperBound,
@@ -296,12 +298,69 @@ final class CutScorecardTests: XCTestCase {
         lines += rows.filter { source($0.join) == "approved" && $0.heard.clipped }.map(line)
         lines.append("  approved joins with notes only:")
         lines += rows.filter { source($0.join) == "approved" && !$0.heard.clipped && !$0.heard.findings.isEmpty }.map(line)
+        lines += combined(rows.map { ($0.join.all, $0.heard, $0.cut) }, source: { join in source(Join(file: "", removed: 0...0, out: join, into: [])) }, levels: levels)
         if environment["TANDEM_CUT_ALL"] == "1" {
             lines.append("  every other join:")
             lines += rows.filter { source($0.join) == "fixed" || (source($0.join) == "approved" && $0.heard.findings.isEmpty) }.map(line)
         }
         print(lines.joined(separator: "\n"))
         XCTAssertFalse(rows.isEmpty)
+    }
+
+    /// The levels and the transcript's rules weighed against what's heard
+    /// (`CutEvidence`), as `check --cuts --listen` reports them: each
+    /// join's flag stands unless listening dismisses it, and listening's own
+    /// finding stands unless the take's transcript explains it.
+    private func combined(
+        _ rows: [(edges: [Labelled], heard: CutListen.Join, cut: [String])], source: ([Labelled]) -> String, levels: [String: CutAudit.Edge]
+    ) -> [String] {
+        func judge(_ row: (edges: [Labelled], heard: CutListen.Join, cut: [String])) -> (flagged: Bool, levels: Bool, listening: Bool, verdict: CutEvidence.Verdict, why: String) {
+            let flagged = row.edges.compactMap { edge in levels[edge.id].map { (edge, $0) } }.filter { $0.1.clipped }
+            let flags = flagged.map { CutEvidence.Flag($0.1, keeps: $0.0.keeps == "before" ? .before : .after) }
+            let verdict = CutEvidence.judge(row.heard, flags: flags, cut: row.cut)
+            let standing = flags.indices.filter { verdict.dismissed[$0] == nil }
+            let why = flagged.indices.map { index in
+                let (edge, judged) = flagged[index]
+                var rule = judged.margin.map { String(format: "levels %.1f dB", $0) } ?? "levels"
+                if let word = judged.lastWordCut { rule = "last word \"\(word)\"" }
+                if let word = judged.firstWordCut { rule = "first word \"\(word)\"" }
+                if let word = judged.fragment { rule = "fragment \"\(word)\"" }
+                if let word = judged.beforeFiller { rule = "before a filler \"\(word)\"" }
+                return "\(edge.id) \(rule): " + (verdict.dismissed[index] ?? (verdict.confirming.isEmpty ? "stands" : "stands, heard too"))
+            } + (verdict.heardCutOff ? ["listening finding stands"] : []) + verdict.explained.sorted { $0.key < $1.key }.map { "\(row.heard.findings[$0.key].summary): \($0.value)" }
+            return (!standing.isEmpty || verdict.heardCutOff, !flags.isEmpty, row.heard.clipped, verdict, why.joined(separator: "; "))
+        }
+        var lines = ["  combined (levels and the transcript's rules confirmed or dismissed by listening):"]
+        let judged = rows.map { ($0, judge($0)) }
+        for kind in ["heard", "heard, editorial", "fixed", "approved"] {
+            let these = judged.filter { source($0.0.edges) == kind }
+            guard !these.isEmpty else { continue }
+            let either = these.filter { $0.1.levels || $0.1.listening }.count
+            lines.append("    \(kind) (\(these.count)): levels or listening \(either), combined \(these.filter(\.1.flagged).count)")
+        }
+        let heard = judged.filter { source($0.0.edges) == "heard" }
+        for kind in Array(Set(heard.flatMap { $0.0.edges.compactMap(\.kind) })).sorted() where kind != "join" {
+            let these = heard.filter { $0.0.edges.contains { $0.kind == kind } }
+            lines.append("    heard \(kind): either \(these.filter { $0.1.levels || $0.1.listening }.count), combined \(these.filter(\.1.flagged).count) of \(these.count)")
+        }
+        let fixed = judged.filter { source($0.0.edges) == "fixed" }
+        lines.append("    fixed by an agent, by kind: " + Array(Set(fixed.flatMap { $0.0.edges.compactMap(\.kind) })).sorted().filter { $0 != "join" }.map { kind in
+            let these = fixed.filter { $0.0.edges.contains { $0.kind == kind } }
+            return "\(kind) either \(these.filter { $0.1.levels || $0.1.listening }.count), combined \(these.filter(\.1.flagged).count) of \(these.count)"
+        }.joined(separator: "; "))
+        func row(_ pair: ((edges: [Labelled], heard: CutListen.Join, cut: [String]), (flagged: Bool, levels: Bool, listening: Bool, verdict: CutEvidence.Verdict, why: String))) -> String {
+            "      \(pair.0.edges.map(\.id).joined(separator: "+")) [\(pair.0.edges.compactMap(\.kind).joined(separator: ","))]: \(pair.1.why)\n        said:  \(pair.0.heard.said)\n        heard: \(pair.0.heard.heard)"
+        }
+        let lost = heard.filter { ($0.1.levels || $0.1.listening) && !$0.1.flagged }
+        lines.append("    heard joins flagged before and not now (\(lost.count)):")
+        lines += lost.map(row)
+        lines.append("    heard joins still flagged (\(heard.filter(\.1.flagged).count)):")
+        lines += heard.filter(\.1.flagged).map(row)
+        lines.append("    approved joins still flagged:")
+        lines += judged.filter { source($0.0.edges) == "approved" && $0.1.flagged }.map(row)
+        lines.append("    approved joins dismissed:")
+        lines += judged.filter { source($0.0.edges) == "approved" && ($0.1.levels || $0.1.listening) && !$0.1.flagged }.map(row)
+        return lines
     }
 
     /// Mono samples of the file from `from` to `to`, and their rate.

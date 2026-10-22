@@ -240,6 +240,33 @@ downloaded), and lines the words up with the take's kept words there.
   numbers ("15" and "fifteen"), spoken forms ("wanna" and "want to"),
   letters spelled out ("t. s." and "TS").
 
+Where a join is heard, the two checks weigh each other, since each on its
+own over-flags: on Mike's published Tandem video they flagged 38 of 257
+joins and 4 were real.
+- A level flag is dismissed when every kept word across the join is heard
+  whole, unless the clip's 25 ms at the cut is under 6 dB below the speech
+  (there the cut is inside sound at full level, and the engine fills in
+  what's cut: four joins Mike heard clipped on the Ian video were like
+  that). A `lastWordCut`, `firstWordCut` or `beforeFiller` flag is
+  dismissed when its word is heard in place, so the cut keeps it. A
+  `fragment` stands: hearing the leftover only says it's there. Either way
+  it becomes a `heardWhole` note that quotes what the check said.
+- A listening finding is a note when the take's own transcript explains
+  it: the word heard is one the transcript has at the edge, in the cut,
+  heard whole (it runs through the edge, or the times are a little out);
+  it sounds the same as the take's word ("mic" and "Mike"); the take's
+  word is heard right beside it; nothing at all is heard on that side,
+  where the take has words (the transcript's, over silence); or the take
+  has the word twice there and it's heard once (a retake, or two tracks).
+  A piece of a cut word ("extra" for "extract", "pub") is never explained.
+- A join with both a level flag and a finding (any that isn't explained
+  and isn't a slip, or a kept word at the join not heard right) is one
+  `clippedWord` problem that says both, "and heard cut off (...)", with the
+  levels' fix.
+
+Where nothing was heard, or without `--listen`, the levels stand as they
+are.
+
 It always prints the take's words and the words heard across every join,
 `|` at the join, so read them all for anything that doesn't run on (a
 leftover heard as a whole word reads fine to the comparison), and listen

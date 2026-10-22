@@ -254,9 +254,13 @@ extension TandemService {
                         )
                         listened = heard.summary
                         outcome.warnings += heard.warnings
-                        let found = CutCheck.problems(heard.summary)
-                        outcome.problems = (outcome.problems + found.problems).sorted { $0.start < $1.start }
-                        outcome.notes = (outcome.notes + found.notes).sorted { $0.start < $1.start }
+                        // What's heard confirms or dismisses what the levels
+                        // and the transcript's rules flagged (`CutEvidence`).
+                        let combined = CutCheck.combine(problems: outcome.problems, notes: outcome.notes, summary: heard.summary)
+                        outcome.problems = combined.problems
+                        outcome.notes = combined.notes
+                        outcome.commands = combined.commands
+                        listened?.joins = combined.joins
                     } else if mix != nil {
                         outcome.warnings.append("Nothing to listen with: \(BarkListener.engine) isn't downloaded, and SpeechAnalyzer needs macOS 26.")
                     }

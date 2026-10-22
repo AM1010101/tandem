@@ -419,10 +419,13 @@ final class CheckAPITests: XCTestCase {
         XCTAssertEqual(join.clipIDs, ["clip_voc1", "clip_voc2"])
         XCTAssertEqual(listened.joins[0].findings, [], "\(listened.joins[0])")
 
-        let heard = result.problems.filter { $0.kind == .heardCutOff }
+        // The levels flag the cut through "because" too: one problem that
+        // says both, with the levels' fix.
+        let heard = heardCutOff(result)
         XCTAssertEqual(heard.map(\.start), [t(30)])
+        XCTAssertEqual(heard.map(\.kind), [.clippedWord], "\(result.problems)")
         let message = try XCTUnwrap(heard.first?.message)
-        XCTAssertTrue(message.contains("\"be\" is heard, which the take doesn't keep here (sounds like part of \"because\", which is cut)"), message)
+        XCTAssertTrue(message.contains("and heard cut off (\"be\" is heard, which the take doesn't keep here (sounds like part of \"because\", which is cut))"), message)
         XCTAssertFalse(result.ok)
 
         let text = result.readableText
@@ -436,7 +439,93 @@ final class CheckAPITests: XCTestCase {
         XCTAssertEqual(again.listened?.cached, 3)
         XCTAssertEqual(again.listened?.heard, 0)
         XCTAssertEqual(ear.calls, 3, "nothing heard again")
-        XCTAssertEqual(again.problems.filter { $0.kind == .heardCutOff }.map(\.start), [t(30)])
+        XCTAssertEqual(heardCutOff(again).map(\.start), [t(30)])
+    }
+
+    /// The problems listening backs: heard cut off on its own, or with the
+    /// levels flagging the same join.
+    private func heardCutOff(_ result: CheckResult) -> [CheckProblem] {
+        result.problems.filter { $0.kind == .heardCutOff || $0.message.contains(", and heard cut off (") }
+    }
+
+    /// A clipped edge for `CutCheck.combine`, with its trim.
+    private func clipped(_ clipID: String, _ edge: ClipEdge, at time: Double, margin: Double, lastWordCut: String? = nil) -> CheckProblem {
+        let fix = EditCommand.trim(clipID: clipID, edge: edge, to: t(time + 0.1), ripple: true, includeLinked: nil)
+        return CheckProblem(
+            kind: .clippedWord, start: t(time), end: t(time), message: "Clipped word at the end of \(clipID): the voice runs on 0.30 s past the cut.",
+            clipIDs: [clipID], cut: CheckProblem.CutEdge(clipID: clipID, edge: edge, margin: margin, fixKind: .trimToPause, fix: fix, lastWordCut: lastWordCut)
+        )
+    }
+
+    func testListeningDismissesALevelFlagWhoseWordsAreHeardWhole() {
+        // Tandem video 9:06: a tight join in fluent speech, every word heard.
+        let summary = ListenSummary(engine: "fake", joins: [
+            HeardJoin(time: t(30), said: "remove the bad takes, | So I have", heard: "remove the bad takes. | So I have", findings: [], clipIDs: ["clip_voc1", "clip_voc2"], cached: false)
+        ], heard: 1, cached: 0, secondsPerJoin: nil)
+        let combined = CutCheck.combine(problems: [clipped("clip_voc1", .end, at: 30, margin: 27.4)], notes: [], summary: summary)
+        XCTAssertEqual(combined.problems, [])
+        XCTAssertEqual(combined.commands, [], "no fix for what isn't wrong")
+        let note = try? XCTUnwrap(combined.notes.first)
+        XCTAssertEqual(note?.kind, .heardWhole)
+        XCTAssertTrue(note?.message.contains("levels flagged it, but every kept word is heard whole") == true, note?.message ?? "")
+        XCTAssertNotNil(note?.cut, "what the levels said is still there to read")
+    }
+
+    func testAJoinFlaggedByLevelsAndHeardCutOffIsOneProblemThatSaysBoth() {
+        // Tandem video 20:05: "pub" left in, and the levels flagged the end.
+        let pub = CutListen.Finding(kind: .extra, heard: "pub", time: 29.7, slip: false, why: "heard right at the join")
+        let summary = ListenSummary(engine: "fake", joins: [
+            HeardJoin(time: t(30), said: "made in the | comfortable, and", heard: "made in the pub | comfortable and", findings: [pub],
+                      clipIDs: ["clip_voc1", "clip_voc2"], cached: false, cut: ["past", "couple"])
+        ], heard: 1, cached: 0, secondsPerJoin: nil)
+        let combined = CutCheck.combine(problems: [clipped("clip_voc1", .end, at: 30, margin: 7.7)], notes: [], summary: summary)
+        XCTAssertEqual(combined.problems.map(\.kind), [.clippedWord], "one problem, not two")
+        XCTAssertTrue(combined.problems[0].message.hasPrefix("Clipped word at the end of clip_voc1, and heard cut off (\"pub\" is heard"), combined.problems[0].message)
+        XCTAssertEqual(combined.commands.count, 1)
+    }
+
+    func testAWordTheTakeCutHeardWholeIsANoteAndALastWordHeardIsDismissed() {
+        // Tandem video 12:39: "yet." is heard; the transcript has it cut.
+        let yet = CutListen.Finding(kind: .extra, heard: "yet.", time: 29.6, slip: false, why: "heard right at the join")
+        let summary = ListenSummary(engine: "fake", joins: [
+            HeardJoin(time: t(30), said: "reviewed all of it | And hopefully", heard: "reviewed all of it yet. | And hopefully", findings: [yet],
+                      clipIDs: ["clip_voc1", "clip_voc2"], cached: false, cut: ["yet.", "And"])
+        ], heard: 1, cached: 0, secondsPerJoin: nil)
+        let combined = CutCheck.combine(problems: [clipped("clip_voc1", .end, at: 30, margin: 36.5, lastWordCut: "yet.")], notes: [], summary: summary)
+        XCTAssertEqual(combined.problems, [])
+        XCTAssertEqual(combined.notes.map(\.kind), [.heardWhole, .heardDifferently])
+        XCTAssertTrue(combined.notes[1].message.contains("which the take's transcript explains"), combined.notes[1].message)
+        XCTAssertEqual(combined.joins[0].findings.map(\.slip), [true], "the join reads as differing, not cut off")
+        XCTAssertFalse(combined.joins[0].clipped)
+    }
+
+    func testAJoinNotHeardKeepsWhatTheLevelsFound() {
+        let summary = ListenSummary(engine: "fake", joins: [
+            HeardJoin(time: t(30), said: "that | Now", heard: "", findings: [], clipIDs: ["clip_voc1", "clip_voc2"], cached: false, skipped: "couldn't listen")
+        ], heard: 0, cached: 0, secondsPerJoin: nil)
+        let combined = CutCheck.combine(problems: [clipped("clip_voc1", .end, at: 30, margin: 27.4)], notes: [], summary: summary)
+        XCTAssertEqual(combined.problems.map(\.kind), [.clippedWord])
+        XCTAssertEqual(combined.commands.count, 1)
+    }
+
+    func testCutWordsComeFromTheTrackThatHasThem() throws {
+        // The mic and a screen recording's sound cut together: the screen's
+        // file has no words there, which mustn't blank out the mic's.
+        let project = APIFixture.project()
+        let voice = try XCTUnwrap(project.audioTracks.first { $0.id == "trk_voice" })
+        let camera = try XCTUnwrap(project.media("med_camera")), screen = try XCTUnwrap(project.media("med_screen"))
+        let edges = [
+            CutCheck.Edge(clip: voice.clips[0], edge: .end, other: "clip_voc2", media: camera, cutAway: 30...32),
+            CutCheck.Edge(clip: voice.clips[0], edge: .end, other: "clip_voc2", media: screen, cutAway: 30...32),
+            CutCheck.Edge(clip: voice.clips[1], edge: .start, other: "clip_voc1", media: camera, removed: 30...32),
+        ]
+        let words: [String: [CutAudit.Word]] = ["med_camera": [
+            CutAudit.Word(text: "my", start: 29.5, end: 29.9), CutAudit.Word(text: "own", start: 29.92, end: 30.3),
+            CutAudit.Word(text: "um", start: 30.5, end: 30.8), CutAudit.Word(text: "Text", start: 31.8, end: 32.1),
+        ]]
+        let (past, before) = CutCheck.cutWords(beside: edges, words: words)
+        XCTAssertEqual(past, ["own", "um"], "\"own\" runs through the edge")
+        XCTAssertEqual(before, ["um", "Text"])
     }
 
     /// The take of `testListeningHearsEachJoinAndFlagsWhatsCutOff`, and
@@ -471,7 +560,7 @@ final class CheckAPITests: XCTestCase {
         XCTAssertTrue(listened.joins.allSatisfy { $0.findings.isEmpty }, "\(listened.joins)")
         XCTAssertEqual(listened.joins[1].heard, "that | be Now.", "still heard, to read")
         XCTAssertEqual(listened.joins[1].skipped, "no transcript")
-        XCTAssertTrue(result.problems.filter { $0.kind == .heardCutOff }.isEmpty, "\(result.problems)")
+        XCTAssertTrue(heardCutOff(result).isEmpty, "\(result.problems)")
         let said = result.warnings.filter { $0.contains("No transcript") }
         XCTAssertEqual(said.count, 1, "said once: \(result.warnings)")
         XCTAssertTrue(said[0].contains("take1-camera.wav"), said[0])
@@ -515,7 +604,7 @@ final class CheckAPITests: XCTestCase {
         h.service.cutListening = ([ear.ear], ear.mix)
         let result = try await CheckRequest(cuts: true, listen: true).run(on: h.service, context: h.context)
         let listened = try XCTUnwrap(result.listened)
-        XCTAssertTrue(result.problems.filter { $0.kind == .heardCutOff }.isEmpty, "\(result.problems)")
+        XCTAssertTrue(heardCutOff(result).isEmpty, "\(result.problems)")
         XCTAssertEqual(listened.joins.map(\.skipped), ["nothing heard", "nothing heard", nil], "the end has no words to hear")
         // Asked twice where there are words, once where there aren't.
         XCTAssertEqual(ear.calls, 5)
@@ -535,7 +624,7 @@ final class CheckAPITests: XCTestCase {
         let result = try await CheckRequest(cuts: true, listen: true).run(on: h.service, context: h.context)
         let listened = try XCTUnwrap(result.listened)
         XCTAssertEqual(listened.joins.map(\.skipped), [nil, nil, nil])
-        XCTAssertEqual(result.problems.filter { $0.kind == .heardCutOff }.map(\.start), [t(30)])
+        XCTAssertEqual(heardCutOff(result).map(\.start), [t(30)])
     }
 
     func testAnEngineFailingAtOneJoinStillHearsTheRest() async throws {
@@ -549,7 +638,7 @@ final class CheckAPITests: XCTestCase {
         XCTAssertEqual(listened.joins.map(\.time), [t(0), t(30), t(60)])
         XCTAssertEqual(listened.joins[0].skipped, "couldn't listen")
         XCTAssertNil(listened.joins[1].skipped)
-        XCTAssertEqual(result.problems.filter { $0.kind == .heardCutOff }.map(\.start), [t(30)])
+        XCTAssertEqual(heardCutOff(result).map(\.start), [t(30)])
         XCTAssertEqual(result.warnings.filter { $0.contains("couldn't listen") }.count, 1, "\(result.warnings)")
 
         // Failing everywhere now: what was heard before still comes from
@@ -557,7 +646,7 @@ final class CheckAPITests: XCTestCase {
         ear.failing = [nil]
         let again = try await CheckRequest(cuts: true, listen: true).run(on: h.service, context: h.context)
         XCTAssertEqual(again.listened?.cached, 2)
-        XCTAssertEqual(again.problems.filter { $0.kind == .heardCutOff }.map(\.start), [t(30)])
+        XCTAssertEqual(heardCutOff(again).map(\.start), [t(30)])
     }
 
     func testAnEngineThatKeepsFailingFallsBackToTheNext() async throws {
@@ -572,7 +661,7 @@ final class CheckAPITests: XCTestCase {
         XCTAssertEqual(listened.joins.map(\.skipped), [nil, nil, nil], "the second fails over, and the first is heard again with the fallback")
         XCTAssertEqual(broken.calls, 2, "given up on after failing twice in a row")
         XCTAssertEqual(listened.engine, "broken, then fallback")
-        XCTAssertEqual(result.problems.filter { $0.kind == .heardCutOff }.map(\.start), [t(30)])
+        XCTAssertEqual(heardCutOff(result).map(\.start), [t(30)])
         XCTAssertTrue(result.warnings.contains { $0.contains("listening with fallback") }, "\(result.warnings)")
     }
 

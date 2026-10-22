@@ -41,6 +41,9 @@ public struct CheckProblem: Codable, Equatable, Sendable {
         /// Heard differently across a join, but as likely the transcription
         /// engine's slip as a cut-off: a short word, a filler, a near spelling.
         case heardDifferently
+        /// A cut the levels or the transcript's rules flagged, but `--listen`
+        /// heard every kept word across it whole and in place (`CutEvidence`).
+        case heardWhole
         /// A screen recording playing at a low frame rate while its picture
         /// moves, so it looks choppy.
         case lowFrameRate
@@ -51,7 +54,7 @@ public struct CheckProblem: Codable, Equatable, Sendable {
         /// push. So these don't fail a check.
         public var isNote: Bool {
             self == .soft || self == .deadAir || self == .pageChange || self == .sliver || self == .lowFrameRate || self == .marginalJoin
-                || self == .heardDifferently
+                || self == .heardDifferently || self == .heardWhole
         }
     }
 

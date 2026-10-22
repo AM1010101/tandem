@@ -11,3 +11,6 @@ dist/
 .DS_Store
 .tandem/
 .claude/worktrees/
+
+# Labels and fixtures built from private footage, for opt-in scorecards.
+tests/fixtures-local/

@@ -24,8 +24,14 @@ public struct HeardJoin: Codable, Equatable, Sendable {
     /// heard" (the engine heard nothing where the take has words, twice)
     /// or "couldn't listen" (the engine failed).
     public var skipped: String?
+    /// The take's words cut beside the join, by the transcript: the first
+    /// two cut past the clip before it, then the last two cut before the
+    /// clip after it. Heard whole, one is kept after all (`CutEvidence`).
+    public var cut: [String]?
 
-    public init(time: Time, said: String, heard: String, findings: [CutListen.Finding], clipIDs: [String], cached: Bool, skipped: String? = nil) {
+    public init(
+        time: Time, said: String, heard: String, findings: [CutListen.Finding], clipIDs: [String], cached: Bool, skipped: String? = nil, cut: [String]? = nil
+    ) {
         self.time = time
         self.said = said
         self.heard = heard
@@ -33,6 +39,7 @@ public struct HeardJoin: Codable, Equatable, Sendable {
         self.clipIDs = clipIDs
         self.cached = cached
         self.skipped = skipped
+        self.cut = cut
     }
 
     /// A finding that isn't slip-prone.
@@ -227,7 +234,10 @@ extension CutCheck {
             for edge in group.sorted(by: { ($0.edge == .end ? 0 : 1) < ($1.edge == .end ? 0 : 1) }) where !clipIDs.contains(edge.clip.id) {
                 clipIDs.append(edge.clip.id)
             }
-            return HeardJoin(time: time, said: result.said, heard: result.heard, findings: result.findings, clipIDs: clipIDs, cached: wasCached, skipped: skipped)
+            return HeardJoin(
+                time: time, said: result.said, heard: result.heard, findings: result.findings, clipIDs: clipIDs, cached: wasCached, skipped: skipped,
+                cut: past.isEmpty && before.isEmpty ? nil : past + before
+            )
         }
 
         var untranscribed = 0
@@ -321,18 +331,26 @@ extension CutCheck {
 
     /// The take's words cut beside a join, by the transcript: the first two
     /// cut past the end of the clip before it, and the last two cut before
-    /// the start of the clip after it.
+    /// the start of the clip after it. A word the edge runs through counts,
+    /// whichever side most of it is on: the transcript's times are a tenth
+    /// of a second or two out either way, and on the Tandem video the words
+    /// heard whole at joins ("see", "mistakes,") were ones the edge ran
+    /// through.
+    ///
+    /// A join can be on several tracks at once (the mic and a screen
+    /// recording's sound, cut together): the first edge with cut words on
+    /// each side gives them, so a track with no transcript there doesn't
+    /// blank out the mic's.
     static func cutWords(beside group: [Edge], words: [String: [CutAudit.Word]]) -> (past: [String], before: [String]) {
-        func middle(_ word: CutAudit.Word) -> Double { (word.start + word.end) / 2 }
         var past: [String] = [], before: [String] = []
         for edge in group {
             let said = (words[edge.media.id] ?? []).sorted { $0.start < $1.start }
-            if edge.edge == .end {
+            if edge.edge == .end, past.isEmpty {
                 let gone = edge.cutAway ?? edge.mediaTime...(edge.mediaTime + CutListen.span)
-                past = said.filter { middle($0) >= edge.mediaTime && gone.contains(middle($0)) }.prefix(2).map(\.text)
-            } else {
+                past = said.filter { $0.end > edge.mediaTime && $0.start < gone.upperBound }.prefix(2).map(\.text)
+            } else if edge.edge == .start, before.isEmpty {
                 let gone = edge.removed ?? max(0, edge.mediaTime - CutListen.span)...edge.mediaTime
-                before = said.filter { middle($0) < edge.mediaTime && gone.contains(middle($0)) }.suffix(2).map(\.text)
+                before = said.filter { $0.start < edge.mediaTime && $0.end > gone.lowerBound }.suffix(2).map(\.text)
             }
         }
         return (past, before)
@@ -362,26 +380,111 @@ extension CutCheck {
         return result
     }
 
-    /// A problem for each join heard cut off, and a note for each heard
-    /// differently in a way that's as likely the engine's slip.
-    static func problems(_ summary: ListenSummary) -> (problems: [CheckProblem], notes: [CheckProblem]) {
-        var problems: [CheckProblem] = [], notes: [CheckProblem] = []
-        for join in summary.joins where !join.findings.isEmpty {
-            let shown = join.findings.filter { join.clipped ? !$0.slip : true }
-            let what = shown.map { "\($0.summary) (\($0.why))" }.joined(separator: "; ")
+    /// What `check --cuts` found, weighed against what `--listen` heard
+    /// (`CutEvidence`), with the fixes for what's still a problem.
+    struct Combined: Sendable {
+        var problems: [CheckProblem] = []
+        var notes: [CheckProblem] = []
+        /// Latest first, as `Outcome.commands`.
+        var commands: [EditCommand] = []
+        /// Every join heard, with each finding the take's transcript explains
+        /// marked slip-prone and saying why.
+        var joins: [HeardJoin] = []
+    }
+
+    /// At each join heard, a `clippedWord` problem whose words are heard
+    /// whole becomes a `heardWhole` note, a listening finding the take's
+    /// transcript explains becomes a note, and a join with both a flag and a
+    /// finding is one problem that says both. Joins not heard (skipped, or
+    /// outside what was listened to) keep what the levels found.
+    ///
+    /// - Parameters:
+    ///   - problems: `check --cuts`' problems (`clippedWord`), in order.
+    ///   - notes: its notes (`marginalJoin`).
+    static func combine(problems: [CheckProblem], notes: [CheckProblem], summary: ListenSummary) -> Combined {
+        var result = Combined()
+        var levels = problems
+        var dismissed = Set<Int>()
+        var folded: [Int: String] = [:]
+        result.joins = summary.joins
+        for (place, join) in summary.joins.enumerated() where join.skipped == nil {
+            // The level problems at this join, by their edge's clip.
+            let here = levels.indices.filter { index in
+                guard let cut = levels[index].cut, join.clipIDs.contains(cut.clipID) else { return false }
+                return abs((levels[index].start - join.time).seconds) < 0.0005
+            }
+            let flags = here.map { index -> CutEvidence.Flag in
+                let cut = levels[index].cut!
+                return CutEvidence.Flag(
+                    keeps: cut.edge == .end ? .before : .after, margin: cut.margin.map(Float.init), lastWordCut: cut.lastWordCut,
+                    firstWordCut: cut.firstWordCut, fragment: cut.fragment, beforeFiller: cut.beforeFiller
+                )
+            }
+            let heard = CutListen.Join(time: join.time.seconds, said: join.said, heard: join.heard, findings: join.findings)
+            let verdict = CutEvidence.judge(heard, flags: flags, cut: join.cut ?? [])
+            for (index, why) in verdict.explained {
+                result.joins[place].findings[index].slip = true
+                result.joins[place].findings[index].why = why
+            }
             let words = "Take: \"\(join.said)\". Heard: \"\(join.heard)\"."
-            if join.clipped {
-                problems.append(CheckProblem(
+            for (flag, why) in verdict.dismissed {
+                dismissed.insert(here[flag])
+                var note = levels[here[flag]]
+                note.kind = .heardWhole
+                note.message = "Heard whole at the join, so not clipped: \(why). The check said: \(note.message) \(words)"
+                result.notes.append(note)
+            }
+            let kept = here.filter { !dismissed.contains($0) }
+            func said(_ index: Int) -> String {
+                let finding = join.findings[index]
+                return "\(finding.summary) (\(verdict.explained[index] ?? finding.why))"
+            }
+            let standing = join.findings.indices.filter { verdict.explained[$0] == nil && (!join.findings[$0].slip || verdict.confirming.contains($0)) }
+            if let first = kept.first, !verdict.confirming.isEmpty {
+                // Both say so: one problem, with the fix the levels found.
+                folded[first] = verdict.confirming.map(said).joined(separator: "; ")
+                let rest = join.findings.indices.filter { !verdict.confirming.contains($0) }
+                if !rest.isEmpty {
+                    result.notes.append(CheckProblem(
+                        kind: .heardDifferently, start: join.time, end: join.time,
+                        message: "Heard differently at the join, besides the cut-off: \(rest.map(said).joined(separator: "; ")). \(words)", clipIDs: join.clipIDs
+                    ))
+                }
+            } else if verdict.heardCutOff {
+                result.problems.append(CheckProblem(
                     kind: .heardCutOff, start: join.time, end: join.time,
-                    message: "Heard cut off at the join: \(what). \(words) Listen with tandem clip and recut it.", clipIDs: join.clipIDs
+                    message: "Heard cut off at the join: \(standing.map(said).joined(separator: "; ")). \(words) Listen with tandem clip and recut it.", clipIDs: join.clipIDs
                 ))
-            } else {
-                notes.append(CheckProblem(
+                let rest = join.findings.indices.filter { !standing.contains($0) }
+                if !rest.isEmpty {
+                    result.notes.append(CheckProblem(
+                        kind: .heardDifferently, start: join.time, end: join.time,
+                        message: "Heard differently at the join, besides the cut-off: \(rest.map(said).joined(separator: "; ")). \(words)", clipIDs: join.clipIDs
+                    ))
+                }
+            } else if !join.findings.isEmpty {
+                let explained = !verdict.explained.isEmpty
+                let why = explained && verdict.explained.count == join.findings.count
+                    ? "which the take's transcript explains" : explained ? "which the take's transcript explains or is likely \(summary.engine)'s slip" : "likely \(summary.engine)'s slip"
+                result.notes.append(CheckProblem(
                     kind: .heardDifferently, start: join.time, end: join.time,
-                    message: "Heard differently at the join, likely \(summary.engine)'s slip: \(what). \(words)", clipIDs: join.clipIDs
+                    message: "Heard differently at the join, \(why): \(join.findings.indices.map(said).joined(separator: "; ")). \(words)", clipIDs: join.clipIDs
                 ))
             }
         }
-        return (problems, notes)
+        for (index, heard) in folded {
+            let message = levels[index].message
+            // "Clipped word at the end of clip_x: ..." says it's heard too.
+            if let colon = message.range(of: ": ") {
+                levels[index].message = String(message[..<colon.lowerBound]) + ", and heard cut off (\(heard))" + String(message[colon.lowerBound...])
+            }
+        }
+        let standing = levels.indices.filter { !dismissed.contains($0) }.map { levels[$0] }
+        result.problems = (standing + result.problems).sorted { $0.start < $1.start }
+        result.notes = (notes + result.notes).sorted { $0.start < $1.start }
+        for fix in standing.reversed().compactMap(\.cut?.fix) where !result.commands.contains(fix) {
+            result.commands.append(fix)
+        }
+        return result
     }
 }

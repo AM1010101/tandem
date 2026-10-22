@@ -185,6 +185,110 @@ final class CutFillersTests: XCTestCase {
         XCTAssertLessThan(cutKept.seconds, 0.2)
     }
 
+    func testAProtectedFillerInARangeAskedForGoesWithIt() async throws {
+        // "So. [um wrong idea.] Next." with the range 3-4 asked for and a
+        // protect time on its "um": the range is the caller's choice, so it
+        // cuts, and the "um" is counted as cut with it, not left in.
+        let h = try harness(
+            speech: [(2.0, 2.4), (3.0, 4.0), (5.0, 5.4)],
+            words: [("So.", 2.0, 2.4), ("um", 3.0, 3.3), ("wrong", 3.35, 3.6), ("idea.", 3.65, 4.0), ("Next.", 5.0, 5.4)]
+        )
+        defer { h.close() }
+        let plan = try await CutRequest(remove: [CutTarget(start: t(3), end: t(4))], fillers: true, protect: [t(3.2)]).run(on: h.service, context: h.context)
+        XCTAssertEqual(plan.cuts.count, 1, "\(plan.cuts.map(\.asked))")
+        let range = try XCTUnwrap(plan.cuts.first)
+        XCTAssertEqual(range.status, .cut, range.reason ?? "")
+        XCTAssertEqual(range.fillers, 1)
+        let counts = try XCTUnwrap(plan.fillers)
+        XCTAssertEqual(counts.found, 1)
+        XCTAssertEqual(counts.cut, 1)
+        XCTAssertEqual(counts.leftIn, [:])
+        XCTAssertFalse(plan.readableText.contains("protected"), plan.readableText)
+    }
+
+    func testAFillerAFalseStartBringsBackIsCountedLeftIn() async throws {
+        // "Okay. [as I said] uh we move." with "uh" running into "we": cut as
+        // a false start, the end goes back to the pause before "uh", so the
+        // "uh" stays, and the counts say so.
+        let h = try harness(
+            speech: [(14.0, 14.4), (14.9, 15.6), (16.0, 17.5)],
+            words: [("Okay.", 14.0, 14.4), ("as", 14.9, 15.1), ("I", 15.12, 15.2), ("said", 15.25, 15.6), ("uh", 16.0, 16.35), ("we", 16.4, 16.7), ("move.", 16.75, 17.5)]
+        )
+        defer { h.close() }
+        let plan = try await CutRequest(remove: [CutTarget(phrase: "as I said")], fillers: true, falseStart: true).run(on: h.service, context: h.context)
+        let first = try XCTUnwrap(plan.cuts.first)
+        XCTAssertEqual(first.fillers, 1)
+        XCTAssertEqual(first.status, .cut, first.reason ?? "")
+        XCTAssertEqual(first.broughtBack, "uh")
+        XCTAssertLessThanOrEqual(try XCTUnwrap(first.cut).end.seconds, 16.0)
+        let counts = try XCTUnwrap(plan.fillers)
+        XCTAssertEqual(counts.found, 1)
+        XCTAssertEqual(counts.cut, 0)
+        XCTAssertEqual(counts.leftIn, ["broughtBack": 1])
+        XCTAssertEqual(counts.removed, .zero)
+        XCTAssertTrue(plan.readableText.contains("1 left in (1 brought back"), plan.readableText)
+    }
+
+    func testAnAhRunningIntoTheNextWordIsLeftIn() async throws {
+        // "Ah, I see." in one run of sound: "Ah" there is meant, and a cut
+        // would clip "I".
+        let h = try harness(speech: [(2.0, 3.0), (4.0, 4.4)], words: [("Ah,", 2.0, 2.2), ("I", 2.25, 2.4), ("see.", 2.45, 3.0), ("Right.", 4.0, 4.4)])
+        defer { h.close() }
+        let plan = try await CutRequest(remove: [], fillers: true).run(on: h.service, context: h.context)
+        let ah = try stretch(at: 2.1, in: plan)
+        XCTAssertEqual(ah.status, .kept)
+        XCTAssertEqual(ah.problem, .fluent)
+        XCTAssertEqual(plan.fillers?.leftIn, ["fluent": 1])
+        XCTAssertTrue(plan.commands.isEmpty)
+    }
+
+    // MARK: - Joining and protecting
+
+    private func word(_ text: String, _ start: Double, _ end: Double, _ clip: Clip) -> TranscriptTools.SpokenWord {
+        TranscriptTools.SpokenWord(text: text, start: t(start), end: t(end), clipID: clip.id, mediaID: clip.mediaID ?? "", confidence: nil)
+    }
+
+    private func map(_ words: [TranscriptTools.SpokenWord], clips: [Clip], unknown: [TimeRange] = []) -> TranscriptTools.SpeechMap {
+        let covered = clips.map(\.range).filter { range in !unknown.contains { $0.overlaps(range) } }
+        return TranscriptTools.SpeechMap(words: words, covered: TimeRange.union(covered), unknown: unknown, missing: unknown.isEmpty ? [] : ["med_b"], clips: clips)
+    }
+
+    func testFillersOnlyJoinInOneRunOfTheTake() {
+        // "um" at the end of clip A and "uh" at the start of clip C, 1.4 s
+        // apart. In one clip, or two that carry straight on, they're one cut.
+        let whole = Clip(id: "a", content: .media(mediaID: "med_a"), start: t(0), duration: t(10))
+        let joined = TandemService.joining(
+            TandemService.fillers(in: map([word("um", 4.5, 4.8, whole), word("uh", 6.2, 6.5, whole)], clips: [whole]), from: nil, to: nil, protect: []),
+            to: [], in: map([word("um", 4.5, 4.8, whole), word("uh", 6.2, 6.5, whole)], clips: [whole])
+        )
+        XCTAssertEqual(joined.map(\.fillers), [2])
+        let a = Clip(id: "a", content: .media(mediaID: "med_a"), start: t(0), duration: t(5))
+        let on = Clip(id: "c", content: .media(mediaID: "med_a"), start: t(5), duration: t(5), sourceStart: t(5))
+        let carried = map([word("um", 4.5, 4.8, a), word("uh", 5.2, 5.5, on)], clips: [a, on])
+        XCTAssertEqual(TandemService.joining(TandemService.fillers(in: carried, from: nil, to: nil, protect: []), to: [], in: carried).map(\.fillers), [2])
+
+        // With a clip nobody has a transcript for between them (someone
+        // else talking, say), joining them would cut its speech unheard.
+        let b = Clip(id: "b", content: .media(mediaID: "med_b"), start: t(5), duration: t(1))
+        let c = Clip(id: "c", content: .media(mediaID: "med_a"), start: t(6), duration: t(4), sourceStart: t(6))
+        let untranscribed = map([word("um", 4.5, 4.8, a), word("uh", 6.2, 6.5, c)], clips: [a, b, c], unknown: [TimeRange(start: t(5), end: t(6))])
+        XCTAssertEqual(TandemService.joining(TandemService.fillers(in: untranscribed, from: nil, to: nil, protect: []), to: [], in: untranscribed).map(\.fillers), [1, 1])
+
+        // Nor across a join an earlier cut made, from one part of the take to another.
+        let later = Clip(id: "c", content: .media(mediaID: "med_a"), start: t(5), duration: t(5), sourceStart: t(9))
+        let jumped = map([word("um", 4.5, 4.8, a), word("uh", 5.2, 5.5, later)], clips: [a, later])
+        XCTAssertEqual(TandemService.joining(TandemService.fillers(in: jumped, from: nil, to: nil, protect: []), to: [], in: jumped).map(\.fillers), [1, 1])
+    }
+
+    func testAProtectTimeAfterTheLastFillerReachesTheEndOfItsClip() {
+        // "So. [um]" at the end of a 5 s clip: the pause after "um" runs to
+        // the clip's end, so a protect time in it leaves the "um" in.
+        let clip = Clip(id: "a", content: .media(mediaID: "med_a"), start: t(0), duration: t(5))
+        let speech = map([word("So.", 2.0, 2.4, clip), word("um", 3.0, 3.3, clip)], clips: [clip])
+        XCTAssertEqual(TandemService.fillers(in: speech, from: nil, to: nil, protect: [t(3.8)]).first?.protected, t(3.8))
+        XCTAssertNil(TandemService.fillers(in: speech, from: nil, to: nil, protect: [t(5.5)]).first?.protected)
+    }
+
     func testFillersAloneNeedNoPhraseAndTheRequestReadsThem() throws {
         let request = try ServiceJSON.decodeRequest(CutRequest.self, from: Data(#"{"fillers": true, "from": "0:05", "to": 19, "protect": ["0:20.7"]}"#.utf8))
         XCTAssertEqual(request.remove, [])

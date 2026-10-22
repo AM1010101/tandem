@@ -483,7 +483,7 @@ final class SectionCutTests: XCTestCase {
     }
     func testFillersMatchLooselyButOnlyWholeWords() {
         // Case, punctuation and drawn-out letters don't matter.
-        for word in ["um", "Um,", "UMM...", "ummm", "uh", "Uh.", "uhh", "uhm", "erm", "er,", "ah", "Ahh!", "mm", "mmm", "hmm", "Hmmm?", "\u{2014}um"] {
+        for word in ["um", "Um,", "UMM...", "ummm", "uh", "Uh.", "uhh", "uhm", "erm", "er,", "ah", "Ahh!", "mm", "mmm", "hmm", "Hmmm", "\u{2014}um"] {
             XCTAssertNotNil(TranscriptTools.filler(word), word)
         }
         XCTAssertEqual(TranscriptTools.filler("Ummm,"), "um")
@@ -492,6 +492,14 @@ final class SectionCutTests: XCTestCase {
         // Real words, answers ("uh-huh" is a yes) and the acronym "ER" stay,
         // and so do "like" and "you know", which are often meant.
         for word in ["umbrella", "uhuru", "her", "ahead", "oh", "eh", "uh-huh", "mm-hmm", "ER", "err", "like", "know", "", "..."] {
+            XCTAssertNil(TranscriptTools.filler(word), word)
+        }
+        // A measurement or a number isn't one: "10mm" isn't "mm", nor "4Ah" "ah".
+        for word in ["10mm", "4Ah", "mm2", "2um", "um3", "uh-oh", "mm.hmm"] {
+            XCTAssertNil(TranscriptTools.filler(word), word)
+        }
+        // Written with a question mark, it's a question ("Hmm?", "Uh?"), not a filler.
+        for word in ["Hmm?", "Hmmm?", "uh?", "Um?!", "ah?"] {
             XCTAssertNil(TranscriptTools.filler(word), word)
         }
     }

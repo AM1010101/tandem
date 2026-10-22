@@ -182,6 +182,8 @@ side by side. A filler joined to a stretch asked for is in that one
 (`"as I said + uh"`). An entry's `fillers` is how many fillers it is or
 has in it. `fillers` on the result counts them: `found` between `from` and
 `to` (one two mics hear is one), `cut`, `leftIn` by why (a `problem`, so
-`fluent` for one in running speech, or `protected`, or `unplaced` when the
-sound couldn't be read), and `removed`, the seconds the stretches with
-fillers in them take out.
+`fluent` for one in running speech, or `protected`, `broughtBack` when a
+false start's cut brought it back, or `unplaced` when the sound couldn't
+be read), and `removed`, the seconds the stretches cutting fillers take
+out. Each filler is counted by where the cut actually goes, so one a
+protect time covers inside a range you asked for is counted as cut.

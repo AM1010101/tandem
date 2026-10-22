@@ -276,7 +276,7 @@ final class CutPlanTests: XCTestCase {
         let cut = CutPlanner.plan(
             start: placer(take), CutPlanner.Boundary(time: 11.3, before: [10.5...11.0], after: [11.3...11.6]),
             end: placer(take), CutPlanner.Boundary(time: 11.6, before: [11.3...11.6], after: [11.9...12.4]),
-            keep: 0.12, tightenFrom: 0.5, falseStart: false, filled: 0.3
+            keep: 0.12, tightenFrom: 0.5, falseStart: false, filled: true
         )
         XCTAssertTrue(cut.cuts, "\(cut)")
         // Split as tighten splits it, 0.06 / 0.08 with the least before a word.
@@ -288,5 +288,24 @@ final class CutPlanTests: XCTestCase {
             keep: 0.12, tightenFrom: 0.5, falseStart: false
         )
         XCTAssertGreaterThan(phrase.keptBefore + phrase.keptAfter, 0.2)
+    }
+    func testAFilledPauseIsMeasuredFromTheSound() throws {
+        // "query, [um] we" where the sound has 0.2 s, a short 0.06 s "um"
+        // and 0.2 s: 0.46 s from "query" to "we", under the 0.5 s minimum,
+        // so the pauses are kept as they were. The transcript has the "um"
+        // wider (0.3 s), which added to the pauses read as 0.7 s and cut
+        // them to a comma's 0.12 s.
+        let take = Take(length: 4, words: [(10.5, 11.0), (11.2, 11.26), (11.46, 12.0)])
+        let cut = CutPlanner.plan(
+            start: placer(take), CutPlanner.Boundary(time: 11.1, before: [10.5...11.0], after: [11.1...11.4]),
+            end: placer(take), CutPlanner.Boundary(time: 11.4, before: [11.1...11.4], after: [11.46...12.0]),
+            keep: 0.12, tightenFrom: 0.5, falseStart: false, filled: true
+        )
+        XCTAssertTrue(cut.cuts, "\(cut)")
+        let pauses = try XCTUnwrap(cut.startPause).upperBound - XCTUnwrap(cut.startPause).lowerBound
+            + XCTUnwrap(cut.endPause).upperBound - XCTUnwrap(cut.endPause).lowerBound
+        // All but 30 ms of each pause by the "um", as a pause under the
+        // minimum is kept, rather than the comma's 0.12 s.
+        XCTAssertEqual(cut.keptBefore + cut.keptAfter, pauses - 0.06, accuracy: 0.001, "\(cut)")
     }
 }

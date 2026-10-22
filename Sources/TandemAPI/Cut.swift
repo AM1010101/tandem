@@ -132,11 +132,11 @@ public struct CutFillers: Codable, Equatable, Sendable {
     public var found: Int
     public var cut: Int
     /// The ones left in, by why: a `CutPlan.Problem` (`fluent` for one in
-    /// running speech), `protected`, or `unplaced` when the sound couldn't
-    /// be read.
+    /// running speech), `protected`, `broughtBack` when a false start's
+    /// cut brought it back, or `unplaced` when the sound couldn't be read.
     public var leftIn: [String: Int]
-    /// What the stretches with fillers in them take out, a phrase cut
-    /// with a filler included.
+    /// What the stretches cutting fillers take out, a phrase cut with a
+    /// filler included.
     public var removed: Time
 }
 
@@ -236,7 +236,7 @@ extension CutResult: ReadableResult {
             if left > 0 {
                 let why: [(String, String)] = [
                     ("fluent", "in running speech"), ("runsOn", "with the voice running on"), ("notClean", "whose join wouldn't be clean"),
-                    ("protected", "protected"), ("noSpeech", "not heard in the sound"), ("nothingLeft", "with nothing left to cut"), ("unplaced", "where the sound couldn't be read")
+                    ("protected", "protected"), ("broughtBack", "brought back by a false start's cut"), ("noSpeech", "not heard in the sound"), ("nothingLeft", "with nothing left to cut"), ("unplaced", "where the sound couldn't be read")
                 ]
                 let reasons = why.compactMap { key, text in fillers.leftIn[key].map { "\($0) \(text)" } }
                 line += ", \(left) left in (\(reasons.joined(separator: ", ")))"
@@ -298,7 +298,7 @@ extension TandemService {
         if request.fillers == true {
             let fillers = Self.fillers(in: map, from: request.from, to: request.to, protect: request.protect ?? [])
             fillersFound = fillers.count
-            asks = Self.joining(fillers, to: asks, words: map.words)
+            asks = Self.joining(fillers, to: asks, in: map)
         }
 
         var warnings: [String] = []
@@ -379,13 +379,21 @@ extension TandemService {
             var summary = CutFillers(found: fillersFound, cut: 0, leftIn: [:], removed: .zero)
             var cut: [TimeRange] = []
             for (ask, stretch) in zip(asks, stretches) where ask.fillers > 0 {
-                if stretch.status == .cut, let range = stretch.cut {
-                    summary.cut += ask.fillers
-                    cut.append(range)
-                } else {
-                    let why = ask.protected != nil ? "protected" : stretch.problem?.rawValue ?? "unplaced"
-                    summary.leftIn[why, default: 0] += ask.fillers
+                // Each filler by what the cut takes out, not what was asked:
+                // a false start's pause fallback can bring one back.
+                let made = stretch.status == .cut ? stretch.cut : nil
+                var any = false
+                for filler in ask.fillerRanges {
+                    let mid = (filler.start.seconds + filler.end.seconds) / 2
+                    if let made, made.start.seconds <= mid, mid <= made.end.seconds {
+                        summary.cut += 1
+                        any = true
+                    } else {
+                        let why = ask.protected != nil ? "protected" : made != nil ? "broughtBack" : stretch.problem?.rawValue ?? "unplaced"
+                        summary.leftIn[why, default: 0] += 1
+                    }
                 }
+                if any, let made { cut.append(made) }
             }
             summary.removed = TimeRange.union(cut).reduce(.zero) { $0 + $1.duration }
             result.fillers = summary
@@ -416,33 +424,43 @@ extension TandemService {
         /// for fillers on their own, which come after, in timeline order.
         var order: Int?
         var falseStart: Bool
-        var fillers = 0
+        /// The fillers in it, each as the transcript has it.
+        var fillerRanges: [TimeRange] = []
         /// The protect time a filler has round it, which leaves it in.
         var protected: Time?
+
+        var fillers: Int { fillerRanges.count }
     }
 
     /// The fillers the transcript has from `from` to `to`, each its own
     /// stretch. One heard on two mics is one.
     static func fillers(in map: TranscriptTools.SpeechMap, from: Time?, to: Time?, protect: [Time]) -> [CutAsk] {
         let words = map.words.sorted { $0.start < $1.start }
+        let clips = Dictionary(map.clips.map { ($0.id, $0.range) }, uniquingKeysWith: { first, _ in first })
         var found: [CutAsk] = []
+        var heardIn: [TimeRange] = []
         for word in words {
             guard let name = TranscriptTools.filler(word.text),
                   from.map({ $0 <= word.start }) ?? true, to.map({ word.end <= $0 }) ?? true else { continue }
             let range = TimeRange(start: word.start, end: word.end)
             if let last = found.last, last.range.overlaps(range) {
-                found[found.count - 1].range = TimeRange(start: last.range.start, end: max(last.range.end, range.end))
+                let merged = TimeRange(start: last.range.start, end: max(last.range.end, range.end))
+                found[found.count - 1].range = merged
+                found[found.count - 1].fillerRanges = [merged]
                 continue
             }
-            found.append(CutAsk(names: [name], range: range, order: nil, falseStart: false, fillers: 1))
+            found.append(CutAsk(names: [name], range: range, order: nil, falseStart: false, fillerRanges: [range]))
+            heardIn.append(clips[word.clipID] ?? range)
         }
         // A protect time in a filler, or in the pause either side of it out
         // to the next word, leaves it in: the beat it's part of is meant,
-        // as tighten's protect leaves a pause alone.
+        // as tighten's protect leaves a pause alone. With no word before or
+        // after it, that pause runs to its clip's edge, so a last "um" in a
+        // take is protected by a time in the quiet after it.
         for index in found.indices {
             let range = found[index].range
-            let before = words.last { $0.end <= range.start }?.end ?? .zero
-            let after = words.first { $0.start >= range.end }?.start ?? range.end
+            let before = words.last { $0.end <= range.start }?.end ?? heardIn[index].start
+            let after = words.first { $0.start >= range.end }?.start ?? heardIn[index].end
             found[index].protected = protect.first { before <= $0 && $0 <= after }
         }
         return found
@@ -452,20 +470,43 @@ extension TandemService {
     /// for, when no word that stays is between them: "um, uh" is one cut,
     /// not two with a sliver of pause between them, and so is "as I said,
     /// uh". Not across more than `CutPlanner.falseStartFrom` of pause,
-    /// where sound with no word (someone off mic) would go with it.
-    /// Stretches asked for are never joined to each other.
-    static func joining(_ fillers: [CutAsk], to asked: [CutAsk], words: [TranscriptTools.SpokenWord]) -> [CutAsk] {
+    /// where sound with no word (someone off mic) would go with it, and
+    /// only in one run of the take (`oneTake`), never across sound nobody
+    /// has a transcript for. Stretches asked for are never joined to each
+    /// other.
+    static func joining(_ fillers: [CutAsk], to asked: [CutAsk], in map: TranscriptTools.SpeechMap) -> [CutAsk] {
+        let words = map.words
         let reach = Time(seconds: CutPlanner.falseStartFrom)
+        // A stretch asked for is the caller's choice, so a protected filler
+        // inside one goes with it and is counted as cut, rather than said
+        // to be left in while the range takes it out.
+        var fillers = fillers
+        for index in fillers.indices where fillers[index].protected != nil {
+            let filler = fillers[index].range
+            let mid = (filler.start.seconds + filler.end.seconds) / 2
+            if asked.contains(where: { $0.range.start.seconds <= mid && mid <= $0.range.end.seconds }) {
+                fillers[index].protected = nil
+            }
+        }
+        // By start, a stretch asked for before a filler at the same time,
+        // so it's named first.
+        let ordered = (asked + fillers.filter { $0.protected == nil }).sorted { a, b in
+            a.range.start != b.range.start ? a.range.start < b.range.start : a.order != nil && b.order == nil
+        }
         var joined: [CutAsk] = []
-        for ask in (asked + fillers.filter { $0.protected == nil }).sorted(by: { $0.range.start < $1.range.start }) {
-            if let last = joined.last, last.fillers > 0 || ask.fillers > 0, ask.range.start - last.range.end <= reach,
-               !words.contains(where: { word in
-                   let mid = (word.start.seconds + word.end.seconds) / 2
-                   return last.range.end.seconds < mid && mid < ask.range.start.seconds
-               }), last.order == nil || ask.order == nil {
+        for ask in ordered {
+            if let last = joined.last, last.fillers > 0 || ask.fillers > 0, last.order == nil || ask.order == nil,
+               ask.range.start <= last.range.end || (
+                   ask.range.start - last.range.end <= reach
+                   && !words.contains(where: { word in
+                       let mid = (word.start.seconds + word.end.seconds) / 2
+                       return last.range.end.seconds < mid && mid < ask.range.start.seconds
+                   })
+                   && oneTake(TimeRange(start: last.range.end, end: ask.range.start), in: map)
+               ) {
                 joined[joined.count - 1] = CutAsk(
                     names: last.names + ask.names, range: TimeRange(start: last.range.start, end: max(last.range.end, ask.range.end)),
-                    order: last.order ?? ask.order, falseStart: last.falseStart || ask.falseStart, fillers: last.fillers + ask.fillers
+                    order: last.order ?? ask.order, falseStart: last.falseStart || ask.falseStart, fillerRanges: last.fillerRanges + ask.fillerRanges
                 )
             } else {
                 joined.append(ask)
@@ -480,6 +521,23 @@ extension TandemService {
             case (nil, nil): return a.range.start < b.range.start
             }
         }
+    }
+
+    /// Whether `gap` plays in one run of a take: in one clip, or clips that
+    /// carry straight on from each other (`oneRun`), with no clip nobody
+    /// has a transcript for playing over it. A cut across anything else
+    /// would take out sound no one has read: another clip's speech, or
+    /// both sides of a join an earlier cut made.
+    static func oneTake(_ gap: TimeRange, in map: TranscriptTools.SpeechMap) -> Bool {
+        guard !map.unknown.contains(where: { $0.overlaps(gap) }) else { return false }
+        for first in map.clips where first.start <= gap.start && gap.start <= first.end {
+            var clip = first
+            while clip.end < gap.end, let next = map.clips.first(where: { $0.id != clip.id && oneRun(clip, $0) }) {
+                clip = next
+            }
+            if gap.end <= clip.end { return true }
+        }
+        return false
     }
 
     /// Where `phrase` is said on the timeline: the one match, or the one at
@@ -700,7 +758,7 @@ extension TandemService {
         let plan = CutPlanner.plan(
             start: startPlacer, first.boundary, end: endPlacer, last.boundary, keep: planned.keep, tightenFrom: planned.tightenFrom,
             falseStart: planned.falseStart, sameFile: Self.oneRun(first.clip, last.clip),
-            filled: planned.filled ? planned.range.duration.seconds : nil, snap: snap
+            filled: planned.filled, snap: snap
         )
         stretch.falseStart = plan.falseStart
         stretch.problem = plan.problem

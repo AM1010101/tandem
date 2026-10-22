@@ -116,19 +116,28 @@ Nothing changed yet. Run again with --apply (or apply: true) to make the cut.
 you'd asked for each one: um, uh, uhm, erm, er, ah, mm and hmm, in any
 case, with punctuation and drawn out ("Ummm,"). Not "oh", "eh", "uh-huh"
 or "mm-hmm", which mean something, nor "like" or "you know", which are
-often meant, nor the acronym "ER" or "err". Each is planned as a phrase is
+often meant, nor the acronym "ER" or "err". Only punctuation round the
+letters is let go, so "10mm" and "4Ah" aren't fillers, and one written
+with a question mark ("Hmm?") is a question, so it stays. Each is planned
+as a phrase is
 ([Cut a phrase](#cut-a-phrase)): one with a pause either side is cut pause
 to pause, and one that runs into a word that stays is left in as `fluent`,
 because a natural "um" beats a chopped word. Fillers side by side ("um,
 uh"), or a filler beside a phrase or range cut in the same call, with no
 word that stays between them, are one stretch, so there's one join and no
-sliver of pause between two cuts. Fillers on their own are never false
-starts, so `--false-start` doesn't cut one in running speech.
+sliver of pause between two cuts. That's only within one run of the take
+(one clip, or clips that carry straight on), never across a join an
+earlier cut made or a clip with no transcript yet, whose sound nobody has
+read. Fillers on their own are never false starts, so `--false-start`
+doesn't cut one in running speech. If a false start's cut brings a filler
+joined to it back, the counts say it was left in (`broughtBack`).
 
 `--from` and `--to` hold it to part of the video. `--protect` takes
 timeline times, as tighten's does: a filler with one in it, or in the
-pauses either side of it, stays (an "ah" of realisation, a beat that's
-meant). The result counts the fillers found, cut and left in (and why) and
+pauses either side of it (out to its clip's edge for the last one), stays
+(an "ah" of realisation, a beat that's meant). A phrase or range you ask
+for in the same call is your choice, though, so a protected filler inside
+it is cut with it and counted as cut. The result counts the fillers found, cut and left in (and why) and
 the seconds they take out, and lists each one at its timeline time, so
 listen to the ones left in with `tandem clip`. In MCP and HTTP: `cut
 {"fillers": true, "from": 120, "to": 300}` (`remove` can be left out), then
@@ -136,9 +145,10 @@ again with `"apply": true, "expectedRevision": <the plan's revision>`.
 
 Cut fillers before tightening. A filler on its own is a filled pause, so
 its join keeps what `tighten --mike` would leave there with no filler at
-all, going by the whole pause, filler and all: "query, [um] we" with 0.3 s
-either side is a 0.9 s pause, so it keeps a comma's 0.12 s, and a pause
-under 0.5 s with the filler in it is kept as it was. (A phrase is
+all, going by the whole pause, filler and all, measured in the sound from
+the end of the word before to the start of the word after: "query, [um]
+we" with 0.3 s either side is a 0.9 s pause, so it keeps a comma's 0.12 s,
+and a pause under 0.5 s with the filler in it is kept as it was. (A phrase is
 different: there each pause either side is what the speaker left.) Then
 tighten shortens the pauses that are left and leaves the filler joins
 alone. The other way round, tighten has already cut the pauses round each

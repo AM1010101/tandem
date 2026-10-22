@@ -558,8 +558,11 @@ public enum TranscriptTools {
     public static let fillers = ["um", "uh", "uhm", "erm", "er", "ah", "mm", "hmm"]
 
     /// Which filler `word` is ("Ummm," is "um"), or nil when it's a word.
+    /// Only punctuation round the letters is let go: "10mm" is a size and
+    /// "4Ah" a battery, not "mm" and "ah", and "Hmm?" is a question.
     public static func filler(_ word: String) -> String? {
-        let letters = word.trimmingCharacters(in: CharacterSet.letters.inverted)
+        guard !word.contains("?") else { return nil }
+        let letters = word.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
         guard !letters.isEmpty, letters.allSatisfy(\.isLetter) else { return nil }
         // Each run of one letter once, and how long the runs were: "Ummm"
         // is "um", with the "m" three long.

@@ -29,20 +29,47 @@ enum PauseTightening {
             unlocked.audioTracks[index].clips = []
         }
         let map = TranscriptTools.speechMap(unlocked, transcripts: transcript)
-        let pauses = TranscriptTools.pauses(in: map, minimum: minimum, from: within?.start, to: within?.end)
+        let rules = TranscriptTools.PauseRules.uniform(keep: keep, minimum: minimum)
+        let pauses = SoundTightening.candidates(in: map, rules: rules, from: within?.start, to: within?.end)
         return await SoundTightening.plan(
-            pauses, rules: .uniform(keep: keep, minimum: minimum), snug: false, map: map, project: project, folder: folder
+            pauses, rules: rules, snug: false, from: within?.start, to: within?.end, map: map, project: project, folder: folder
         )
     }
 
+    /// What a plan is made from. The popover keeps the plan for these, so a
+    /// change to any of them (an edit, a slider, the in and out markers
+    /// moving with "Only between in and out" on) makes a new one.
+    struct Settings: Hashable {
+        var revision: Int
+        var minimum: Time
+        var keep: Time
+        var within: TimeRange?
+    }
+
     /// One batch cutting every planned pause, latest first so earlier cuts
-    /// don't move under later ones.
-    static func batch(_ cuts: [PlannedCut]) -> EditBatch? {
+    /// don't move under later ones. It's only applied to the project at
+    /// `revision`, the one it was planned on: an agent's edit landing while
+    /// the popover shows the plan would move the pauses under it.
+    static func batch(_ cuts: [PlannedCut], madeAt revision: Int) -> EditBatch? {
         guard !cuts.isEmpty else { return nil }
         let total = cuts.reduce(0) { $0 + $1.cut.duration.seconds }
+        let pauses = Set(cuts.map(\.pause.start)).count
         return EditBatch(
-            label: String(format: "Tighten %d %@ (%.1f s)", cuts.count, cuts.count == 1 ? "pause" : "pauses", total),
-            commands: TranscriptTools.commands(for: cuts)
+            label: String(format: "Tighten %d %@ (%.1f s)", pauses, pauses == 1 ? "pause" : "pauses", total),
+            commands: TranscriptTools.commands(for: cuts),
+            expectedRevision: revision
         )
+    }
+
+    /// What the popover says under the plan: pauses left alone for sound in
+    /// them, and the plan's warnings, such as a file that couldn't be heard
+    /// so its pauses were cut from the transcript alone.
+    static func notes(for plan: SoundTightening.Plan) -> [String] {
+        var notes: [String] = []
+        let heard = plan.skipped.filter { $0.reason == .sound || $0.reason == .speech }.count
+        if heard > 0 {
+            notes.append(String(format: "Leaves %d %@ with sound in %@: a breath, another voice or an app.", heard, heard == 1 ? "pause" : "pauses", heard == 1 ? "it" : "them"))
+        }
+        return notes + plan.warnings
     }
 }

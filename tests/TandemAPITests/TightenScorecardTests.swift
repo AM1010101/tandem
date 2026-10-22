@@ -131,9 +131,34 @@ final class TightenScorecardTests: XCTestCase {
         lines += after.lines
         let reasons = Dictionary(grouping: new.skipped, by: \.reason).mapValues(\.count)
         lines.append("  new left alone: \(reasons[.sound, default: 0]) with sound in them, \(reasons[.speech, default: 0]) with the voice running through, \(reasons[.short, default: 0]) under 0.5 s measured from the sound, \(reasons[.notClean, default: 0]) whose join wouldn't be clean")
-        // Where the new plan keeps what the old one cut.
-        let beside = new.cuts.filter { !($0.pause.sound?.heard.isEmpty ?? true) }
+        // Where the new plan keeps what the old one cut, a pause at a time
+        // (a pause with sound in it can have a cut either side).
+        let byPause = Dictionary(grouping: new.cuts, by: \.pause.start).values.compactMap(\.first)
+        let beside = byPause.filter { !($0.pause.sound?.heard.isEmpty ?? true) }
         let heardSeconds = beside.flatMap { $0.pause.sound?.heard ?? [] }.reduce(0) { $0 + ($1.end - $1.start).seconds }
+        // What's left in each cut pause past its keep and the sound in it:
+        // the least kept beside the sound, and quiet too short to cut.
+        let quietLeft = Dictionary(grouping: new.cuts, by: \.pause.start).values.reduce(0.0) { total, cuts in
+            guard let pause = cuts.first?.pause, let sound = pause.sound, let keep = cuts.first?.keep else { return total }
+            let heard = sound.heard.reduce(0) { $0 + ($1.end - $1.start).seconds }
+            let cut = cuts.reduce(0) { $0 + $1.cut.duration.seconds }
+            return total + max(0, sound.duration.seconds - cut - heard - keep.seconds)
+        }
+        let underMinimum = byPause.filter { $0.pause.duration < rules.shortest(for: $0.kind ?? .sentence) }
+        lines.append(String(format: "  new cuts %d pauses; %d of them under the minimum in the transcript, %.1f s removed there", byPause.count, underMinimum.count,
+                            new.cuts.filter { cut in underMinimum.contains { $0.pause.start == cut.pause.start } }.reduce(0) { $0 + $1.cut.duration.seconds }))
+        lines.append(String(format: "  quiet left in the cut pauses past the keep and their sound: %.1f s", quietLeft))
+        if all {
+            let worst = Dictionary(grouping: new.cuts, by: \.pause.start).values.map { cuts -> (Double, String) in
+                let pause = cuts[0].pause, sound = pause.sound!
+                let heard = sound.heard.reduce(0) { $0 + ($1.end - $1.start).seconds }
+                let left = sound.duration.seconds - cuts.reduce(0) { $0 + $1.cut.duration.seconds } - heard - cuts[0].keep!.seconds
+                let quiet = sound.quiet.map { "\($0.start)-\($0.end)" }.joined(separator: " ")
+                let heardText = sound.heard.map { "\($0.start)-\($0.end)" }.joined(separator: " ")
+                return (left, String(format: "    left %.2f s: keep %.2f, quiet %@; heard %@; cuts %@", left, cuts[0].keep!.seconds, quiet, heardText, cuts.map { "\($0.cut.start)-\($0.cut.end)" }.joined(separator: " ")))
+            }.sorted { $0.0 > $1.0 }
+            lines += worst.prefix(15).map(\.1)
+        }
         let shortened = new.cuts.reduce(0.0) { total, cut in
             total + max(0, cut.pause.duration.seconds - (cut.pause.sound?.duration.seconds ?? cut.pause.duration.seconds))
         }

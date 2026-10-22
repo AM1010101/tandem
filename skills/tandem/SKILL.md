@@ -151,14 +151,18 @@ transitions, media or markers.
 - **Tighten with `tandem tighten --mike`,** not a script of your own. It
   does the rules below by what each pause follows (0.4 s after a sentence,
   0.12 s after a comma, 0.08 s for a thinking pause mid-sentence, only
-  pauses of 0.5 s or more). Keep his deliberate beats with
+  pauses of 0.5 s or more; a join never keeps under 0.03 s after a word or
+  0.08 s before one, so mid-sentence comes out at 0.11 s). Keep his
+  deliberate beats with
   `--protect <time,...>`, and add `--widen` to open joins a cut left too
   tight back out from the take's own silence (listen to those). Dry run
   first, then `--apply`. It places each cut in the sound of every track
   that plays there, never through sound the transcript doesn't know about
-  (someone off mic, an app, a breath, an "um"), and lists the pauses it
-  left alone for that, with where the sound is: listen to them, and cut a
-  stray "um" with `tandem cut --range` if it should go.
+  (someone off mic, an app, a breath, an "um"), cutting the quiet either
+  side of it, and lists the pauses it left alone for that, with where the
+  sound is: listen to them, and cut a stray "um" with `tandem cut --range`
+  if it should go. Bark writes most "um"s as words, so they split pauses
+  and stay until they're cut.
 - **Cut words with `tandem cut`,** not ranges from `search` times (they're
   30 to 200 ms off the sound, and a cut on them clips the word that
   stays). `tandem cut "<phrase>"` (or `--range <start>-<end>` for a rough

@@ -93,9 +93,10 @@ clips in the range).
   gap as it's heard (from the end of the last word's sound to the start of
   the next's), its real pauses, and any sound in it no word accounts for
   (`heard`, with the tracks it's on): a breath, an "um" the transcript left
-  out, someone off mic. `tighten` cuts beside that sound, never through it.
-  Bark writes most "um"s and "uh"s as words (SpeechAnalyzer leaves them
-  out), so those split the pause and stay until they're cut like any word.
+  out, someone off mic. `tighten` cuts the quiet either side of that sound,
+  never through it. Bark writes most "um"s and "uh"s as words
+  (SpeechAnalyzer leaves them out), so those split the pause and stay until
+  they're cut like any word.
 - `media` shows each file's analysis state. Transcripts, loudness, proxies
   and cutout mattes are made in the background; tools that need a
   transcript say which files don't have one yet. `tandem wait` waits for

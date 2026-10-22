@@ -31,18 +31,68 @@ final class GapSoundTests: XCTestCase {
 
         // A sentence's 0.4 s, half after the last word's sound and half
         // before the next one's.
-        let placed = try sound.place(keep: 0.4, minimum: 0.5, frame: frame).get()
+        let cuts = try sound.place(keep: 0.4, minimum: 0.5, frame: frame).get()
+        XCTAssertEqual(cuts.count, 1)
+        let placed = try XCTUnwrap(cuts.first)
         XCTAssertEqual(placed.from, sound.span.lowerBound + 0.2, accuracy: 0.001)
         XCTAssertEqual(placed.to, sound.span.upperBound - 0.2, accuracy: 0.001)
         let joins = GapSound.judge([layer(take)], from: placed.from, to: placed.to)
         XCTAssertEqual(joins.start.verdict, .clean)
         XCTAssertEqual(joins.end.verdict, .clean)
+    }
 
-        // Mid-sentence 0.08 s: 40 ms each side, which is still more than
-        // the 30 ms the Ian video's fixes left inside a pause.
-        let mid = try sound.place(keep: 0.08, minimum: 0.5, frame: frame).get()
-        XCTAssertEqual(mid.from - sound.span.lowerBound, 0.04, accuracy: 0.001)
-        XCTAssertEqual(sound.span.upperBound - mid.to, 0.04, accuracy: 0.001)
+    func testTheLeastKeptAtAJoinIsWhatTandemCutKeeps() throws {
+        let take = Take(length: 5, words: [(10.5, 11.0), (12.0, 12.5)])
+        let sound = try listen([layer(take)], gap: 11.0...12.0, before: 10.5...11.0, after: 12.0...12.5)
+        // tandem cut keeps at least 30 ms after the word before and 80 ms
+        // before the word after, whose sound can start before its burst
+        // ("processed" on the Ian video). Tighten keeps the same, so Mike's
+        // 0.08 s mid-sentence keep is 0.11 s: 30 ms and 80 ms.
+        let mid = try XCTUnwrap(sound.place(keep: 0.08, minimum: 0.5, frame: frame).get().first)
+        XCTAssertEqual(mid.from - sound.span.lowerBound, CutPlanner.minimumTail, accuracy: 0.001)
+        XCTAssertEqual(sound.span.upperBound - mid.to, CutPlanner.minimumLead, accuracy: 0.001)
+        XCTAssertEqual(mid.latest, sound.span.upperBound - CutPlanner.minimumLead, accuracy: 0.001)
+        XCTAssertEqual(mid.earliest, sound.span.lowerBound + CutPlanner.minimumTail, accuracy: 0.001)
+        // A comma's 0.12 s is still 0.12 s: as even as the minimums let it,
+        // 40 ms after and 80 ms before.
+        let comma = try XCTUnwrap(sound.place(keep: 0.12, minimum: 0.5, frame: frame).get().first)
+        XCTAssertEqual(comma.from - sound.span.lowerBound, 0.04, accuracy: 0.001)
+        XCTAssertEqual(sound.span.upperBound - comma.to, 0.08, accuracy: 0.001)
+    }
+
+    func testEachQuietStretchBesideSoundIsCutAndTheKeepCountsTheSound() throws {
+        // A click of someone off mic in the middle of a 2 s pause. Each side
+        // of it is cut, and what's left from "it." to "So" is the keep: the
+        // click itself, 30 ms either side of it, and the rest shared out
+        // after "it." and before "So" as a plain gap shares it.
+        let take = Take(length: 6, words: [(10.5, 11.0), (13.0, 13.5)], softWords: [(11.8, 11.9, 20)])
+        let sound = try listen([layer(take)], gap: 11.0...13.0, before: 10.5...11.0, after: 13.0...13.5)
+        let click = try XCTUnwrap(sound.heard.first)
+        let cuts = try sound.place(keep: 0.4, minimum: 0.5, frame: frame).get()
+        XCTAssertEqual(cuts.count, 2, "\(cuts)")
+        let (first, second) = (cuts[0], cuts[1])
+        XCTAssertEqual(first.to, click.range.lowerBound - 0.03, accuracy: 0.001)
+        XCTAssertEqual(second.from, click.range.upperBound + 0.03, accuracy: 0.001)
+        let kept = (sound.span.upperBound - sound.span.lowerBound) - cuts.reduce(0) { $0 + ($1.to - $1.from) }
+        XCTAssertEqual(kept, 0.4, accuracy: 0.001)
+        XCTAssertEqual(first.from - sound.span.lowerBound, sound.span.upperBound - second.to, accuracy: 0.001, "shared evenly")
+        for cut in cuts {
+            let joins = GapSound.judge([layer(take)], from: cut.from, to: cut.to)
+            XCTAssertEqual(joins.start.verdict, .clean, "\(cut)")
+            XCTAssertEqual(joins.end.verdict, .clean, "\(cut)")
+        }
+
+        // A second of someone talking off mic is more than the keep: it all
+        // stays, with only the least kept beside it and the words.
+        let chat = Take(length: 8, words: [(10.5, 11.0), (14.0, 14.5)], softWords: [(12.0, 13.0, 20)])
+        let long = try listen([layer(chat)], gap: 11.0...14.0, before: 10.5...11.0, after: 14.0...14.5)
+        let talk = try XCTUnwrap(long.heard.first)
+        let both = try long.place(keep: 0.4, minimum: 0.5, frame: frame).get()
+        XCTAssertEqual(both.count, 2)
+        XCTAssertEqual(both[0].from - long.span.lowerBound, CutPlanner.minimumTail, accuracy: 0.001)
+        XCTAssertEqual(long.span.upperBound - both[1].to, CutPlanner.minimumLead, accuracy: 0.001)
+        let left = (long.span.upperBound - long.span.lowerBound) - both.reduce(0) { $0 + ($1.to - $1.from) }
+        XCTAssertEqual(left, (talk.range.upperBound - talk.range.lowerBound) + 0.03 * 3 + 0.08, accuracy: 0.001)
     }
 
     func testMikesGapsAreMeasuredFromTheSoundNotTheTranscript() throws {
@@ -52,7 +102,7 @@ final class GapSoundTests: XCTestCase {
         let sound = try listen([layer(take)], gap: 10.85...12.1, before: 10.5...10.85, after: 12.1...12.5)
         XCTAssertEqual(sound.span.lowerBound, 11.0, accuracy: 0.011)
         XCTAssertEqual(sound.span.upperBound, 12.0, accuracy: 0.011)
-        let placed = try sound.place(keep: 0.4, minimum: 0.5, frame: frame).get()
+        let placed = try XCTUnwrap(sound.place(keep: 0.4, minimum: 0.5, frame: frame).get().first)
         // What's left between the words' sound is the 0.4 s.
         XCTAssertEqual((placed.from - 11.0) + (12.0 - placed.to), 0.4, accuracy: 0.02)
 
@@ -69,8 +119,8 @@ final class GapSoundTests: XCTestCase {
         let take = Take(length: 5, words: [(10.5, 11.0), (12.0, 12.6)])
         let sound = try listen([layer(take)], gap: 11.0...12.2, before: 10.5...11.0, after: 12.2...12.6)
         XCTAssertEqual(sound.span.upperBound, 12.0, accuracy: 0.011)
-        let placed = try sound.place(keep: 0.4, minimum: 0.5, frame: frame).get()
-        XCTAssertLessThanOrEqual(placed.to, 12.0 - 0.03)
+        let placed = try XCTUnwrap(sound.place(keep: 0.4, minimum: 0.5, frame: frame).get().first)
+        XCTAssertLessThanOrEqual(placed.to, 12.0 - CutPlanner.minimumLead)
         XCTAssertTrue(sound.pauses.contains { $0.contains(placed.from) && $0.contains(placed.to) })
         XCTAssertEqual(GapSound.judge([layer(take)], from: placed.from, to: placed.to).end.verdict, .clean)
     }
@@ -86,11 +136,13 @@ final class GapSoundTests: XCTestCase {
         XCTAssertEqual(heard.range.lowerBound, 11.2, accuracy: 0.02)
         XCTAssertEqual(heard.range.upperBound, 11.5, accuracy: 0.02)
         XCTAssertEqual(heard.layers, ["Voice"])
-        // The cut goes in the longer quiet, after the second voice, and
-        // leaves the sound round it as it was.
-        let placed = try sound.place(keep: 0.4, minimum: 0.5, frame: frame).get()
-        XCTAssertGreaterThanOrEqual(placed.from, heard.range.upperBound + 0.03 - 0.001)
-        XCTAssertLessThanOrEqual(placed.to, 12.6 - 0.03 + 0.011)
+        // The quiet either side of the second voice is cut, and the voice
+        // stays as it was, 30 ms of quiet either side of it.
+        let cuts = try sound.place(keep: 0.4, minimum: 0.5, frame: frame).get()
+        XCTAssertEqual(cuts.count, 2, "\(cuts)")
+        XCTAssertLessThanOrEqual(cuts[0].to, heard.range.lowerBound - 0.03 + 0.001)
+        XCTAssertGreaterThanOrEqual(cuts[1].from, heard.range.upperBound + 0.03 - 0.001)
+        XCTAssertLessThanOrEqual(cuts[1].to, 12.6 - CutPlanner.minimumLead + 0.011)
 
         // With the voice filling a short gap, neither side has room for a
         // frame's cut and 30 ms either side of it: it isn't cut at all.
@@ -111,10 +163,14 @@ final class GapSoundTests: XCTestCase {
         XCTAssertEqual(heard.layers, ["iPad"])
         XCTAssertEqual(heard.range.lowerBound, 11.4, accuracy: 0.02)
         XCTAssertEqual(heard.range.upperBound, 12.0, accuracy: 0.02)
-        // The cut goes in the quiet after the app's line, the longer one.
-        let placed = try sound.place(keep: 0.4, minimum: 0.5, frame: frame).get()
-        XCTAssertGreaterThanOrEqual(placed.from, heard.range.upperBound + 0.03 - 0.001)
-        XCTAssertEqual(GapSound.judge([layer(voice), layer(device, name: "iPad")], from: placed.from, to: placed.to).start.verdict, .clean)
+        // The quiet either side of the app's line is cut, never the line.
+        let cuts = try sound.place(keep: 0.4, minimum: 0.5, frame: frame).get()
+        XCTAssertEqual(cuts.count, 2, "\(cuts)")
+        XCTAssertLessThanOrEqual(cuts[0].to, heard.range.lowerBound - 0.03 + 0.001)
+        XCTAssertGreaterThanOrEqual(cuts[1].from, heard.range.upperBound + 0.03 - 0.001)
+        for cut in cuts {
+            XCTAssertEqual(GapSound.judge([layer(voice), layer(device, name: "iPad")], from: cut.from, to: cut.to).start.verdict, .clean)
+        }
 
         // On the voice alone it's one pause, cut through the app's line.
         let alone = try listen([layer(voice)], gap: 11.0...12.6, before: 10.5...11.0, after: 12.6...13.1)
@@ -132,7 +188,12 @@ final class GapSoundTests: XCTestCase {
         let sound = try listen([layer(take)], gap: 11.0...12.5, before: 10.5...11.0, after: 12.5...13.0)
         let breath = try XCTUnwrap(sound.heard.first, "a breath is sound")
         XCTAssertEqual(breath.range.lowerBound, 12.05, accuracy: 0.03)
-        let placed = try sound.place(keep: 0.4, minimum: 0.5, frame: frame).get()
+        // The 0.15 s between the breath and "So" is left as it is: what
+        // cutting it to its least (30 ms after the breath, 80 ms before the
+        // word) would save is under a real pause, not worth two more joins.
+        let cuts = try sound.place(keep: 0.4, minimum: 0.5, frame: frame).get()
+        XCTAssertEqual(cuts.count, 1, "\(cuts)")
+        let placed = try XCTUnwrap(cuts.first)
         XCTAssertEqual(placed.to, breath.range.lowerBound - 0.03, accuracy: 0.001)
         XCTAssertGreaterThanOrEqual(placed.from, 11.0)
         // The breath and the quiet after it (0.45 s) are already more than

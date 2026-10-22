@@ -55,9 +55,9 @@ public struct SoundLayer: Sendable {
 /// `highOverFloor`).
 ///
 /// Sound in the gap that isn't either word (an island no transcript word
-/// calls home) is `heard`: the cut never goes through it, only in the quiet
-/// beside it. Then the join is judged by `CutPlacer.judge`, exactly as
-/// `tandem check --cuts` will judge it.
+/// calls home) is `heard`: a cut never goes through it, only in the quiet
+/// either side of it. Then each join is judged by `CutPlacer.judge`,
+/// exactly as `tandem check --cuts` will judge it.
 public struct GapSound: Equatable, Sendable {
     /// Sound in the gap the transcript has no word for, in timeline time,
     /// with the tracks it's heard on.
@@ -78,9 +78,10 @@ public struct GapSound: Equatable, Sendable {
     /// its word edges.
     public var runsThrough: Bool
 
-    /// The least of a pause kept beside a cut in it, either side: the Ian
-    /// video's fixes put edges 30 ms inside a real pause (#64, measured),
-    /// so a soft tail or the start of the next sound isn't on the cut.
+    /// The least of a pause kept beside sound in a gap that isn't one of
+    /// its words, either side of it: the Ian video's fixes put edges 30 ms
+    /// inside a real pause (#64, measured), so a soft tail or the start of
+    /// the next sound isn't on the cut.
     public static var edgeGuard: Double { CutAudit.pad }
     /// How far past the transcript's gap the words' sound can be.
     static var slack: Double { CutPlanner.slack }
@@ -239,44 +240,115 @@ public struct GapSound: Equatable, Sendable {
         case fits
     }
 
+    /// One cut in a gap.
     public struct Placement: Equatable, Sendable {
         /// The real pause the cut is in.
         public var pause: ClosedRange<Double>
-        /// The cut, before it's put on frames: the keep split either side.
+        /// The cut, before it's put on frames.
         public var from: Double
         public var to: Double
         /// As far as an edge may go towards the pause's ends when it's put
-        /// on a frame: `edgeGuard` inside.
+        /// on a frame: the least kept at that end (`least(after:)`,
+        /// `least(before:)`).
         public var earliest: Double
         public var latest: Double
-        /// The pause the cut leaves in `pause`.
-        public var inside: Double
     }
 
-    /// Where the cut goes to leave `keep` between the two words' sound,
-    /// when the gap is at least `minimum`: in the longest real pause, with
-    /// the keep split evenly either side of it (`edgeGuard` at least each
-    /// side). Sound in the gap and the other pauses beside it stay as they
-    /// are and count towards the keep: one cut per gap, as tighten always
-    /// made, so there's no more joins than before. It needs room for at
-    /// least a `frame`.
-    public func place(keep: Double, minimum: Double, frame: Double) -> Result<Placement, Refusal> {
+    /// The least of a pause kept after the word before a cut and before the
+    /// word after it, as `tandem cut` keeps (`CutPlanner.minimumTail`,
+    /// `minimumLead`): 30 ms past a word's tail, and 80 ms before a word,
+    /// whose sound can start before its burst ("processed" on the Ian
+    /// video). Beside sound in the gap that isn't a word, `edgeGuard`: its
+    /// island already reaches out through its soft edges (`tailUnder`), and
+    /// the join is judged on it anyway.
+    static func least(after word: Bool) -> Double { word ? CutPlanner.minimumTail : edgeGuard }
+    static func least(before word: Bool) -> Double { word ? CutPlanner.minimumLead : edgeGuard }
+    /// A quiet stretch beside sound in the gap is only cut when that takes
+    /// out at least a real pause (`CutAudit.minPause`): less doesn't change
+    /// how the gap sounds, and each cut is two more joins in the room's
+    /// sound. A gap with nothing in it is cut for a frame, as it always was.
+    public static var shortestBesideSound: Double { CutAudit.minPause }
+
+    /// Where the cuts go to leave `keep` between the two words' sound, when
+    /// the gap is at least `minimum`. Every real pause in it long enough is
+    /// cut, around the sound in the gap that stays (a breath, someone off
+    /// mic, an "um" the transcript missed), so what's left is that sound
+    /// and the keep, not more.
+    ///
+    /// How the keep is shared: the sound in the gap counts towards it, and
+    /// so does the least kept beside each piece of it and the words
+    /// (`least(after:)`, `least(before:)`). Whatever's left of the keep goes
+    /// after the word before and before the word after, as evenly as their
+    /// least allows, as a gap with nothing in it shares it: Mike's pause is
+    /// between his words, and the sound in it keeps its own place beside
+    /// whatever it was close to. Only when those two can't take it (their
+    /// quiet is all kept) does it go beside the sound. A quiet stretch that
+    /// would lose less than a frame (or `shortestBesideSound`) is kept whole
+    /// and counts towards the keep too. Each cut needs room for at least a
+    /// `frame`.
+    public func place(keep: Double, minimum: Double, frame: Double) -> Result<[Placement], Refusal> {
         if runsThrough { return .failure(.speech) }
         func length(_ range: ClosedRange<Double>) -> Double { range.upperBound - range.lowerBound }
         guard length(span) >= minimum - 1e-9 else { return .failure(.short) }
-        guard let pause = pauses.max(by: { length($0) < length($1) }) else { return .failure(.sound) }
-        let others = length(span) - length(pause)
-        let inside = max(0, keep - others)
-        let tail = max(Self.edgeGuard, inside / 2)
-        let lead = max(Self.edgeGuard, inside - inside / 2)
-        guard length(pause) - tail - lead >= frame - 1e-9 else {
-            if !heard.isEmpty { return .failure(.sound) }
-            return .failure(length(span) <= keep + frame ? .fits : .short)
+        guard !pauses.isEmpty else { return .failure(.sound) }
+
+        let shortest = heard.isEmpty ? frame : max(frame, Self.shortestBesideSound)
+        let sound = length(span) - pauses.reduce(0) { $0 + length($1) }
+        // Which ends of each stretch are beside a word, and the least kept there.
+        let afterWord = pauses.map { abs($0.lowerBound - span.lowerBound) < 1e-9 }
+        let beforeWord = pauses.map { abs($0.upperBound - span.upperBound) < 1e-9 }
+        let lowest = pauses.indices.map { Self.least(after: afterWord[$0]) }
+        let highest = pauses.indices.map { Self.least(before: beforeWord[$0]) }
+
+        var whole = pauses.indices.map { length(pauses[$0]) - lowest[$0] - highest[$0] < shortest - 1e-9 }
+        var low = lowest, high = highest
+        while true {
+            low = lowest
+            high = highest
+            let kept = pauses.indices.reduce(sound) { total, index in
+                total + (whole[index] ? length(pauses[index]) : lowest[index] + highest[index])
+            }
+            var spare = keep - kept
+            // Beside the words first, then beside the sound.
+            for words in [true, false] where spare > 1e-12 {
+                var edges: [(index: Int, low: Bool)] = []
+                for index in pauses.indices where !whole[index] {
+                    if afterWord[index] == words { edges.append((index, true)) }
+                    if beforeWord[index] == words { edges.append((index, false)) }
+                }
+                guard !edges.isEmpty else { continue }
+                let least = edges.map { $0.low ? lowest[$0.index] : highest[$0.index] }
+                // The level every edge is brought up to, from its least:
+                // what it takes in all is the spare.
+                func taken(_ level: Double) -> Double { least.reduce(0) { $0 + max(0, level - $1) } }
+                var bottom = least.min()!, top = least.max()! + spare
+                for _ in 0..<60 {
+                    let middle = (bottom + top) / 2
+                    if taken(middle) < spare { bottom = middle } else { top = middle }
+                }
+                for (edge, least) in zip(edges, least) {
+                    let value = max(least, top)
+                    if edge.low { low[edge.index] = value } else { high[edge.index] = value }
+                }
+                spare = 0
+            }
+            // A stretch left too little to cut is kept whole, the one most
+            // short first, and the keep shared again.
+            let over = pauses.indices.filter { !whole[$0] }.map { ($0, length(pauses[$0]) - low[$0] - high[$0] - shortest) }
+            guard let worst = over.min(by: { $0.1 < $1.1 }), worst.1 < -1e-9 else { break }
+            whole[worst.0] = true
         }
-        return .success(Placement(
-            pause: pause, from: pause.lowerBound + tail, to: pause.upperBound - lead,
-            earliest: pause.lowerBound + Self.edgeGuard, latest: pause.upperBound - Self.edgeGuard, inside: tail + lead
-        ))
+
+        let cuts = pauses.indices.filter { !whole[$0] }.map { index in
+            let pause = pauses[index]
+            return Placement(
+                pause: pause, from: pause.lowerBound + low[index], to: pause.upperBound - high[index],
+                earliest: pause.lowerBound + lowest[index], latest: pause.upperBound - highest[index]
+            )
+        }
+        guard cuts.isEmpty else { return .success(cuts) }
+        if length(span) <= keep + frame { return .failure(.fits) }
+        return .failure(heard.isEmpty ? .short : .sound)
     }
 
     // MARK: - Judging the join

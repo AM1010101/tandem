@@ -589,6 +589,38 @@ public struct TightenResult: Codable, Sendable {
     public var missing: [String]
 }
 
+extension TightenResult {
+    /// An app or server from before tighten listened sends no `skipped`, so
+    /// it's empty when it's not there: a newer CLI or MCP client talking to
+    /// it, maybe after it applied the edit, still reads the result.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        revision = try c.decode(Int.self, forKey: .revision)
+        minimum = try c.decode(Time.self, forKey: .minimum)
+        keep = try c.decode(Time.self, forKey: .keep)
+        sentence = try c.decodeIfPresent(Time.self, forKey: .sentence)
+        comma = try c.decodeIfPresent(Time.self, forKey: .comma)
+        mid = try c.decodeIfPresent(Time.self, forKey: .mid)
+        midMinimum = try c.decodeIfPresent(Time.self, forKey: .midMinimum)
+        cuts = try c.decode([PlannedCut].self, forKey: .cuts)
+        widened = try c.decode([PlannedWiden].self, forKey: .widened)
+        protected = try c.decode([Pause].self, forKey: .protected)
+        skipped = try c.decodeIfPresent([SkippedPause].self, forKey: .skipped) ?? []
+        removed = try c.decode(Time.self, forKey: .removed)
+        added = try c.decode(Time.self, forKey: .added)
+        durationBefore = try c.decode(Time.self, forKey: .durationBefore)
+        durationAfter = try c.decode(Time.self, forKey: .durationAfter)
+        commands = try c.decode([EditCommand].self, forKey: .commands)
+        applied = try c.decodeIfPresent(ApplyResult.self, forKey: .applied)
+        warnings = try c.decode([String].self, forKey: .warnings)
+        missing = try c.decode([String].self, forKey: .missing)
+    }
+
+    /// How many pauses the cuts are in: a pause with sound in it can have a
+    /// cut either side of the sound.
+    public var pausesCut: Int { Set(cuts.map(\.pause.start)).count }
+}
+
 // MARK: - apply, undo, redo, history, validate
 
 public struct ApplyRequest: ServiceCall {

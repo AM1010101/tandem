@@ -10,18 +10,23 @@ import TandemMedia
 /// read as silence and got cut through (#11), and a word whose time was
 /// 0.2 s off had its start cut off (#64). So each gap the transcript finds
 /// is listened to on every track of the take that plays there
-/// (`GapSound`): the cut goes in a real pause, keeps Mike's gap measured
-/// from the end of the last word's sound to the start of the next, and
-/// never goes through sound. Then both sides of each join are judged as
-/// `tandem check --cuts` would, and a join that isn't clean isn't cut.
+/// (`GapSound`): every cut goes in a real pause, the gap keeps Mike's keep
+/// measured from the end of the last word's sound to the start of the
+/// next, and no cut goes through sound. Then both sides of each join are
+/// judged as `tandem check --cuts` would, and a join that isn't clean isn't
+/// cut.
 ///
 /// The CLI, MCP and the app's Tighten pauses all plan with this, so they
-/// agree. Where a file's sound can't be read, its pauses are planned from
-/// the transcript as before, with a warning.
+/// agree. Where any track playing a pause has a file whose sound can't be
+/// read, that pause is planned from the transcript as before, with a
+/// warning.
 public enum SoundTightening {
     public struct Plan: Sendable {
         public var cuts: [PlannedCut] = []
         public var skipped: [SkippedPause] = []
+        /// Pauses left alone for a protect time in them, as the transcript
+        /// has them or as they're heard.
+        public var protected: [Pause] = []
         public var warnings: [String] = []
     }
 
@@ -124,22 +129,34 @@ public enum SoundTightening {
                 continue
             }
             var heard: [SoundLayer] = []
-            // The same file at the same point on two tracks is one sound.
+            // The same file at the same point over the same stretch of the
+            // timeline on two tracks is one sound. Every piece a track plays
+            // counts, so two pieces of one file either side of a through
+            // edit are both heard.
             var seen = Set<String>()
+            // A track playing here whose file couldn't be read: nobody knows
+            // what's on it, so the others can't call the pause quiet.
+            var unheard = false
             for track in tracks {
                 var pieces: [SoundLayer.Piece] = []
+                var keys: [String] = []
                 for clip in track.clips where clip.start.seconds < window.upperBound && clip.end.seconds > window.lowerBound {
-                    guard let item = plays(clip, in: project), let placers = readings[item.id] else { continue }
+                    guard let item = plays(clip, in: project) else { continue }
                     let start = clip.sourceStart.seconds, from = max(window.lowerBound, clip.start.seconds)
                     let media = start + (from - clip.start.seconds) * clip.speed
-                    guard let placer = placers.first(where: { $0.energy.start <= media && media <= $0.energy.end }) else { continue }
-                    let key = "\(item.id)@\(((start - clip.start.seconds * clip.speed) * 1000).rounded())x\(clip.speed)"
+                    guard let placer = readings[item.id]?.first(where: { $0.energy.start <= media && media <= $0.energy.end }) else {
+                        unheard = true
+                        break
+                    }
+                    let key = "\(item.id)@\(((start - clip.start.seconds * clip.speed) * 1000).rounded())x\(clip.speed)@\(clip.start.flicks)-\(clip.end.flicks)"
+                    keys.append(key)
                     guard !seen.contains(key) else { continue }
-                    seen.insert(key)
                     pieces.append(SoundLayer.Piece(timeline: clip.start.seconds..<clip.end.seconds, mediaStart: start, speed: clip.speed, placer: placer))
                 }
+                seen.formUnion(keys)
                 if !pieces.isEmpty { heard.append(SoundLayer(name: track.name, pieces: pieces)) }
             }
+            if unheard { heard = [] }
             layers.append(heard)
             sounds.append(heard.isEmpty ? nil : GapSound.listen(gap: pause.start.seconds...pause.end.seconds, before: words.before, after: words.after, layers: heard))
         }
@@ -170,21 +187,44 @@ public enum SoundTightening {
         unread.map { "Couldn't read the sound of \(URL(fileURLWithPath: $0).lastPathComponent), \(fallback)." }
     }
 
-    /// Plans the cuts for `pauses` (already found from the transcript and
-    /// filtered for `protect`), one per pause at most: each in the longest
-    /// real pause in its sound, leaving the keep for what it follows
-    /// between the two words' sound, on whole frames (`snug` as
-    /// `TranscriptTools.plan` has it), with both sides of its join clean.
+    /// The shortest gap in the transcript worth listening to for a rule's
+    /// `minimum`: the minimum is measured on the sound, and the
+    /// transcript's word edges can be `CutPlanner.slack` off it, so a 0.4 s
+    /// gap in the transcript can be 0.7 s of quiet. Never under a real
+    /// pause (`CutAudit.minPause`).
+    static func shortestToListen(for minimum: Time) -> Time {
+        Time(seconds: max(minimum.seconds - CutPlanner.slack, CutAudit.minPause))
+    }
+
+    /// The transcript's gaps that could be pauses the rules change, once
+    /// measured from the sound, between `from` and `to`.
+    public static func candidates(in map: TranscriptTools.SpeechMap, rules: TranscriptTools.PauseRules, from: Time? = nil, to: Time? = nil) -> [Pause] {
+        TranscriptTools.pauses(in: map, minimum: shortestToListen(for: min(rules.minimum, rules.midMinimum)), from: from, to: to)
+    }
+
+    /// Plans the cuts for `pauses` (from `candidates`): in every real pause
+    /// in each one's sound long enough to cut (`GapSound.place`), leaving
+    /// the keep for what it follows between the two words' sound, on whole
+    /// frames (`snug` as `TranscriptTools.plan` has it), with both sides of
+    /// every join clean. A pause with any of `protect` in it, in the
+    /// transcript's gap or the sound's, is left alone, and every cut stays
+    /// between `from` and `to`.
     public static func plan(
         _ pauses: [Pause], rules: TranscriptTools.PauseRules, snug: Bool,
+        protect: [Time] = [], from: Time? = nil, to: Time? = nil,
         map: TranscriptTools.SpeechMap, project: Project, folder: ProjectFolder
     ) async -> Plan {
         let rate = project.settings.frameRate
         let frame = rate.frameDuration
-        // Only pauses the rules change are listened to.
+        // Pauses a protect time is in, as the transcript has them, as tighten
+        // always listed them.
+        let listed = min(rules.minimum, rules.midMinimum)
+        var protected = pauses.filter { TranscriptTools.isProtected($0, by: protect) && $0.duration >= listed }
+        // Only pauses the rules could change are listened to.
         let changing = pauses.filter { pause in
             let kind = TranscriptTools.pauseKind(after: pause.before)
-            return rules.keep(for: kind) != nil && pause.duration >= rules.shortest(for: kind)
+            return rules.keep(for: kind) != nil && pause.duration >= shortestToListen(for: rules.shortest(for: kind))
+                && !TranscriptTools.isProtected(pause, by: protect)
         }
         let heard = await listen(changing, map: map, project: project, folder: folder)
         var plan = Plan()
@@ -196,8 +236,10 @@ public enum SoundTightening {
         for (index, original) in changing.enumerated() {
             let kind = TranscriptTools.pauseKind(after: original.before)
             guard let keep = rules.keep(for: kind) else { continue }
+            let shortest = rules.shortest(for: kind)
             guard let sound = heard.sounds[index] else {
-                // No sound to go by: the transcript's gap, as tighten always cut it.
+                // No sound to go by: the transcript's gap, as tighten always
+                // cut it (and only at the minimum measured there).
                 let fallback = TranscriptTools.plan([original], rules: rules, frameRate: rate, snug: snug)
                 guessed = guessed || !fallback.isEmpty
                 plan.cuts += fallback
@@ -205,44 +247,56 @@ public enum SoundTightening {
             }
             var pause = original
             pause.sound = report(sound)
-            func skip(_ reason: SkippedPause.Reason, start: CutJoinSide? = nil, end: CutJoinSide? = nil) {
-                plan.skipped.append(SkippedPause(pause: pause, reason: reason, kind: kind, keep: keep, startEdge: start, endEdge: end))
+            // Whether the pause is one the rules change by either measure,
+            // so it's worth saying why it was left alone.
+            let counts = original.duration >= shortest || sound.span.upperBound - sound.span.lowerBound >= shortest.seconds - 1e-9
+            // The pause as it's heard can reach past the transcript's gap,
+            // and a time protected there is protected too.
+            if protect.contains(where: { sound.span.contains($0.seconds) }) {
+                if counts { protected.append(original) }
+                continue
             }
-            let placement: GapSound.Placement
-            switch sound.place(keep: keep.seconds, minimum: rules.shortest(for: kind).seconds, frame: frame.seconds) {
-            case .success(let placed): placement = placed
+            func skip(_ reason: SkippedPause.Reason, start: CutJoinSide? = nil, end: CutJoinSide? = nil) {
+                if counts { plan.skipped.append(SkippedPause(pause: pause, reason: reason, kind: kind, keep: keep, startEdge: start, endEdge: end)) }
+            }
+            let placements: [GapSound.Placement]
+            switch sound.place(keep: keep.seconds, minimum: shortest.seconds, frame: frame.seconds) {
+            case .success(let placed): placements = placed
             case .failure(.fits): continue
             case .failure(.speech): skip(.speech); continue
             case .failure(.sound): skip(.sound); continue
             case .failure(.short): skip(.short); continue
             }
 
-            // On frames, inside the pause and `GapSound.edgeGuard` from its
-            // ends, never leaving less than the keep.
-            let lowest = TimeText.ceilToFrame(Time(seconds: placement.earliest), rate)
-            let highest = TimeText.floorToFrame(Time(seconds: placement.latest), rate)
-            var cut: TimeRange?
-            if snug {
-                var frames = Int64(((placement.to - placement.from) / frame.seconds + 1e-9).rounded(.down))
-                while frames > 0, cut == nil {
-                    let length = Time.frames(frames, at: rate)
-                    let start = max(lowest, min(Time(seconds: placement.from).roundedToFrame(rate), highest - length))
-                    if start >= lowest, start + length <= highest { cut = TimeRange(start: start, duration: length) }
-                    frames -= 1
+            var cuts: [PlannedCut] = []
+            var unclean: (start: CutJoinSide?, end: CutJoinSide?)?
+            // Beside sound a cut takes out a real pause at least, or isn't worth its joins.
+            let shortestCut = sound.heard.isEmpty ? frame : max(frame, Time(seconds: GapSound.shortestBesideSound))
+            for placement in placements {
+                guard var cut = frames(placement, snug: snug, from: from, to: to, rate: rate) else { continue }
+                var joins = GapSound.judge(heard.layers[index], from: cut.start.seconds, to: cut.end.seconds)
+                // A side that isn't clean moves a frame at a time further into
+                // the quiet, away from the sound it clips, as long as the cut
+                // still takes something out: keeping more of the pause than
+                // the keep, never less.
+                while joins.start.verdict != .clean || joins.end.verdict != .clean {
+                    var moved = cut
+                    if joins.start.verdict != .clean { moved = TimeRange(start: moved.start + frame, end: moved.end) }
+                    if joins.end.verdict != .clean { moved = TimeRange(start: moved.start, end: moved.end - frame) }
+                    guard moved.duration >= shortestCut else { break }
+                    cut = moved
+                    joins = GapSound.judge(heard.layers[index], from: cut.start.seconds, to: cut.end.seconds)
                 }
-            } else {
-                let start = TimeText.ceilToFrame(Time(seconds: placement.from), rate)
-                let end = TimeText.floorToFrame(Time(seconds: placement.to), rate)
-                if end - start >= frame { cut = TimeRange(start: start, end: end) }
+                guard joins.start.verdict == .clean, joins.end.verdict == .clean else {
+                    unclean = unclean ?? (side(joins.start), side(joins.end))
+                    continue
+                }
+                cuts.append(PlannedCut(pause: pause, cut: cut, kind: kind, keep: keep, startEdge: side(joins.start), endEdge: side(joins.end)))
             }
-            guard let cut else { continue }
-
-            let joins = GapSound.judge(heard.layers[index], from: cut.start.seconds, to: cut.end.seconds)
-            guard joins.start.verdict == .clean, joins.end.verdict == .clean else {
-                skip(.notClean, start: side(joins.start), end: side(joins.end))
-                continue
-            }
-            plan.cuts.append(PlannedCut(pause: pause, cut: cut, kind: kind, keep: keep, startEdge: side(joins.start), endEdge: side(joins.end)))
+            // A cut whose join wouldn't be clean is left out, and the others
+            // in the pause still go: that keeps more than the keep, never less.
+            if cuts.isEmpty, let unclean { skip(.notClean, start: unclean.start, end: unclean.end) }
+            plan.cuts += cuts
         }
         if guessed {
             plan.warnings += unreadWarnings(heard.unread, fallback: "so pauses there were cut from the transcript's gaps alone. Listen to them")
@@ -253,6 +307,40 @@ public enum SoundTightening {
             plan.warnings += unreadWarnings(heard.unread, fallback: "so it wasn't listened to")
         }
         plan.cuts.sort { $0.cut.start < $1.cut.start }
+        plan.protected = protected.sorted { $0.start < $1.start }
         return plan
+    }
+
+    /// A cut on whole frames, inside its pause and the least kept at each
+    /// end of it (`placement.earliest`, `latest`), and inside `from` and
+    /// `to`, never leaving less than the keep. Nil when less than a frame
+    /// of it is left.
+    static func frames(_ placement: GapSound.Placement, snug: Bool, from: Time?, to: Time?, rate: FrameRate) -> TimeRange? {
+        let frame = rate.frameDuration
+        var lowest = TimeText.ceilToFrame(Time(seconds: placement.earliest), rate)
+        var highest = TimeText.floorToFrame(Time(seconds: placement.latest), rate)
+        var start = placement.from, end = placement.to
+        if let from {
+            lowest = max(lowest, TimeText.ceilToFrame(from, rate))
+            start = max(start, from.seconds)
+        }
+        if let to {
+            highest = min(highest, TimeText.floorToFrame(to, rate))
+            end = min(end, to.seconds)
+        }
+        guard end > start else { return nil }
+        if snug {
+            var count = Int64(((end - start) / frame.seconds + 1e-9).rounded(.down))
+            while count > 0 {
+                let length = Time.frames(count, at: rate)
+                let at = max(lowest, min(Time(seconds: start).roundedToFrame(rate), highest - length))
+                if at >= lowest, at + length <= highest { return TimeRange(start: at, duration: length) }
+                count -= 1
+            }
+            return nil
+        }
+        let first = max(lowest, TimeText.ceilToFrame(Time(seconds: start), rate))
+        let last = min(highest, TimeText.floorToFrame(Time(seconds: end), rate))
+        return last - first >= frame ? TimeRange(start: first, end: last) : nil
     }
 }

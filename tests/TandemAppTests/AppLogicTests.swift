@@ -352,7 +352,7 @@ final class PauseTighteningTests: XCTestCase {
         )
         XCTAssertEqual(made.cuts.map(\.cut), [TimeRange(start: t(2.1), end: t(3.4)), TimeRange(start: t(4.1), end: t(10.1))])
         XCTAssertTrue(made.warnings.contains { $0.contains("take1-camera.mov") }, "\(made.warnings)")
-        let batch = try XCTUnwrap(PauseTightening.batch(made.cuts))
+        let batch = try XCTUnwrap(PauseTightening.batch(made.cuts, madeAt: f.coordinator.revision))
         XCTAssertEqual(batch.commands.first, .rippleDeleteRange(range: TimeRange(start: t(4.1), end: t(10.1))), "latest first")
         try f.apply(batch)
         XCTAssertEqual(f.clips("Camera").map(\.range).last?.end, t(60) - t(1.3) - t(6))
@@ -366,6 +366,40 @@ final class PauseTighteningTests: XCTestCase {
         try f.apply(EditBatch(label: "Cut", commands: [.rippleDeleteRange(range: TimeRange(start: t(2.5), end: t(3)))]))
         let ranges = await plan(f, minimum: 0.9, keep: 0.2)
         XCTAssertEqual(ranges.first, TimeRange(start: t(2.1), end: t(2.9)))
+    }
+
+    func testAPlanMadeBeforeAnotherEditIsntApplied() async throws {
+        let f = try AppFixture()
+        let revision = f.coordinator.revision
+        let made = await PauseTightening.plan(
+            in: f.project, transcript: { $0.id == "med_camera" ? self.transcript() : nil }, folder: folder, minimum: t(1), keep: t(0.2)
+        )
+        // An agent's edit lands while the popover shows the plan.
+        try f.apply(EditBatch(label: "Cut", commands: [.rippleDeleteRange(range: TimeRange(start: t(0.2), end: t(0.5)))]))
+        let batch = try XCTUnwrap(PauseTightening.batch(made.cuts, madeAt: revision))
+        XCTAssertEqual(batch.expectedRevision, revision)
+        XCTAssertThrowsError(try f.coordinator.apply(batch)) { error in
+            guard case EditError.staleRevision = error else { return XCTFail("\(error)") }
+        }
+    }
+
+    func testMovingInOrOutMakesANewPlan() {
+        let settings = PauseTightening.Settings(revision: 3, minimum: t(0.6), keep: t(0.15), within: TimeRange(start: t(0), end: t(5)))
+        var moved = settings
+        moved.within = TimeRange(start: t(0), end: t(6))
+        XCTAssertNotEqual(settings, moved)
+        var cleared = settings
+        cleared.within = nil
+        XCTAssertNotEqual(settings, cleared)
+    }
+
+    func testAPlanFromTheTranscriptAloneSaysSo() async {
+        let f = try! AppFixture()
+        let made = await PauseTightening.plan(
+            in: f.project, transcript: { $0.id == "med_camera" ? self.transcript() : nil }, folder: folder, minimum: t(1), keep: t(0.2)
+        )
+        let notes = PauseTightening.notes(for: made)
+        XCTAssertTrue(notes.contains { $0.contains("Couldn't read the sound of take1-camera.mov") }, "\(notes)")
     }
 
     func testRespectsTheInOutRange() async throws {

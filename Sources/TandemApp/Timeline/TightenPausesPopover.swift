@@ -13,15 +13,22 @@ struct TightenPausesPopover: View {
     @State private var onlyInOut = false
     /// The plan for the settings it was made with: reading the take's sound
     /// takes a moment, so it's made off the slider's drag.
-    @State private var plan: (key: String, plan: SoundTightening.Plan)?
+    @State private var plan: (settings: PauseTightening.Settings, plan: SoundTightening.Plan)?
 
-    private var key: String { "\(model.revision)/\(minimum)/\(keep)/\(onlyInOut)" }
+    private var settings: PauseTightening.Settings {
+        PauseTightening.Settings(
+            revision: model.revision, minimum: Time(seconds: minimum), keep: Time(seconds: keep),
+            within: onlyInOut ? model.inOutRange : nil
+        )
+    }
 
     var body: some View {
-        let current = plan.flatMap { $0.key == key ? $0.plan : nil }
+        let settings = settings
+        let current = plan.flatMap { $0.settings == settings ? $0.plan : nil }
         let cuts = current?.cuts ?? []
         let total = cuts.reduce(0) { $0 + $1.cut.duration.seconds }
-        let heard = current?.skipped.filter { $0.reason == .sound || $0.reason == .speech }.count ?? 0
+        let pauses = Set(cuts.map(\.pause.start)).count
+        let notes = current.map(PauseTightening.notes) ?? []
         VStack(alignment: .leading, spacing: 12) {
             Text("Tighten pauses")
                 .font(.ui(13, .bold))
@@ -40,8 +47,10 @@ struct TightenPausesPopover: View {
                 }
             }
             Rectangle().fill(Theme.border.color).frame(height: 1)
-            if heard > 0 {
-                Text(String(format: "Leaves %d %@ with sound in %@: a breath, another voice or an app.", heard, heard == 1 ? "pause" : "pauses", heard == 1 ? "it" : "them"))
+            // Pauses left for sound in them, and anything planned from the
+            // transcript alone because its sound couldn't be heard.
+            ForEach(notes, id: \.self) { note in
+                Text(note)
                     .font(.ui(11.5))
                     .foregroundStyle(Theme.textMuted.color)
                     .fixedSize(horizontal: false, vertical: true)
@@ -56,13 +65,16 @@ struct TightenPausesPopover: View {
                         .font(.ui(12))
                         .foregroundStyle(Theme.textFaint.color)
                 } else {
-                    Text(String(format: "%d %@, %.1f s in all", cuts.count, cuts.count == 1 ? "pause" : "pauses", total))
+                    Text(String(format: "%d %@, %.1f s in all", pauses, pauses == 1 ? "pause" : "pauses", total))
                         .font(.ui(12, .semibold))
                         .foregroundStyle(Theme.text.color)
                 }
                 Spacer()
                 Button {
-                    model.apply(PauseTightening.batch(cuts))
+                    // Planned at its revision: an edit that's landed since
+                    // (from the CLI, say) refuses it rather than cutting the
+                    // old times out of the newer project.
+                    model.apply(PauseTightening.batch(cuts, madeAt: settings.revision))
                     dismiss()
                 } label: {
                     Text("Tighten")
@@ -79,25 +91,26 @@ struct TightenPausesPopover: View {
         .padding(16)
         .frame(width: 330)
         .background(Theme.raised.color)
-        .task(id: key) { await replan() }
+        .task(id: settings) { await replan(settings) }
     }
 
     /// Plans for the current settings once the sliders settle.
-    private func replan() async {
-        let key = key
+    private func replan(_ settings: PauseTightening.Settings) async {
         try? await Task.sleep(for: .milliseconds(250))
         guard !Task.isCancelled else { return }
         let analysis = model.session.analysis
+        // The project at the revision the settings were read at.
+        guard model.revision == settings.revision else { return }
         let made = await PauseTightening.plan(
             in: model.project,
             transcript: { analysis.transcript(for: $0) },
             folder: model.session.folder,
-            minimum: Time(seconds: minimum),
-            keep: Time(seconds: keep),
-            within: onlyInOut ? model.inOutRange : nil
+            minimum: settings.minimum,
+            keep: settings.keep,
+            within: settings.within
         )
         guard !Task.isCancelled else { return }
-        plan = (key, made)
+        plan = (settings, made)
     }
 
     private var hasTranscript: Bool {

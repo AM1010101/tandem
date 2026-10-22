@@ -397,15 +397,17 @@ public final class TandemService: @unchecked Sendable {
         try checkExpected(request.expectedRevision, at: revision)
         let map = TranscriptTools.speechMap(project, analysis: analysis)
         let protect = request.protect ?? []
-        let found = TranscriptTools.pauses(in: map, minimum: min(rules.minimum, rules.midMinimum), from: request.from, to: request.to)
-        let protected = found.filter { TranscriptTools.isProtected($0, by: protect) }
         // Each cut placed in the sound under its pause, on every track the
-        // take plays there (`SoundTightening`).
+        // take plays there (`SoundTightening`). The minimum, the range and
+        // the protect times all apply to the pause as it's heard, which can
+        // reach past the transcript's gap.
+        let found = SoundTightening.candidates(in: map, rules: rules, from: request.from, to: request.to)
         let planned = await SoundTightening.plan(
-            found.filter { !TranscriptTools.isProtected($0, by: protect) }, rules: rules, snug: request.bySentence,
+            found, rules: rules, snug: request.bySentence, protect: protect, from: request.from, to: request.to,
             map: map, project: project, folder: folder
         )
         let cuts = planned.cuts
+        let protected = planned.protected
         let widened = request.widen == true
             ? TranscriptTools.widening(in: map, project: project, rules: rules, protect: protect, from: request.from, to: request.to) { analysis.transcript(for: $0) }
             : []
@@ -484,7 +486,7 @@ public final class TandemService: @unchecked Sendable {
     }
 
     func tightenLabel(_ result: TightenResult) -> String {
-        let cuts = result.cuts.count, widened = result.widened.count
+        let cuts = result.pausesCut, widened = result.widened.count
         func plural(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
         guard result.sentence != nil || result.comma != nil || result.mid != nil else {
             return "Tighten \(plural(cuts, "pause")) to \(TimeText.duration(result.keep))"

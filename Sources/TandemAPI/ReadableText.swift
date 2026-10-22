@@ -236,13 +236,22 @@ extension TightenResult: ReadableResult {
                 let midMinimum = midMinimum.map { ", comma and mid-sentence ones of \(TimeText.duration($0)) or more" } ?? ""
                 lines.append("Keep \(keepsText) (sentence pauses of \(TimeText.duration(minimum)) or more\(midMinimum); \(mode), revision \(revision)):")
             } else {
-                lines.append("Shorten \(cuts.count) pause\(cuts.count == 1 ? "" : "s") of \(TimeText.duration(minimum)) or more to \(TimeText.duration(keep)) (\(mode), revision \(revision)):")
+                lines.append("Shorten \(pausesCut) pause\(pausesCut == 1 ? "" : "s") of \(TimeText.duration(minimum)) or more to \(TimeText.duration(keep)) (\(mode), revision \(revision)):")
             }
-            for cut in cuts {
+            // One line a pause: one with sound in it can be cut either side.
+            var index = 0
+            while index < cuts.count {
+                let cut = cuts[index]
+                var ranges = ["\(cut.cut.start)-\(cut.cut.end)"]
+                while index + 1 < cuts.count, cuts[index + 1].pause.start == cut.pause.start {
+                    index += 1
+                    ranges.append("\(cuts[index].cut.start)-\(cuts[index].cut.end)")
+                }
+                index += 1
                 let kind = bySentence ? (cut.kind.map { " \($0.rawValue)" } ?? "") : ""
                 // Sound left in beside the cut is worth a listen.
                 let beside = cut.pause.sound.flatMap { $0.heard.isEmpty ? nil : ", beside \($0.heardText)" } ?? ""
-                lines.append("  \(cut.pause.start)-\(cut.pause.end)  \(TimeText.duration(cut.pause.duration))\(kind) -> cut \(cut.cut.start)-\(cut.cut.end)  ...\(cut.pause.before) | \(cut.pause.after)...\(beside)")
+                lines.append("  \(cut.pause.start)-\(cut.pause.end)  \(TimeText.duration(cut.pause.duration))\(kind) -> cut \(ranges.joined(separator: ", "))  ...\(cut.pause.before) | \(cut.pause.after)...\(beside)")
             }
             if !widened.isEmpty {
                 lines.append("Widen \(widened.count) join\(widened.count == 1 ? "" : "s") to their keep, from silence in the take:")

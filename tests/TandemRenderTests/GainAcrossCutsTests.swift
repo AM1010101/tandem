@@ -65,7 +65,7 @@ final class GainAcrossCutsTests: XCTestCase {
         let total = Int(seconds * Double(Self.rate))
         var i = 0
         while i < total {
-            while !input.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 1_000_000) }
+            try await writer.ready(input)
             let count = min(4_800, total - i)
             var samples = [Float](repeating: 0, count: count * 2)
             for j in 0..<count {
@@ -76,7 +76,7 @@ final class GainAcrossCutsTests: XCTestCase {
             i += count
         }
         input.markAsFinished()
-        await writer.finishWriting()
+        try await writer.finishWriting(within: 60)
         XCTAssertEqual(writer.status, .completed, "\(writer.error as Any)")
         return url
     }

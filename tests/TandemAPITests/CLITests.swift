@@ -335,7 +335,9 @@ final class CLITests: XCTestCase {
         XCTAssertTrue(applied.stdout.contains("by codex as revision 2"), applied.stdout)
 
         serve.interrupt()
-        XCTAssertTrue(exited.wait(timeout: 20), "serve should stop on Ctrl-C")
+        // Its output only ends once it has, and asking a running process
+        // for its status raises.
+        guard exited.wait(timeout: 20) else { return XCTFail("serve should stop on Ctrl-C") }
         XCTAssertEqual(serve.terminationStatus, 0)
         let printed = String(decoding: serveOutput.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         XCTAssertTrue(printed.contains("Serving \"Decision Models\""), printed)
@@ -363,7 +365,7 @@ final class CLITests: XCTestCase {
         // What the app does: ask serve to let go, then open.
         let session = try await ProjectSession.open(url, owner: .app, waitingUpTo: 10)
         let stopped = await exited.value(timeout: 20)
-        XCTAssertTrue(stopped, "serve should quit once it has let go")
+        guard stopped else { session.close(); return XCTFail("serve should quit once it has let go") }
         XCTAssertEqual(serve.terminationStatus, 0)
         XCTAssertEqual(ProjectSession.readLock(for: url)?.owner, .app)
         session.close()
@@ -404,7 +406,7 @@ final class CLITests: XCTestCase {
 
         try input.fileHandleForWriting.close()
         let stopped = await exited.value(timeout: 20)
-        XCTAssertTrue(stopped, "exits when stdin closes")
+        guard stopped else { return XCTFail("exits when stdin closes") }
         XCTAssertEqual(mcp.terminationStatus, 0)
     }
 
@@ -491,12 +493,20 @@ final class ExitSignal: @unchecked Sendable {
     private let lock = NSLock()
     private var exited = false
 
-    /// Call before `run()`.
-    init(_ process: Process) {
+    /// Call before `run()`. A process still running after `limit` seconds
+    /// is terminated, so a test reading its output fails rather than hangs.
+    init(_ process: Process, limit: TimeInterval = 120) {
+        let watchdog = DispatchWorkItem { [weak process] in
+            guard let process, process.isRunning else { return }
+            XCTFail("\(process.executableURL?.lastPathComponent ?? "a process") \(process.arguments ?? []) was still running after \(Int(limit)) s")
+            process.terminate()
+        }
         process.terminationHandler = { [self] _ in
+            watchdog.cancel()
             lock.withLock { exited = true }
             semaphore.signal()
         }
+        DispatchQueue.global().asyncAfter(deadline: .now() + limit, execute: watchdog)
     }
 
     /// Blocks until the process exits, or `timeout` passes. True if it exited.

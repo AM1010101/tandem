@@ -393,14 +393,15 @@ final class ProjectClientTests: XCTestCase {
             Thread.sleep(forTimeInterval: 0.3)
         }
         let edit = Task { try await served.client().call(ApplyRequest(commands: [.blade(at: t(10))])) }
-        let stopped = await withCheckedContinuation { continuation in
+        let waited = await withCheckedContinuation { (continuation: CheckedContinuation<TimeInterval?, Never>) in
             DispatchQueue.global().async {
-                arrived.wait()
+                guard arrived.wait(timeout: .now() + 10) == .success else { return continuation.resume(returning: nil) }
                 let start = Date()
                 served.server.stop(finishing: 2)
                 continuation.resume(returning: Date().timeIntervalSince(start))
             }
         }
+        let stopped = try XCTUnwrap(waited, "the edit never reached the service")
         let applied = try await edit.value
         XCTAssertEqual(applied.revision, 2)
         XCTAssertLessThan(stopped, 1.5, "stopped once the call answered, not at the deadline")

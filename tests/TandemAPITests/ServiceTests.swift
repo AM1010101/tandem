@@ -402,11 +402,23 @@ final class ServiceTests: XCTestCase {
         XCTAssertEqual(outcome.preset, "Review 720p")
         XCTAssertEqual(outcome.duration, t(10))
         XCTAssertTrue(outcome.path.hasSuffix("exports/Decision Models r1.mp4"), outcome.path)
-        var seen: [ExportJob] = []
-        for await event in events {
-            if let job = event.export { seen.append(job) }
-            if event.export?.state == .done { break }
+        // Cancelled, the stream ends, so a missing done event fails below
+        // rather than waiting forever.
+        let watching = Task {
+            var seen: [ExportJob] = []
+            for await event in events {
+                if let job = event.export { seen.append(job) }
+                if event.export?.state == .done { break }
+            }
+            return seen
         }
+        let watchdog = Task {
+            try await Task.sleep(nanoseconds: 10_000_000_000)
+            watching.cancel()
+        }
+        let seen = await watching.value
+        watchdog.cancel()
+        XCTAssertEqual(seen.last?.state, .done, "no done event within 10 s")
         XCTAssertEqual(seen.first?.state, .running)
         XCTAssertEqual(seen.last?.progress, 1)
         XCTAssertTrue(h.service.status().exports.isEmpty)

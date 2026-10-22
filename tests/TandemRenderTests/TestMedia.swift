@@ -83,7 +83,7 @@ final class TestMedia {
         let io = Unchecked((writer: writer, video: video, adaptor: adaptor, audio: audio))
         // Each input pulls on its own queue: the writer interleaves, and
         // pushing one input far ahead of the other stalls it.
-        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+        let written = await withCheckedContinuation { (done: CheckedContinuation<Bool, Never>) in
             let group = DispatchGroup()
             group.enter()
             io.value.video.requestMediaDataWhenReady(on: DispatchQueue(label: "test.video")) {
@@ -152,10 +152,11 @@ final class TestMedia {
                     }
                 }
             }
-            group.notify(queue: .global()) { done.resume() }
+            DispatchQueue.global().async { done.resume(returning: group.wait(timeout: .now() + 60) == .success) }
         }
+        guard written else { throw MediaError.failed("writing \(name) stalled") }
         writer.endSession(atSourceTime: CMTime(value: CMTimeValue(frames), timescale: fps))
-        await writer.finishWriting()
+        try await writer.finishWriting(within: 60)
         XCTAssertEqual(writer.status, .completed, "\(writer.error as Any)")
         return url
     }
@@ -209,4 +210,28 @@ func decodeAudio(_ url: URL) async throws -> [Float] {
         samples += AudioBuffers.samples(in: buffer)
     }
     return samples
+}
+
+extension AVAssetWriter {
+    /// Waits for `input` to take more, throwing rather than polling
+    /// forever if the writer fails or stalls.
+    func ready(_ input: AVAssetWriterInput, timeout: Double = 30) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !input.isReadyForMoreMediaData {
+            if status == .failed { throw error ?? MediaError.failed("the writer failed") }
+            guard Date() < deadline else { throw MediaError.failed("the writer wasn't ready for more within \(Int(timeout)) s") }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+    }
+
+    /// `finishWriting()`, throwing rather than waiting forever if the
+    /// writer never says it's done.
+    func finishWriting(within timeout: Double) async throws {
+        let finished = DispatchSemaphore(value: 0)
+        finishWriting { finished.signal() }
+        let done = await withCheckedContinuation { (resume: CheckedContinuation<Bool, Never>) in
+            DispatchQueue.global().async { resume.resume(returning: finished.wait(timeout: .now() + timeout) == .success) }
+        }
+        guard done else { throw MediaError.failed("the writer didn't finish within \(Int(timeout)) s") }
+    }
 }

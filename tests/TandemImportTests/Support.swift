@@ -49,8 +49,13 @@ enum Fixtures {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
         process.currentDirectoryURL = folder
         process.arguments = ["-q", "-r", store ? "-0" : "-9", archive.path, "."]
+        let finished = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in finished.signal() }
         try process.run()
-        process.waitUntilExit()
+        guard finished.wait(timeout: .now() + 60) == .success else {
+            process.terminate()
+            return XCTFail("zip didn't finish within 60 s")
+        }
         XCTAssertEqual(process.terminationStatus, 0, "zip failed")
     }
 }

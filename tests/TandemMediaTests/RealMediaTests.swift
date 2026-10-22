@@ -103,9 +103,19 @@ final class RealMediaTests: XCTestCase {
         let pipe = Pipe()
         process.standardError = pipe
         process.standardOutput = FileHandle.nullDevice
+        let finished = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in finished.signal() }
         try process.run()
+        // Reading to the end waits for ffmpeg to close its side, so if it
+        // never finishes, the watchdog ends it.
+        let pid = process.processIdentifier
+        let watchdog = DispatchWorkItem { kill(pid, SIGKILL) }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 600, execute: watchdog)
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+        watchdog.cancel()
+        guard finished.wait(timeout: .now() + 10) == .success, process.terminationReason == .exit else {
+            throw TestMediaError("ffmpeg didn't finish measuring \(url.lastPathComponent) within 10 minutes")
+        }
         let text = String(decoding: data, as: UTF8.self)
         let summary = text.components(separatedBy: "Summary:").last ?? ""
         func value(_ label: String) -> Double? {

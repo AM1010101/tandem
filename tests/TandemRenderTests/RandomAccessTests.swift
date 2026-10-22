@@ -52,12 +52,12 @@ final class RandomAccessTests: XCTestCase {
         writer.startWriting()
         writer.startSession(atSourceTime: .zero)
         while let sample = encoder.nextEncoded() {
-            while !input.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 1_000_000) }
+            try await writer.ready(input)
             input.append(sample)
         }
         input.markAsFinished()
         writer.endSession(atSourceTime: CMTime(value: 13, timescale: 1))
-        await writer.finishWriting()
+        try await writer.finishWriting(within: 60)
         encoder.invalidate()
         XCTAssertEqual(writer.status, .completed)
         if stripSyncGroup { try Self.neutraliseBoxes(["sgpd", "sbgp", "cslg"], in: url) }

@@ -59,14 +59,14 @@ final class ProbeTests: XCTestCase {
         XCTAssertTrue(writer.startWriting())
         writer.startSession(atSourceTime: .zero)
         for time in times {
-            while !input.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 1_000_000) }
+            try await writer.ready(input)
             var buffer: CVPixelBuffer?
             CVPixelBufferPoolCreatePixelBuffer(nil, adaptor.pixelBufferPool!, &buffer)
             adaptor.append(buffer!, withPresentationTime: CMTime(value: CMTimeValue((time * 30).rounded()), timescale: 30))
         }
         input.markAsFinished()
         writer.endSession(atSourceTime: CMTime(value: CMTimeValue((times.last! * 30).rounded()) + 1, timescale: 30))
-        await writer.finishWriting()
+        try await writer.finishWriting(within: 60)
         XCTAssertEqual(writer.status, .completed, "\(String(describing: writer.error))")
     }
 
@@ -132,5 +132,33 @@ final class ProbeTests: XCTestCase {
         } catch {
             XCTAssertTrue("\(error)".contains("WebM"), "\(error)")
         }
+    }
+}
+
+private struct WriterStalled: Error, CustomStringConvertible {
+    var description: String
+}
+
+private extension AVAssetWriter {
+    /// Waits for `input` to take more, throwing rather than polling
+    /// forever if the writer fails or stalls.
+    func ready(_ input: AVAssetWriterInput, timeout: Double = 30) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !input.isReadyForMoreMediaData {
+            if status == .failed { throw error ?? WriterStalled(description: "the writer failed") }
+            guard Date() < deadline else { throw WriterStalled(description: "the writer wasn't ready for more within \(Int(timeout)) s") }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+    }
+
+    /// `finishWriting()`, throwing rather than waiting forever if the
+    /// writer never says it's done.
+    func finishWriting(within timeout: Double) async throws {
+        let finished = DispatchSemaphore(value: 0)
+        finishWriting { finished.signal() }
+        let done = await withCheckedContinuation { (resume: CheckedContinuation<Bool, Never>) in
+            DispatchQueue.global().async { resume.resume(returning: finished.wait(timeout: .now() + timeout) == .success) }
+        }
+        guard done else { throw WriterStalled(description: "the writer didn't finish within \(Int(timeout)) s") }
     }
 }

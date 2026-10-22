@@ -131,7 +131,7 @@ enum SyntheticMedia {
         let videoDone = Task.detached {
             let timescale: CMTimeScale = 600 * 1000
             for (index, time) in times.enumerated() {
-                while !videoInput.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 1_000_000) }
+                try await writer.ready(videoInput)
                 let buffer = try spec.picture.map { try makeFrame(width: spec.width, height: spec.height, picture: $0, pool: adaptor.pixelBufferPool) }
                     ?? makeFrame(width: spec.width, height: spec.height, index: index, pool: adaptor.pixelBufferPool)
                 let pts = CMTime(value: CMTimeValue((time * Double(timescale)).rounded()), timescale: timescale)
@@ -147,7 +147,7 @@ enum SyntheticMedia {
                 let total = Int(endTime * recorded.sampleRate)
                 var written = 0
                 while written < total {
-                    while !audioInput.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 1_000_000) }
+                    try await writer.ready(audioInput)
                     let count = min(4096, total - written)
                     var chunk = [Float](repeating: 0, count: count * recorded.channels)
                     let available = max(0, min(count, recorded.samples.count / recorded.channels - written))
@@ -166,7 +166,7 @@ enum SyntheticMedia {
             let chunk = 4096
             var written = 0
             while written < totalFrames {
-                while !audioInput.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 1_000_000) }
+                try await writer.ready(audioInput)
                 let count = min(chunk, totalFrames - written)
                 let buffer = try makeSineSampleBuffer(audio, startFrame: written, frames: count)
                 guard audioInput.append(buffer) else { throw writer.error ?? TestMediaError("audio append failed") }
@@ -187,12 +187,12 @@ enum SyntheticMedia {
             var size = 4
             var sample: CMSampleBuffer?
             CMSampleBufferCreate(allocator: nil, dataBuffer: block, dataReady: true, makeDataReadyCallback: nil, refcon: nil, formatDescription: timecodeFormat, sampleCount: 1, sampleTimingEntryCount: 1, sampleTimingArray: &timing, sampleSizeEntryCount: 1, sampleSizeArray: &size, sampleBufferOut: &sample)
-            while !timecodeInput.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 1_000_000) }
+            try await writer.ready(timecodeInput)
             guard let sample, timecodeInput.append(sample) else { throw writer.error ?? TestMediaError("timecode append failed") }
             timecodeInput.markAsFinished()
         }
         writer.endSession(atSourceTime: CMTime(seconds: endTime, preferredTimescale: 600_000))
-        await writer.finishWriting()
+        try await writer.finishWriting(within: 60)
         if writer.status != .completed { throw writer.error ?? TestMediaError("writer ended as \(writer.status.rawValue)") }
     }
 
@@ -328,6 +328,30 @@ struct TestMediaError: Error, CustomStringConvertible {
     init(_ description: String) { self.description = description }
 }
 
+extension AVAssetWriter {
+    /// Waits for `input` to take more, throwing rather than polling
+    /// forever if the writer fails or stalls.
+    func ready(_ input: AVAssetWriterInput, timeout: Double = 30) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !input.isReadyForMoreMediaData {
+            if status == .failed { throw error ?? TestMediaError("the writer failed") }
+            guard Date() < deadline else { throw TestMediaError("the writer wasn't ready for more within \(Int(timeout)) s") }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+    }
+
+    /// `finishWriting()`, throwing rather than waiting forever if the
+    /// writer never says it's done.
+    func finishWriting(within timeout: Double) async throws {
+        let finished = DispatchSemaphore(value: 0)
+        finishWriting { finished.signal() }
+        let done = await withCheckedContinuation { (resume: CheckedContinuation<Bool, Never>) in
+            DispatchQueue.global().async { resume.resume(returning: finished.wait(timeout: .now() + timeout) == .success) }
+        }
+        guard done else { throw TestMediaError("the writer didn't finish within \(Int(timeout)) s") }
+    }
+}
+
 extension ISO8601DateFormatter {
     static let fractional: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -365,54 +389,97 @@ class TempFolderTestCase: XCTestCase {
 extension SyntheticMedia {
     /// Speaks `text` with the system voice into a WAV file, after `leadIn`
     /// seconds of silence. Returns false when no voice is available.
-    static func writeSpeech(_ text: String, to url: URL, leadIn: Double) async throws -> Bool {
+    ///
+    /// The voice now and then never sends its last buffer and spins inside
+    /// the TextToSpeech framework instead, which left `swift test` hanging
+    /// for hours. After `timeout` seconds this stops it and skips the test:
+    /// that's the system voice misbehaving, not Tandem.
+    static func writeSpeech(_ text: String, to url: URL, leadIn: Double, timeout: Double = 20) async throws -> Bool {
         let synthesizer = AVSpeechSynthesizer()
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
         guard utterance.voice != nil else { return false }
 
+        // The synthesizer calls back on a thread of its own, and can carry
+        // on after the timeout, so everything here is behind the lock.
         final class Sink: @unchecked Sendable {
-            var file: AVAudioFile?
-            var error: Error?
             let url: URL
             let leadIn: Double
+            private let lock = NSLock()
+            private var file: AVAudioFile?
+            private var error: Error?
+            private var waiting: CheckedContinuation<Bool, Never>?
             init(url: URL, leadIn: Double) { self.url = url; self.leadIn = leadIn }
 
+            func wait(_ continuation: CheckedContinuation<Bool, Never>) { lock.withLock { waiting = continuation } }
+
             func add(_ buffer: AVAudioPCMBuffer) {
-                do {
-                    if file == nil {
-                        try? FileManager.default.removeItem(at: url)
-                        let created = try AVAudioFile(forWriting: url, settings: buffer.format.settings, commonFormat: buffer.format.commonFormat, interleaved: buffer.format.isInterleaved)
-                        let silence = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: AVAudioFrameCount(leadIn * buffer.format.sampleRate))!
-                        silence.frameLength = silence.frameCapacity
-                        if let data = silence.int16ChannelData { data[0].update(repeating: 0, count: Int(silence.frameLength)) }
-                        if let data = silence.floatChannelData { data[0].update(repeating: 0, count: Int(silence.frameLength)) }
-                        try created.write(from: silence)
-                        file = created
+                lock.withLock {
+                    // Finished or timed out: nobody wants what's left.
+                    guard waiting != nil else { return }
+                    do {
+                        if file == nil {
+                            try? FileManager.default.removeItem(at: url)
+                            let created = try AVAudioFile(forWriting: url, settings: buffer.format.settings, commonFormat: buffer.format.commonFormat, interleaved: buffer.format.isInterleaved)
+                            let silence = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: AVAudioFrameCount(leadIn * buffer.format.sampleRate))!
+                            silence.frameLength = silence.frameCapacity
+                            if let data = silence.int16ChannelData { data[0].update(repeating: 0, count: Int(silence.frameLength)) }
+                            if let data = silence.floatChannelData { data[0].update(repeating: 0, count: Int(silence.frameLength)) }
+                            try created.write(from: silence)
+                            file = created
+                        }
+                        try file?.write(from: buffer)
+                    } catch {
+                        self.error = error
                     }
-                    try file?.write(from: buffer)
-                } catch {
-                    self.error = error
+                }
+            }
+
+            /// Resumes the wait the first time it's called, from the last
+            /// buffer (true) or the timeout (false).
+            func finish(_ spoken: Bool) {
+                let continuation = lock.withLock {
+                    defer { waiting = nil }
+                    return waiting
+                }
+                continuation?.resume(returning: spoken)
+            }
+
+            /// Closes the file, which writes its header. True if any speech
+            /// went into it.
+            func close() throws -> Bool {
+                try lock.withLock {
+                    defer { file = nil }
+                    if let error { throw error }
+                    return file != nil
                 }
             }
         }
         let sink = Sink(url: url, leadIn: leadIn)
-        let finished: Bool = await withCheckedContinuation { continuation in
-            var resumed = false
+        // On a queue rather than a task: when the voice spins, its own
+        // tasks fill the cooperative pool, and a sleeping task wakes late.
+        let timer = DispatchWorkItem { sink.finish(false) }
+        let finished = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            sink.wait(continuation)
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
             synthesizer.write(utterance) { buffer in
                 guard let pcm = buffer as? AVAudioPCMBuffer else { return }
                 if pcm.frameLength == 0 {
-                    if !resumed { resumed = true; continuation.resume(returning: sink.file != nil) }
+                    sink.finish(true)
                     return
                 }
                 sink.add(pcm)
             }
         }
-        if let error = sink.error { throw error }
-        // Closing the file writes its header.
-        sink.file = nil
-        _ = synthesizer
-        return finished
+        timer.cancel()
+        guard finished else {
+            synthesizer.stopSpeaking(at: .immediate)
+            _ = try? sink.close()
+            throw XCTSkip("the system voice didn't finish rendering within \(Int(timeout)) s")
+        }
+        // Held to the end: released early, it stops speaking.
+        withExtendedLifetime(synthesizer) {}
+        return try sink.close()
     }
 }
 

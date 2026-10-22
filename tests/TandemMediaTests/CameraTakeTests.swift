@@ -13,17 +13,28 @@ final class CameraTakeTests: TempFolderTestCase {
     // The spoken and played sound, made once: the system voice takes a
     // moment.
     nonisolated(unsafe) private static var sounds: URL?
+    // Why the voice let us down, so the rest of the tests skip straight
+    // away rather than each waiting out its timeout.
+    nonisolated(unsafe) private static var noSpeech: XCTSkip?
 
     /// A folder holding `speech.wav` (the system voice talking for about
     /// eight seconds) and `music.wav`.
     func soundFolder() async throws -> URL {
         if let sounds = Self.sounds { return sounds }
+        if let noSpeech = Self.noSpeech { throw noSpeech }
         let sounds = FileManager.default.temporaryDirectory.appendingPathComponent("tandem-camera-sounds-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: sounds, withIntermediateDirectories: true)
-        let spoken = try await SyntheticMedia.writeSpeech(
-            "Hi, I'm building a workbench today. First I cut the legs to length, then I glue the rails, and then I screw the top on.",
-            to: sounds.appendingPathComponent("speech.wav"), leadIn: 0.2
-        )
+        let spoken: Bool
+        do {
+            spoken = try await SyntheticMedia.writeSpeech(
+                "Hi, I'm building a workbench today. First I cut the legs to length, then I glue the rails, and then I screw the top on.",
+                to: sounds.appendingPathComponent("speech.wav"), leadIn: 0.2
+            )
+        } catch let skip as XCTSkip {
+            try? FileManager.default.removeItem(at: sounds)
+            Self.noSpeech = skip
+            throw skip
+        }
         try XCTSkipUnless(spoken, "no system voice to make test speech with")
         try SyntheticMedia.writeMusic(to: sounds.appendingPathComponent("music.wav"), seconds: 8)
         Self.sounds = sounds
@@ -33,6 +44,7 @@ final class CameraTakeTests: TempFolderTestCase {
     override class func tearDown() {
         if let sounds { try? FileManager.default.removeItem(at: sounds) }
         sounds = nil
+        noSpeech = nil
         super.tearDown()
     }
 

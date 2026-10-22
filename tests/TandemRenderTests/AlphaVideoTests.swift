@@ -19,7 +19,7 @@ final class AlphaVideoTests: XCTestCase {
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA, kCVPixelBufferWidthKey as String: 320, kCVPixelBufferHeightKey as String: 180])
         writer.add(input); writer.startWriting(); writer.startSession(atSourceTime: .zero)
         for i in 0..<30 {
-            while !input.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 1_000_000) }
+            try await writer.ready(input)
             var pb: CVPixelBuffer?
             CVPixelBufferPoolCreatePixelBuffer(nil, adaptor.pixelBufferPool!, &pb)
             CVPixelBufferLockBaseAddress(pb!, [])
@@ -30,7 +30,7 @@ final class AlphaVideoTests: XCTestCase {
             CVPixelBufferUnlockBaseAddress(pb!, [])
             adaptor.append(pb!, withPresentationTime: CMTime(value: CMTimeValue(i), timescale: 30))
         }
-        input.markAsFinished(); writer.endSession(atSourceTime: CMTime(value: 30, timescale: 30)); await writer.finishWriting()
+        input.markAsFinished(); writer.endSession(atSourceTime: CMTime(value: 30, timescale: 30)); try await writer.finishWriting(within: 60)
         XCTAssertEqual(writer.status, .completed, "\(writer.error as Any)")
         var sticker = media.item("med_k", "sticker.mov", role: .sticker, seconds: 1)
         sticker.hasAlpha = true
@@ -214,7 +214,7 @@ extension TestMedia {
             for c in 0..<4 { drawnRow[x * 4 + c] = value }
         }
         for i in 0..<frames {
-            while !input.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 1_000_000) }
+            try await writer.ready(input)
             var created: CVPixelBuffer?
             CVPixelBufferPoolCreatePixelBuffer(nil, try XCTUnwrap(adaptor.pixelBufferPool), &created)
             let buffer = try XCTUnwrap(created)
@@ -229,7 +229,7 @@ extension TestMedia {
         }
         input.markAsFinished()
         writer.endSession(atSourceTime: CMTime(value: CMTimeValue(frames), timescale: 30))
-        await writer.finishWriting()
+        try await writer.finishWriting(within: 60)
         XCTAssertEqual(writer.status, .completed, "\(writer.error as Any)")
     }
 }

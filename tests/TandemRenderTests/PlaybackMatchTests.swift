@@ -218,14 +218,19 @@ final class PlaybackMatchTests: XCTestCase {
         writer.add(input)
         XCTAssertTrue(writer.startWriting(), "\(writer.error as Any)")
         writer.startSession(atSourceTime: .zero)
+        let deadline = Date().addingTimeInterval(30)
         for index in 0..<30 {
-            while !input.isReadyForMoreMediaData { usleep(1000) }
+            while !input.isReadyForMoreMediaData {
+                if writer.status == .failed { throw writer.error ?? MediaError.failed("the writer failed") }
+                guard Date() < deadline else { throw MediaError.failed("writing \(url.lastPathComponent) stalled") }
+                usleep(1000)
+            }
             adaptor.append(frame, withPresentationTime: CMTime(value: CMTimeValue(index), timescale: 30))
         }
         input.markAsFinished()
         let done = DispatchSemaphore(value: 0)
         writer.finishWriting { done.signal() }
-        done.wait()
+        guard done.wait(timeout: .now() + 60) == .success else { throw MediaError.failed("\(url.lastPathComponent) didn't finish writing within 60 s") }
         XCTAssertEqual(writer.status, .completed, "\(writer.error as Any)")
     }
 

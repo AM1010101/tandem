@@ -171,8 +171,14 @@ final class ColourOnScreenTests: XCTestCase {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
         task.arguments = ["-x", "-o", "-l\(windowNumber)", png.path]
-        try? task.run()
-        task.waitUntilExit()
+        let finished = DispatchSemaphore(value: 0)
+        task.terminationHandler = { _ in finished.signal() }
+        guard (try? task.run()) != nil else { return nil }
+        guard finished.wait(timeout: .now() + 30) == .success else {
+            task.terminate()
+            XCTFail("screencapture didn't finish within 30 s")
+            return nil
+        }
         guard let source = CGImageSourceCreateWithURL(png as CFURL, nil) else { return nil }
         return CGImageSourceCreateImageAtIndex(source, 0, nil)
     }

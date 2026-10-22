@@ -877,7 +877,7 @@ final class EditorBehaviourTests: XCTestCase {
             do { box.result = .success(try await SoundTakes.write(in: folder, seconds: seconds)) } catch { box.result = .failure(error) }
             written.signal()
         }
-        written.wait()
+        guard written.wait(timeout: .now() + 120) == .success else { throw Stalled("writing the sound takes stalled") }
         let takes = try XCTUnwrap(box.result).get()
         editor = try EditorHarness(sound: takes)
         editor.wait(for: "the viewer's first composition", timeout: 10) { editor.model.playback.hasComposition }

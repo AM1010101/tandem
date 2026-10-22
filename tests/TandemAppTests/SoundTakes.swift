@@ -88,7 +88,7 @@ struct SoundTakes {
         let progress = Progress()
         let sound = tone(hz)
         let io = SendableBox((writer, video, adaptor, audio, frame, try XCTUnwrap(format)))
-        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+        let written = await withCheckedContinuation { (done: CheckedContinuation<Bool, Never>) in
             let group = DispatchGroup()
             group.enter()
             group.enter()
@@ -111,10 +111,16 @@ struct SoundTakes {
                     progress.sample += count
                 }
             }
-            group.notify(queue: .global()) { done.resume() }
+            DispatchQueue.global().async { done.resume(returning: group.wait(timeout: .now() + 60) == .success) }
         }
+        guard written else { throw Stalled("writing \(url.lastPathComponent) stalled") }
         writer.endSession(atSourceTime: CMTime(value: CMTimeValue(frames), timescale: 30))
-        await writer.finishWriting()
+        let finished = DispatchSemaphore(value: 0)
+        writer.finishWriting { finished.signal() }
+        let done = await withCheckedContinuation { (resume: CheckedContinuation<Bool, Never>) in
+            DispatchQueue.global().async { resume.resume(returning: finished.wait(timeout: .now() + 60) == .success) }
+        }
+        guard done else { throw Stalled("\(url.lastPathComponent) didn't finish writing within 60 s") }
         XCTAssertEqual(writer.status, .completed, "\(writer.error as Any)")
     }
 
@@ -141,6 +147,12 @@ struct SoundTakes {
         }
         return 2 * (re * re + im * im).squareRoot() / Double(samples.count)
     }
+}
+
+/// A writer that stopped answering, so the test fails instead of hanging.
+struct Stalled: Error, CustomStringConvertible {
+    var description: String
+    init(_ description: String) { self.description = description }
 }
 
 /// Hands AVFoundation writers to their callback queues.

@@ -7,14 +7,18 @@ import TandemMedia
 /// Transcript word edges can be half a second out and a final "s" barely
 /// registers below 4 kHz, so cuts placed from the transcript (or snapped to
 /// the quietest point near a word's end) clipped words Mike then heard in
-/// review: "takes" cut to "ta", "example", "They're". This reads each
-/// file's own sound either side of every edit (no render, so it's quick),
-/// judges it with `CutAudit`, and gives the trim that moves each clipped
-/// edge into the nearest real pause.
+/// review: "takes" cut to "ta", "example", "They're", and on the Ian video
+/// "extract" cut to "extrac" and "pro" off "processed" (#64). This reads
+/// each file's own sound either side of every edit (no render, so it's
+/// quick), judges it with `CutAudit`, and gives the fix for each clipped
+/// edge: a trim into a real pause, or putting a short cut back. It passes
+/// `CutAudit` the stretch cut at the join and the transcript's words only
+/// so a fix never brings a cut word back.
 enum CutCheck {
-    /// Sound read either side of each edge: room to find a pause, and
-    /// enough of the take around it for its noise floor and speech level.
-    static let window = 2.0
+    /// Sound read either side of each edge: the 3 s the speech level is
+    /// taken over, which is room to find a pause too, and enough of the take
+    /// around it for its noise floor.
+    static let window = CutAudit.speechSpan
     static let label = "Move clipped cuts into pauses"
 
     /// One edge of a speech clip where the take is cut: two clips of it
@@ -25,6 +29,10 @@ enum CutCheck {
         /// The other clip at the cut, if one meets it there.
         var other: String?
         var media: MediaItem
+        /// Where two pieces of one take meet: the clip before the cut, and
+        /// the stretch of the file cut out between them (media time).
+        var outgoing: Clip?
+        var removed: ClosedRange<Double>?
 
         var time: Time { edge == .end ? clip.end : clip.start }
         var mediaTime: Double { (edge == .end ? clip.sourceEnd : clip.sourceStart).seconds }
@@ -32,6 +40,8 @@ enum CutCheck {
 
     struct Outcome: Sendable {
         var problems: [CheckProblem] = []
+        /// Marginal joins: worth a listen, not wrong.
+        var notes: [CheckProblem] = []
         /// The fixes, latest first (an incoming clip before the outgoing
         /// one at the same cut), so each trim's times are still right
         /// when it runs.
@@ -48,6 +58,12 @@ enum CutCheck {
             a.mediaID == b.mediaID && a.speed == b.speed && touching(b.sourceStart, a.sourceEnd)
         }
         func checked(_ time: Time) -> Bool { ranges.contains { $0.start <= time && time <= $0.end } }
+        /// What's cut out of the take between two clips of it meeting: none
+        /// between different files, or where the take jumps back.
+        func removed(_ a: Clip, _ b: Clip) -> ClosedRange<Double>? {
+            guard a.mediaID == b.mediaID, b.sourceStart > a.sourceEnd else { return nil }
+            return a.sourceEnd.seconds...b.sourceStart.seconds
+        }
         var edges: [Edge] = []
         for track in TranscriptTools.speechTracks(project) {
             let clips = track.clips.filter { clip in
@@ -59,20 +75,37 @@ enum CutCheck {
                 let previous = index > 0 && touching(clips[index - 1].end, clip.start) ? clips[index - 1] : nil
                 let next = index + 1 < clips.count && touching(clips[index + 1].start, clip.end) ? clips[index + 1] : nil
                 if previous.map({ !throughEdit($0, clip) }) ?? true, checked(clip.start) {
-                    edges.append(Edge(clip: clip, edge: .start, other: previous?.id, media: media))
+                    var edge = Edge(clip: clip, edge: .start, other: previous?.id, media: media)
+                    if let previous, let removed = removed(previous, clip) { (edge.outgoing, edge.removed) = (previous, removed) }
+                    edges.append(edge)
                 }
                 if next.map({ !throughEdit(clip, $0) }) ?? true, checked(clip.end) {
-                    edges.append(Edge(clip: clip, edge: .end, other: next?.id, media: media))
+                    var edge = Edge(clip: clip, edge: .end, other: next?.id, media: media)
+                    if let next, let removed = removed(clip, next) { (edge.outgoing, edge.removed) = (clip, removed) }
+                    edges.append(edge)
                 }
             }
         }
         return edges
     }
 
-    static func run(project: Project, folder: ProjectFolder, ranges: [TimeRange]) async -> Outcome {
+    /// The transcript's words for each file on the speech tracks, in media
+    /// time, by media ID.
+    static func words(in project: Project, analysis: AnalysisSource) -> [String: [ClosedRange<Double>]] {
+        var words: [String: [ClosedRange<Double>]] = [:]
+        for id in Set(TranscriptTools.speechTracks(project).flatMap(\.clips).compactMap(\.mediaID)) {
+            guard let item = project.media(id), let transcript = analysis.transcript(for: item) else { continue }
+            words[id] = transcript.words.filter { $0.end > $0.start }.map { $0.start.seconds...$0.end.seconds }
+        }
+        return words
+    }
+
+    /// - Parameter words: each file's transcript words (media time), by
+    ///   media ID, so fixes never bring a cut word back.
+    static func run(project: Project, folder: ProjectFolder, ranges: [TimeRange], words: [String: [ClosedRange<Double>]] = [:]) async -> Outcome {
         let edges = edges(in: project, ranges: ranges)
         var outcome = Outcome(checked: edges.count)
-        var found: [(edge: Edge, problem: CheckProblem)] = []
+        var found: [(edge: Edge, verdict: CutAudit.Edge)] = []
         let byMedia = Dictionary(grouping: edges, by: \.media.id)
         for mediaID in byMedia.keys.sorted() {
             guard let group = byMedia[mediaID], let item = group.first?.media else { continue }
@@ -98,25 +131,57 @@ enum CutCheck {
             let levels = SpeechLevels(of: readings)
             // A screen recording's system sound, say: nothing said to clip.
             guard levels.isVoice else { continue }
+            let placers = readings.map { CutPlacer($0, levels: levels) }
+            let said = words[mediaID] ?? []
             for edge in group {
-                guard let energy = readings.first(where: { $0.start <= edge.mediaTime && edge.mediaTime <= $0.end }) else { continue }
-                let verdict = CutAudit.judge(energy, levels: levels, at: edge.mediaTime, keeps: edge.edge == .end ? .before : .after)
-                guard verdict.clipped else { continue }
-                found.append((edge, problem(edge, verdict, project: project)))
+                guard let placer = placers.first(where: { $0.energy.start <= edge.mediaTime && edge.mediaTime <= $0.energy.end }) else { continue }
+                let near = (edge.mediaTime - window)...(edge.mediaTime + window)
+                let verdict = placer.judge(
+                    at: edge.mediaTime, keeps: edge.edge == .end ? .before : .after, removed: edge.removed, words: said.filter { $0.overlaps(near) }
+                )
+                guard verdict.verdict != .clean else { continue }
+                found.append((edge, verdict))
+            }
+        }
+        // Where one side of a join is put back, so is the other: it's one
+        // trim, and a trim into a pause as well would fight it.
+        let puttingBack = Set(found.filter { $0.verdict.fix == .putBack }.compactMap(\.edge.outgoing?.id))
+        for index in found.indices where found[index].verdict.clipped {
+            if let outgoing = found[index].edge.outgoing, puttingBack.contains(outgoing.id) {
+                found[index].verdict.fix = .putBack
+                found[index].verdict.suggestion = nil
             }
         }
         found.sort { ($0.edge.time, $0.edge.edge == .end ? 0 : 1) < ($1.edge.time, $1.edge.edge == .end ? 0 : 1) }
-        outcome.problems = found.map(\.problem)
-        outcome.commands = found.reversed().compactMap(\.problem.cut?.fix)
+        let problems = found.map { problem($0.edge, $0.verdict, project: project) }
+        outcome.problems = problems.filter { $0.kind == .clippedWord }
+        outcome.notes = problems.filter { $0.kind == .marginalJoin }
+        for fix in outcome.problems.reversed().compactMap(\.cut?.fix) where !outcome.commands.contains(fix) {
+            outcome.commands.append(fix)
+        }
         return outcome
     }
 
-    /// The problem for a clipped edge, with the trim into the pause when
-    /// there's one to reach.
+    /// The problem for a clipped edge, with its fix, or the note for a
+    /// marginal one.
     static func problem(_ edge: Edge, _ verdict: CutAudit.Edge, project: Project) -> CheckProblem {
         let clip = edge.clip
         let isEnd = edge.edge == .end
         let place = isEnd ? "at the end of \(clip.id)" : "at the start of \(clip.id)"
+        let clipIDs = isEnd ? [clip.id] + (edge.other.map { [$0] } ?? []) : (edge.other.map { [$0] } ?? []) + [clip.id]
+        let margin = verdict.margin.map { (Double($0) * 10).rounded() / 10 }
+        let level = margin.map {
+            "the clip's \(isEnd ? "last" : "first") 25 ms is " + ($0 < 1 ? "at speech level" : "\(String(format: "%.1f", $0)) dB under the speech")
+        } ?? ""
+        var cut = CheckProblem.CutEdge(clipID: clip.id, edge: edge.edge, margin: margin)
+        guard verdict.clipped else {
+            return CheckProblem(
+                kind: .marginalJoin, start: edge.time, end: edge.time,
+                message: "Marginal join \(place): \(level) (clean is \(Int(CutAudit.cleanFrom)) or more, clipped under \(Int(CutAudit.clippedUnder))). Listen to it with tandem clip.",
+                clipIDs: clipIDs, cut: cut
+            )
+        }
+
         var what: String
         if let lost = verdict.lost {
             what = isEnd
@@ -131,11 +196,20 @@ enum CutCheck {
         if let gap = verdict.gap {
             what += "; the cut is in a \(String(format: "%.2f", gap)) s gap inside a word, not a pause"
         }
+        if !level.isEmpty { what += "; \(level)" }
 
-        var cut = CheckProblem.CutEdge(clipID: clip.id, edge: edge.edge)
-        var advice = "No pause within \(String(format: "%.1f", CutAudit.reach)) s either side: listen with tandem clip and recut it by hand."
-        if let delta = shift(edge, verdict, project: project) {
+        let reach = String(format: "%.1f", CutAudit.reach)
+        var advice = "No pause within \(reach) s either side: listen with tandem clip and recut it by hand."
+        cut.fixKind = .nothingNearby
+        if verdict.fix == .putBack, let outgoing = edge.outgoing, let removed = edge.removed {
+            let length = removed.upperBound - removed.lowerBound
+            let to = outgoing.end + Time(seconds: length / outgoing.speed)
+            cut.fixKind = .putBack
+            cut.fix = .trim(clipID: outgoing.id, edge: .end, to: to, ripple: true, includeLinked: nil)
+            advice = "No pause it can reach without bringing back a cut word: put back the \(String(format: "%.2f", length)) s cut here, filler and all (the end of \(outgoing.id) \(String(format: "%.3f", (to - outgoing.end).seconds)) s later)."
+        } else if let delta = shift(edge, verdict, project: project) {
             let to = edge.time + delta
+            cut.fixKind = .trimToPause
             cut.to = to
             cut.fix = .trim(clipID: clip.id, edge: edge.edge, to: to, ripple: true, includeLinked: nil)
             let later = delta > .zero
@@ -148,12 +222,16 @@ enum CutCheck {
             case (false, true): into = "into the pause after it, dropping the end of the word."
             }
             advice = "Trim the \(isEnd ? "end" : "start") \(amount) s \(later ? "later" : "earlier"), \(into)"
+        } else if verdict.lost != nil || verdict.kept <= CutAudit.reach {
+            // There's a pause in reach, but moving there brings a cut word
+            // back or drops a kept one.
+            let tooLong = edge.removed.map { " The \(String(format: "%.2f", $0.upperBound - $0.lowerBound)) s cut here is too long to put back." } ?? ""
+            advice = "No pause within \(reach) s that doesn't bring back a cut word or drop a kept one.\(tooLong) Listen with tandem clip and recut it by hand."
         }
         return CheckProblem(
             kind: .clippedWord, start: edge.time, end: edge.time,
             message: "Clipped word \(place): \(what). \(advice)",
-            clipIDs: isEnd ? [clip.id] + (edge.other.map { [$0] } ?? []) : (edge.other.map { [$0] } ?? []) + [clip.id],
-            cut: cut
+            clipIDs: clipIDs, cut: cut
         )
     }
 

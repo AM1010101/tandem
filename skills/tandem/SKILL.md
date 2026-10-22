@@ -380,14 +380,15 @@ From his review comments on the Daytona and Build Your Own Convex videos
   `tandem check --cuts` (with `--changed` or `--from`/`--to`): it reads the
   take's own sound either side of every cut, full band and above 4 kHz,
   flags each one the voice runs through, and ends with a `tandem apply`
-  that trims each clipped edge into the nearest real pause. Use it instead
+  that trims each clipped edge into a real pause, or puts a short cut
+  back where a trim would bring a cut word back. Use it instead
   of writing your own energy script or running Whisper on a `tandem clip`
   (agents wrote that script about 15 times). Don't snap a cut to the
   "quietest point near the word end" by hand either: inside a word there
   are short quiet gaps (the closure before the "k" of "takes" or the "t" of
   "parts"), and a final "s" hardly registers below 4 kHz, so the snap lands
   mid-word and cuts "takes" to "ta" (three of these on the Tandem video,
-  October 2026). A real pause is quiet for 80 ms or more in the full band
+  October 2026). A real pause is quiet for 70 ms or more in the full band
   and above 4 kHz alike, which is what the check goes by. Listen with
   `tandem clip` to any it can't fix (no pause within 0.3 s).
 - **Sweep for leftovers after a rebuild.** Restoring cut stretches left 88

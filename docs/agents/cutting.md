@@ -75,7 +75,7 @@ no breath is left behind (`tandem pauses --from 2:10 --to 2:20` shows them):
 ```
 
 Then check it with `tandem check --cuts --from 2:10 --to 2:20` (it gives the
-trim if a word got clipped) and listen with `tandem clip 2:08 2:20`.
+fix if a word got clipped: a trim into a pause, or putting a short cut back) and listen with `tandem clip 2:08 2:20`.
 
 For several phrases, or a rough cut that drops false starts and retakes,
 list every range as you read it in one `cutRanges` command rather than

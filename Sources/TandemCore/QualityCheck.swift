@@ -32,6 +32,9 @@ public struct CheckProblem: Codable, Equatable, Sendable {
         /// The voice runs right up to a cut in its file: a word is clipped
         /// (`tandem check --cuts`).
         case clippedWord
+        /// A cut whose clip side is near enough the speech level to be worth
+        /// a listen, but not clipped (`tandem check --cuts`).
+        case marginalJoin
         /// A screen recording playing at a low frame rate while its picture
         /// moves, so it looks choppy.
         case lowFrameRate
@@ -40,7 +43,9 @@ public struct CheckProblem: Codable, Equatable, Sendable {
         /// cartoon B-roll than on screen recordings, a pause can let a point
         /// land, and not every big change on screen is a page that should
         /// push. So these don't fail a check.
-        public var isNote: Bool { self == .soft || self == .deadAir || self == .pageChange || self == .sliver || self == .lowFrameRate }
+        public var isNote: Bool {
+            self == .soft || self == .deadAir || self == .pageChange || self == .sliver || self == .lowFrameRate || self == .marginalJoin
+        }
     }
 
     public var kind: Kind
@@ -68,19 +73,38 @@ public struct CheckProblem: Codable, Equatable, Sendable {
         self.fix = fix
     }
 
-    /// The edge of a speech clip a word is clipped at.
+    /// The edge of a speech clip a word is clipped at, or a marginal join.
     public struct CutEdge: Codable, Equatable, Sendable {
+        /// How a clipped edge is fixed.
+        public enum FixKind: String, Codable, Sendable {
+            /// Trim the edge into a real pause (`to`).
+            case trimToPause
+            /// Put back the stretch cut at the join, filler and all: there's
+            /// no pause to reach without bringing a cut word back.
+            case putBack
+            /// Neither: listen and recut it by hand.
+            case nothingNearby
+        }
+
         public var clipID: String
         public var edge: ClipEdge
-        /// Where to trim the edge to (timeline time, with ripple), into the
-        /// nearest real pause. Nil when there's none near enough.
+        /// How far the clip's 25 ms beside the edge is under the speech
+        /// level around it, in dB: under 9 is clipped, 15 or more clean.
+        public var margin: Double?
+        public var fixKind: FixKind?
+        /// Where to trim the edge to (timeline time, with ripple), into a
+        /// real pause. Nil when there's none to reach.
         public var to: Time?
-        /// The trim that does it.
+        /// The trim that fixes it: into the pause, or, putting the cut back,
+        /// the end of the clip before the join, as far as the next one
+        /// starts in the take.
         public var fix: EditCommand?
 
-        public init(clipID: String, edge: ClipEdge, to: Time? = nil, fix: EditCommand? = nil) {
+        public init(clipID: String, edge: ClipEdge, margin: Double? = nil, fixKind: FixKind? = nil, to: Time? = nil, fix: EditCommand? = nil) {
             self.clipID = clipID
             self.edge = edge
+            self.margin = margin
+            self.fixKind = fixKind
             self.to = to
             self.fix = fix
         }

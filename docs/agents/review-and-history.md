@@ -96,41 +96,60 @@ Notes (not problems):
 clipped at cuts, and renders nothing, so it's quick. Run it after cutting
 the take, with `--changed` or `--from`/`--to` as above. Most of Mike's
 "word gets cut off" comments were cuts placed from transcript word times,
-which can be half a second out, or snapped to the quietest point near a
-word's end, which lands in the gaps inside words. So it goes by the sound
-instead. For every cut edge on the speech tracks (two pieces of the take
-meeting, not a through-edit, or a piece beside a gap) it reads the file's
-own sound either side of the edit, in 10 ms frames, over the full band and
-again above 4 kHz, where a final "s" or "t" is heard. Levels come from the
-take's own sound around its cuts: quiet is 10 dB over its noise floor (the
-quietest tenth), and never more than 25 dB under its loud tenth (15 dB
-above 4 kHz, where breath and room tone reach too); speech is within 20 dB
-of the loud tenth (10 dB above 4 kHz). A real pause is quiet for 0.08 s or
-more in both bands; a shorter gap (the closure before the "k" of "takes")
-is inside a word. A take with no voice in it (a screen recording's system
+which are 30 to 100 ms off the sound (0.2 s for "processed" on the Ian
+video), or snapped to the quietest point near a word's end, which lands in
+the gaps inside words. So it goes by the sound alone. For every cut edge
+on the speech tracks (two pieces of the take meeting, not a through-edit,
+or a piece beside a gap) it reads the file's own sound either side of the
+edit, in 10 ms frames, over the full band and again above 4 kHz, where a
+final "s" or "t" is heard. Levels come from the take's own sound around
+its cuts: quiet is 9 dB over its noise floor (the quietest tenth), and
+never more than 25 dB under its loud tenth (15 dB above 4 kHz, where
+breath and room tone reach too). A real pause is quiet for 0.07 s or more
+in both bands; a shorter gap (the closure before the "t" of "extract") is
+inside a word. A take with no voice in it (a screen recording's system
 sound) isn't judged.
 
-An edge is fine if the frame on either side of it is in a real pause: the
-clip ends in silence, or ends right as a word it doesn't keep starts. It's
-also fine with less than 0.05 s of speech on either side (a tail nobody
-misses, or a fragment), or in a dip between two sounds, 12 dB under the
-voice either side, as a cut between words in fluent speech is; unless a
-clip's end is in a closure with the "k" or "t" released loudly right after
-it. Otherwise the voice runs through the cut and a word is clipped, a
-problem that fails the check. On the Tandem video, an edit Mike approved,
-it flags 6 of 758 edges. Each one says which clip's start or end, how much
-of the voice is cut off, and the trim (with ripple) that moves the edge
-into the nearest real pause within 0.3 s, 0.04 s into it and on a frame
-where one lands there. The nearer pause is the side with less of the word,
-so it finishes a word that's mostly kept and drops a fragment that's mostly
-cut, as transcript placement does. The last line is a `tandem apply` that
-makes every fix (in `--json`, `commands`, latest first, and `revision`;
-each problem's `cut` has `clipID`, `edge`, `to` and `fix`). Listen to the
-ones it can't fix (no pause within reach) with `tandem clip`.
+An edge with the frame on either side of it in a real pause is fine: the
+clip ends in silence, or ends right as a word it doesn't keep starts.
+Otherwise it's judged by its margin: how far the clip's 25 ms beside the
+edge is under the speech level (the loud end, 92nd percentile, of the 3 s
+either side). On the Ian video every cut Mike heard as a cut-off was
+within about 3 dB, and the clean joins 15 dB or more under. Under 9 dB is
+a clipped word, a problem that fails the check; 9 to 15 dB is a marginal
+join, a note to listen to; 15 or more is clean. Two more are clipped
+whatever the margin: a short burst past the edge with a pause after it
+(the "t" released after the closure the cut is in), and, when the join
+isn't clean, the rest of a word running on past the edge to a pause within
+0.3 s (the "pro" left before a clip that started on the transcript's time
+for "processed").
+
+Each clipped edge says which clip's start or end, how much voice is cut
+off, the margin, and its fix (`fixKind`):
+
+- `trimToPause`: the trim (with ripple) that moves the edge into a real
+  pause within 0.3 s, on a frame. It goes on past the cut-off sound into a
+  pause in the cut material, 0.04 s in (the start of a clip goes 0.08 s
+  before its word, since a "p" or "t" bursts after a silent closure), or
+  back into a pause in what the clip keeps, dropping a fragment. The
+  transcript is used only to rule out a trim that would bring a cut word
+  back or drop a kept one, never to place the edge.
+- `putBack`: no such pause, and the stretch cut at that join is 2 s or
+  less, so the fix puts it back, filler and all, by trimming the end of
+  the clip before the join on to where the next one starts in the take.
+  On the Ian video that's what sounded right.
+- `nothingNearby`: neither. Listen with `tandem clip` and recut it by hand.
+
+The last line is a `tandem apply` that makes every fix (in `--json`,
+`commands`, latest first, and `revision`; each problem's `cut` has
+`clipID`, `edge`, `margin`, `fixKind`, `to` and `fix`, and a marginal
+join's note has `clipID`, `edge` and `margin`).
 
 ```
 Checked 00:00.000-01:00.000 (4 cut edges) in 0.1 s: 1 problem:
-  00:30.000  Clipped word at the end of clip_voc1: the voice runs on 0.12 s past the cut. Trim the end 0.167 s later, into the pause after it.  On: clip_voc1 take1-camera, clip_voc2 take1-camera
+  00:30.000  Clipped word at the end of clip_voc1: the voice runs on 0.12 s past the cut; the clip's last 25 ms is at speech level. Trim the end 0.167 s later, into the pause after it.  On: clip_voc1 take1-camera, clip_voc2 take1-camera
+Notes (not problems):
+  00:42.500  Marginal join at the end of clip_voc2: the clip's last 25 ms is 12.8 dB under the speech (clean is 15 or more, clipped under 9). Listen to it with tandem clip.  On: clip_voc2 take1-camera, clip_voc3 take1-camera
 Fix: tandem apply --expect 7 --label "Move clipped cuts into pauses" '[{"trim":{"clipID":"clip_voc1","edge":"end","ripple":true,"to":30.166667}}]'
 ```
 

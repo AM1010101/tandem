@@ -715,7 +715,7 @@ enum MCPTools {
                 "to": time("End. Default the end of the timeline."),
                 "changed": S.boolean("Only the stretches agents changed that are waiting for Mike's review."),
                 "quick": S.boolean("Only the checks that need no rendering: gaps, slivers and pictures zoomed past their own pixels. No dead air or page changes."),
-                "cuts": S.boolean("Only the cuts on the speech tracks, from the files' own sound (nothing rendered): a clippedWord problem where the voice runs right up to a cut, full band or above 4 kHz (a final \"s\"). Each has cut.fix, a trim into the nearest real pause (0.08 s quiet in both bands) within 0.3 s; commands holds them all, latest first, to apply with expectedRevision: revision. Run it after cutting the take."),
+                "cuts": S.boolean("Only the cuts on the speech tracks, from the files' own sound (nothing rendered), never the transcript's times: a clippedWord problem where the clip's 25 ms beside a cut is under 9 dB below the speech around it, or a consonant's burst or the rest of a word runs on past it to a pause; a marginalJoin note at 9 to 15 dB. cut.margin is that dB; cut.fixKind is trimToPause (a trim into a real pause, 0.07 s quiet in both bands, within 0.3 s, never bringing a cut word back), putBack (the cut of 2 s or less put back) or nothingNearby; cut.fix is the trim. commands holds them all, latest first, to apply with expectedRevision: revision. Run it after cutting the take."),
                 "width": S.integer("How wide frames are rendered for the scan. Default 384.")
             ],
             readOnly: true, idempotent: true

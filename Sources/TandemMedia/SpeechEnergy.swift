@@ -119,7 +119,8 @@ public struct SpeechEnergy: Sendable {
 /// around its cuts: its noise floor (the quietest tenth) and its loud
 /// tenth, in each band.
 ///
-/// Quiet is 10 dB over the floor, and never more than 25 dB under the loud
+/// Quiet is 9 dB over the floor (#64 measured real pauses on the Ian video
+/// that way, on the raw mic), and never more than 25 dB under the loud
 /// tenth in the full band, or 15 dB under it above 4 kHz. Breath, mouth
 /// noise and room tone reach above 4 kHz too, and on the Tandem video
 /// (October 2026) a high-band threshold set from the floor alone called
@@ -141,7 +142,7 @@ public struct SpeechLevels: Equatable, Sendable {
     /// aren't judged.
     public var isVoice: Bool
 
-    static let overFloor: Float = 10
+    static let overFloor: Float = 9
     static let quietUnderLoud: Float = 25
     static let highQuietUnderLoud: Float = 15
     static let speechUnderLoud: Float = 20
@@ -175,37 +176,68 @@ public struct SpeechLevels: Equatable, Sendable {
     }
 }
 
-/// Whether a cut clips a word: does the voice run right up to the edit in
-/// the file, or does the edit sit in a real pause?
+/// Whether a cut clips a word, judged from the file's own sound and never
+/// the transcript's times (they're 30 to 100 ms off, sometimes 0.2 s).
 ///
-/// A real pause is quiet for `minPause` or more in the full band and above
-/// 4 kHz alike. Shorter quiet gaps are inside words (the closure before the
-/// "k" of "takes"), so a cut in one still clips the word, and snapping a
-/// cut to the quietest point near a word's end lands in one of those.
+/// An edge in a real pause is clean: quiet for `minPause` or more in the
+/// full band and above 4 kHz alike. Shorter quiet gaps are inside words
+/// (the closure before the "t" of "extract").
 ///
-/// An edge out of a pause is only a clipped word when it's worth hearing:
-/// at least `minSpeech` of speech-level voice on both sides (less on the
-/// kept side is a fragment, less on the cut side a tail nobody misses),
-/// and the edge not in a dip between two sounds. Fluent speech often has
-/// no 80 ms pause between words, so a cut between them lands in a dip
-/// (12 dB under the voice either side) and is fine; the exception is the
-/// end of a clip in a closure, with the "k" or "t" released at speech
-/// level right after it. On the Tandem video, an edit Mike approved, the
-/// first version of this check flagged 144 of 758 edges; these rules leave
-/// 6, each a cut through a sound.
+/// Otherwise it's judged by how far under the speech level the clip's own
+/// 25 ms beside the edge is (`CutPlacer.score`). On the Ian video (October
+/// 2026, #64) every cut Mike heard as a cut-off was within about 3 dB of the
+/// speech, and the clean joins 15 dB or more under it, so under
+/// `clippedUnder` is clipped and under `cleanFrom` marginal. Two things
+/// clip a word with the clip's side quiet, and are clipped whatever its
+/// level:
+/// - a short burst of voice past the edge with a pause after it
+///   (`burst`): the "t" released after the closure the edge is in, which
+///   belongs to the kept word;
+/// - voice past the edge running into a pause within `reach`, when the
+///   join isn't clean: the rest of the word, like the "pro" of "processed"
+///   left before a clip that started on the transcript's time for it.
+///
+/// A clipped edge's fix moves it into a real pause (`CutPlacer`): past the
+/// cut-off sound into a pause in the cut material, unless that would bring
+/// a cut word back, or back into a pause in what the clip keeps, unless
+/// that would drop a kept word. With neither, a cut of `putBackLimit` or
+/// less is better put back whole, filler and all, which is what sounded
+/// right on the Ian video.
 public enum CutAudit {
-    public static let minPause = 0.08
+    public static let minPause = 0.07
     /// How far an edge may move to reach a pause.
     public static let reach = 0.3
     /// How far into the pause a moved edge goes, so the word's tail (or the
     /// breath before the next one) isn't right on the cut.
     public static let pad = 0.04
-    /// Voice at speech level a clipped word has on each side of the edge.
-    public static let minSpeech = 0.05
-    /// How far under the voice either side an edge is in a dip.
-    static let dip: Float = 12
-    /// How near the high band's loud tenth a release after a closure gets.
-    static let release: Float = 8
+    /// How far before its word the start of a clip goes when it moves back
+    /// into the pause before it. The end of the quiet before a word is often
+    /// its "p" or "t" bursting, not its start: "processed" started at
+    /// 647.60 on Ian's mic, 60 ms before its "p" did.
+    public static let lead = 0.08
+    /// Voice at speech level past the edge that counts as cut off.
+    public static let minSpeech = 0.02
+    /// Voice past the edge this short, with a pause after it, is a
+    /// consonant's burst, not a word.
+    public static let burst = 0.1
+    /// The clip's 25 ms beside the edge, this many dB or less under the
+    /// speech level, is clipped. Between Mike's cut-offs (about 3) and the
+    /// clean joins (15 or more); the line itself is a guess.
+    public static let clippedUnder: Float = 9
+    /// And this many dB or more under it is a clean join (#64, measured).
+    public static let cleanFrom: Float = 15
+    /// How much of the clip beside the edge the join's level is taken over.
+    public static let keptSpan = 0.025
+    /// The speech level is the loud end (`speechPercentile` of 10 ms
+    /// frames) of the sound this far either side of the edge.
+    public static let speechSpan = 3.0
+    public static let speechPercentile = 0.92
+    /// A cut this long or shorter, with no pause to move to, is put back.
+    public static let putBackLimit = 2.0
+    /// A transcript word is in a stretch with more than this much of it
+    /// inside (or half of a shorter word): its times can be off by this
+    /// much without it counting.
+    public static let wordTolerance = 0.05
 
     /// Which side of the edge the clip plays: `before` for a clip's end
     /// (it plays up to the edge), `after` for a clip's start.
@@ -213,8 +245,30 @@ public enum CutAudit {
         case before, after
     }
 
+    public enum Verdict: String, Sendable {
+        case clean
+        /// Not clean, not clipped: worth a listen, but it doesn't fail.
+        case marginal
+        case clipped
+    }
+
+    /// What to do about a clipped edge.
+    public enum Fix: Equatable, Sendable {
+        /// Move the edge here (media time), into a real pause.
+        case trim(to: Double)
+        /// No pause to move to without bringing a cut word back or dropping
+        /// a kept one: put the cut back.
+        case putBack
+        /// Neither: a person has to listen and recut it.
+        case nothingNearby
+    }
+
     public struct Edge: Equatable, Sendable {
-        public var clipped: Bool
+        public var verdict: Verdict
+        public var clipped: Bool { verdict == .clipped }
+        /// How far the clip's 25 ms beside the edge is under the speech
+        /// level, in dB. Nil for an edge in a pause.
+        public var margin: Float?
         /// Seconds of voice on the kept side running up to the edge.
         public var kept: Double
         /// Seconds of voice past the edge, in the material cut away, before
@@ -226,111 +280,23 @@ public enum CutAudit {
         public var highBandOnly: Bool
         /// The pause the suggested edge goes into, in media time.
         public var pause: ClosedRange<Double>?
-        /// Where to move the edge (media time): the nearest real pause
-        /// within `reach`, either side.
+        /// Where to move the edge (media time), when the fix is a trim.
         public var suggestion: Double?
+        /// For a clipped edge.
+        public var fix: Fix?
 
-        static let clean = Edge(clipped: false, kept: 0, lost: 0, gap: nil, highBandOnly: false, pause: nil, suggestion: nil)
+        static let clean = Edge(verdict: .clean, margin: nil, kept: 0, lost: 0, gap: nil, highBandOnly: false, pause: nil, suggestion: nil, fix: nil)
     }
 
-    public static func judge(_ energy: SpeechEnergy, levels: SpeechLevels, at time: Double, keeps side: Side) -> Edge {
-        let count = energy.full.count
-        let step = SpeechEnergy.frameSeconds
-        let quiet = (0..<count).map { energy.full[$0] < levels.full && energy.high[$0] < levels.high }
-        // Quiet runs long enough to be pauses. Beyond the frames read is the
-        // file's start or end (reads reach well past every edge otherwise),
-        // so it counts as a pause, and so does a run reaching it.
-        let pauseFrames = Int((minPause / step).rounded())
-        var inPause = [Bool](repeating: false, count: count)
-        var runStart = 0
-        for index in 0...count where index == count || !quiet[index] {
-            if index > runStart, index - runStart >= pauseFrames || runStart == 0 || index == count {
-                for k in runStart..<index { inPause[k] = true }
-            }
-            runStart = index + 1
-        }
-        func isPause(_ index: Int) -> Bool { index < 0 || index >= count || inPause[index] }
-        func isQuiet(_ index: Int) -> Bool { index < 0 || index >= count || quiet[index] }
-
-        let x = (time - energy.start) / step
-        let before = Int((x - 1e-6).rounded(.up)) - 1
-        let after = Int((x + 1e-6).rounded(.down))
-        let (keptFrame, keptStep, lostFrame, lostStep) = side == .before ? (before, -1, after, 1) : (after, 1, before, -1)
-        if isPause(keptFrame) || isPause(lostFrame) { return .clean }
-
-        let reachFrames = Int((reach / step).rounded())
-        /// Frames from `frame` going `direction`, up to a pause or `reach`.
-        func stretch(_ frame: Int, _ direction: Int) -> [Int] {
-            var frames: [Int] = []
-            var index = frame
-            while !isPause(index), frames.count < reachFrames {
-                frames.append(index)
-                index += direction
-            }
-            return frames
-        }
-        func speech(_ frames: [Int]) -> (full: Int, high: Int) {
-            (frames.filter { energy.full[$0] >= levels.fullSpeech }.count, frames.filter { energy.high[$0] >= levels.highSpeech }.count)
-        }
-        let lostSpeech = speech(stretch(lostFrame, lostStep))
-        let keptSpeech = speech(stretch(keptFrame, keptStep))
-        let enough = Int((minSpeech / step).rounded())
-        guard max(lostSpeech.full, lostSpeech.high) >= enough, max(keptSpeech.full, keptSpeech.high) >= enough else { return .clean }
-
-        func level(_ frames: [Int], _ band: [Float]) -> Float {
-            frames.filter { $0 >= 0 && $0 < count }.map { band[$0] }.max() ?? -120
-        }
-        let near = Int((0.1 / step).rounded())
-        // Past the frames read is the file's start or end: silence.
-        let edgeLevel = (before - 1...after + 1).map { $0 >= 0 && $0 < count ? energy.full[$0] : -120 }.min() ?? -120
-        let keptPeak = level((0..<near).map { keptFrame + $0 * keptStep }, energy.full)
-        let lostPeak = level((0..<near).map { lostFrame + $0 * lostStep }, energy.full)
-        let inDip = edgeLevel <= min(keptPeak, lostPeak) - dip
-        let released = side == .before && level((0..<3).map { lostFrame + $0 }, energy.high) >= levels.highLoud + release
-        if inDip && !released { return .clean }
-
-        /// The first pause frame from `frame` going `direction`, and how far
-        /// its near edge is from `time`.
-        func nearestPause(from frame: Int, _ direction: Int) -> (frame: Int, distance: Double) {
-            var index = frame
-            while !isPause(index) { index += direction }
-            let boundary = energy.start + Double(direction > 0 ? index : index + 1) * step
-            return (index, abs(boundary - time))
-        }
-        let lostPause = nearestPause(from: lostFrame, lostStep)
-        let keptPause = nearestPause(from: keptFrame, keptStep)
-
-        var gap: Double?
-        for frame in [keptFrame, lostFrame] where isQuiet(frame) {
-            var low = frame, high = frame
-            while !isPause(low - 1), isQuiet(low - 1) { low -= 1 }
-            while !isPause(high + 1), isQuiet(high + 1) { high += 1 }
-            gap = Double(high - low + 1) * step
-            break
-        }
-
-        var edge = Edge(
-            clipped: true, kept: keptPause.distance, lost: lostPause.distance <= reach + 1e-9 ? lostPause.distance : nil,
-            gap: gap, highBandOnly: lostSpeech.full == 0, pause: nil, suggestion: nil
-        )
-        let options = [(lostPause, lostStep), (keptPause, keptStep)].filter { $0.0.distance <= reach + 1e-9 }
-        guard let (pause, direction) = options.min(by: { $0.0.distance < $1.0.distance }) else { return edge }
-        let range: ClosedRange<Double>
-        if pause.frame < 0 {
-            // Past the frames read: the file's start or end, of no known
-            // length, so it's given room for the pad.
-            range = (energy.start - 1)...energy.start
-        } else if pause.frame >= count {
-            range = energy.end...(energy.end + 1)
-        } else {
-            var low = pause.frame, high = pause.frame
-            while low - 1 >= 0, inPause[low - 1] { low -= 1 }
-            while high + 1 < count, inPause[high + 1] { high += 1 }
-            range = (energy.start + Double(low) * step)...(energy.start + Double(high + 1) * step)
-        }
-        let pad = min(Self.pad, (range.upperBound - range.lowerBound) / 2)
-        edge.pause = range
-        edge.suggestion = direction > 0 ? range.lowerBound + pad : range.upperBound - pad
-        return edge
+    /// - Parameters:
+    ///   - removed: at a cut between two pieces of one take, the stretch of
+    ///     the file cut out between them; a fix only reaches into it.
+    ///   - words: transcript words around the edge, in media time, only so
+    ///     a fix never brings a cut word back or drops a kept one.
+    public static func judge(
+        _ energy: SpeechEnergy, levels: SpeechLevels, at time: Double, keeps side: Side,
+        removed: ClosedRange<Double>? = nil, words: [ClosedRange<Double>] = []
+    ) -> Edge {
+        CutPlacer(energy, levels: levels).judge(at: time, keeps: side, removed: removed, words: words)
     }
 }

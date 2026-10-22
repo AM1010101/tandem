@@ -202,16 +202,17 @@ extension TandemService {
             let revision = coordinator.revision
             let toCheck = ranges
             let why = note
+            let words = toCheck.isEmpty ? [:] : CutCheck.words(in: project, analysis: analysis)
             return {
                 let started = Date()
-                let outcome = toCheck.isEmpty ? CutCheck.Outcome() : await CutCheck.run(project: project, folder: folder, ranges: toCheck)
+                let outcome = toCheck.isEmpty ? CutCheck.Outcome() : await CutCheck.run(project: project, folder: folder, ranges: toCheck, words: words)
                 var names: [String: String] = [:]
-                for id in Set(outcome.problems.flatMap(\.clipIDs)) {
+                for id in Set((outcome.problems + outcome.notes).flatMap(\.clipIDs)) {
                     guard let clip = project.clip(id) else { continue }
                     names[id] = Self.checkName(clip, in: project)
                 }
                 return CheckResult(
-                    ranges: toCheck, frames: 0, seconds: Date().timeIntervalSince(started), problems: outcome.problems,
+                    ranges: toCheck, frames: 0, seconds: Date().timeIntervalSince(started), problems: outcome.problems, notes: outcome.notes,
                     clipNames: names, note: why, warnings: outcome.warnings, cuts: outcome.checked, commands: outcome.commands, revision: revision
                 )
             }

@@ -2,6 +2,7 @@ import AVFoundation
 import XCTest
 @testable import TandemAPI
 @testable import TandemCore
+import TandemMedia
 
 /// `tandem check` through the service: what it checks, what it reports.
 final class CheckAPITests: XCTestCase {
@@ -229,8 +230,9 @@ final class CheckAPITests: XCTestCase {
     // MARK: - Cuts
 
     /// The camera's sound as a 16 kHz WAV: room noise, with "words" (a buzz
-    /// of harmonics) where `words` says, in file time.
-    private func writeVoice(to url: URL, length: Double, words: [(Double, Double)]) throws {
+    /// of harmonics) where `words` says, in file time, and `soft` ones some
+    /// dB under them: (start, end, dB).
+    private func writeVoice(to url: URL, length: Double, words: [(Double, Double)], soft: [(Double, Double, Double)] = []) throws {
         let rate = 16_000.0
         let count = Int(length * rate)
         let format = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 1)!
@@ -244,14 +246,15 @@ final class CheckAPITests: XCTestCase {
             rumble += (Float(Int32(bitPattern: seed)) / Float(Int32.max) - rumble) * 0.04
             data[i] = rumble * 0.03
         }
-        for (start, end) in words {
+        for (start, end, under) in words.map({ ($0.0, $0.1, 0.0) }) + soft {
             let from = Int(start * rate), to = Int(end * rate)
+            let gain = 0.08 * pow(10, -under / 20)
             for i in from..<to {
                 let t = Double(i) / rate
                 let fade = min(1, Double(i - from) / 80, Double(to - i) / 80)
                 var buzz = 0.0
                 for harmonic in stride(from: 150.0, through: 3000, by: 150) { buzz += sin(2 * .pi * harmonic * t) / (harmonic / 150) }
-                data[i] += Float(buzz * 0.08 * fade)
+                data[i] += Float(buzz * gain * fade)
             }
         }
         let file = try AVAudioFile(forWriting: url, settings: [
@@ -262,12 +265,12 @@ final class CheckAPITests: XCTestCase {
     }
 
     /// The fixture with the camera's sound in a WAV file that's really there.
-    private func voicedHarness(words: [(Double, Double)]) throws -> ServiceHarness {
+    private func voicedHarness(words: [(Double, Double)], soft: [(Double, Double, Double)] = []) throws -> ServiceHarness {
         var project = APIFixture.project()
         project.media[0].path = "source/take1-camera.wav"
         let h = try ServiceHarness(project: project)
         try FileManager.default.createDirectory(at: h.folder.file("source"), withIntermediateDirectories: true)
-        try writeVoice(to: h.folder.file("source/take1-camera.wav"), length: 64, words: words)
+        try writeVoice(to: h.folder.file("source/take1-camera.wav"), length: 64, words: words, soft: soft)
         return h
     }
 
@@ -287,6 +290,8 @@ final class CheckAPITests: XCTestCase {
         let cut = try XCTUnwrap(problem.cut)
         XCTAssertEqual(cut.clipID, "clip_voc1")
         XCTAssertEqual(cut.edge, .end)
+        XCTAssertEqual(cut.fixKind, .trimToPause)
+        XCTAssertLessThan(try XCTUnwrap(cut.margin), 9, "cut while the word's sounding")
         // Just into the pause after the word (30.16), on a frame.
         let to = t(30) + Time.frames(5, at: .fps30)
         XCTAssertEqual(cut.to, to)
@@ -296,7 +301,7 @@ final class CheckAPITests: XCTestCase {
 
         let text = result.readableText
         XCTAssertTrue(text.hasPrefix("Checked 00:00.000-01:00.000 (4 cut edges) in "), text)
-        XCTAssertTrue(text.contains("  00:30.000  Clipped word at the end of clip_voc1: the voice runs on 0.12 s past the cut. Trim the end 0.167 s later, into the pause after it.  On: clip_voc1 take1-camera, clip_voc2 take1-camera"), text)
+        XCTAssertTrue(text.contains("  00:30.000  Clipped word at the end of clip_voc1: the voice runs on 0.12 s past the cut; the clip's last 25 ms is at speech level. Trim the end 0.167 s later, into the pause after it.  On: clip_voc1 take1-camera, clip_voc2 take1-camera"), text)
         XCTAssertTrue(text.contains("Fix: tandem apply --expect \(result.revision ?? 0) --label \"Move clipped cuts into pauses\" '[{\"trim\":"), text)
 
         // Applying the fix leaves nothing to find.
@@ -304,6 +309,60 @@ final class CheckAPITests: XCTestCase {
         let again = try await CheckRequest(cuts: true).run(on: h.service, context: h.context)
         XCTAssertTrue(again.ok, "\(again.problems)")
         XCTAssertTrue(again.commands.isEmpty)
+    }
+
+    func testACutWhoseOnlyPauseIsPastACutWordIsPutBack() async throws {
+        // "that because": "that" is kept and runs straight into "because",
+        // cut with the 2 s after it. The pause after "because" is in reach,
+        // but trimming into it brings "because" back.
+        let h = try voicedHarness(words: [(1, 3.6), (29.5, 30.25), (33, 33.8)])
+        defer { h.close() }
+        h.analysis.transcripts["med_camera"] = Transcript(language: "en", engine: "fake", words: [
+            TranscriptWord(text: "that", start: t(29.5), end: t(30)),
+            TranscriptWord(text: "because", start: t(30.02), end: t(30.24)),
+            TranscriptWord(text: "Now", start: t(33), end: t(33.8))
+        ])
+        let result = try await CheckRequest(cuts: true).run(on: h.service, context: h.context)
+        XCTAssertEqual(result.problems.map(\.kind), [.clippedWord])
+        let cut = try XCTUnwrap(result.problems.first?.cut)
+        XCTAssertEqual(cut.fixKind, .putBack)
+        XCTAssertNil(cut.to)
+        let fix = EditCommand.trim(clipID: "clip_voc1", edge: .end, to: t(32), ripple: true, includeLinked: nil)
+        XCTAssertEqual(cut.fix, fix, "the end of the first piece on to where the second starts in the take")
+        XCTAssertEqual(result.commands, [fix])
+        XCTAssertTrue(result.readableText.contains("No pause it can reach without bringing back a cut word: put back the 2.00 s cut here, filler and all (the end of clip_voc1 2.000 s later)."), result.readableText)
+
+        // Put back, the take carries straight on: nothing left to check there.
+        try h.service.apply(ApplyRequest(label: "fix", commands: result.commands), context: h.context)
+        let again = try await CheckRequest(cuts: true).run(on: h.service, context: h.context)
+        XCTAssertTrue(again.ok, "\(again.problems)")
+        XCTAssertEqual(again.cuts, 2, "the take's start and end")
+
+        // Without the transcript, nothing says "because" is a word, so the
+        // trim goes into the pause.
+        XCTAssertNotNil(h.service.coordinator.undo())
+        h.analysis.transcripts["med_camera"] = nil
+        let unheard = try await CheckRequest(cuts: true).run(on: h.service, context: h.context)
+        XCTAssertEqual(unheard.problems.first?.cut?.fixKind, .trimToPause)
+    }
+
+    func testAMarginalJoinIsANote() async throws {
+        // The first piece's last 30 ms are 12 dB under the speech, and the
+        // cut word runs on with no pause in reach.
+        let h = try voicedHarness(words: [(1, 3.6), (29, 29.97), (30, 30.6), (33, 33.8)], soft: [(29.97, 30, 12)])
+        defer { h.close() }
+        let result = try await CheckRequest(cuts: true).run(on: h.service, context: h.context)
+        XCTAssertTrue(result.ok, "marginal doesn't fail: \(result.problems)")
+        XCTAssertTrue(result.commands.isEmpty)
+        XCTAssertEqual(result.notes.map(\.kind), [.marginalJoin])
+        let cut = try XCTUnwrap(result.notes.first?.cut)
+        XCTAssertEqual(cut.clipID, "clip_voc1")
+        XCTAssertEqual(try XCTUnwrap(cut.margin), 12, accuracy: 2)
+        XCTAssertNil(cut.fixKind)
+        XCTAssertNil(cut.fix)
+        let text = result.readableText
+        XCTAssertTrue(text.contains("no problems.\nNotes (not problems):\n  00:30.000  Marginal join at the end of clip_voc1: the clip's last 25 ms is "), text)
+        XCTAssertTrue(text.contains(" dB under the speech (clean is 15 or more, clipped under 9). Listen to it with tandem clip.  On: clip_voc1 take1-camera, clip_voc2 take1-camera"), text)
     }
 
     func testCutsInPausesAreFine() async throws {

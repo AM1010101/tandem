@@ -12,6 +12,8 @@ private struct Take {
     var start = 10.0
     var length = 4.0
     var words: [(Double, Double)] = []
+    /// Words this many dB under the others: (start, end, dB).
+    var softWords: [(Double, Double, Double)] = []
     var esses: [(Double, Double)] = []
     var releases: [(Double, Double)] = []
 
@@ -41,13 +43,14 @@ private struct Take {
             let ramp = 0.005 * Self.rate
             return Float(min(1, Double(i - range.lowerBound) / ramp, Double(range.upperBound - i) / ramp))
         }
-        for word in words {
-            let range = span(word)
+        for (start, end, under) in words.map({ ($0.0, $0.1, 0.0) }) + softWords {
+            let range = span((start, end))
+            let gain = 0.08 * pow(10, -under / 20)
             for i in range {
                 let t = Double(i) / Self.rate
                 var buzz = 0.0
                 for harmonic in stride(from: 150.0, through: 3000, by: 150) { buzz += sin(2 * .pi * harmonic * t) / (harmonic / 150) }
-                out[i] += Float(buzz * 0.08) * fade(i, in: range)
+                out[i] += Float(buzz * gain) * fade(i, in: range)
             }
         }
         // Each sample against the last: white noise tipped up to the top of
@@ -68,9 +71,11 @@ private struct Take {
 }
 
 final class SpeechEnergyTests: XCTestCase {
-    private func judge(_ take: Take, at time: Double, keeps side: CutAudit.Side) -> CutAudit.Edge {
+    private func judge(
+        _ take: Take, at time: Double, keeps side: CutAudit.Side, removed: ClosedRange<Double>? = nil, words: [ClosedRange<Double>] = []
+    ) -> CutAudit.Edge {
         let energy = take.energy
-        return CutAudit.judge(energy, levels: SpeechLevels(of: [energy]), at: time, keeps: side)
+        return CutAudit.judge(energy, levels: SpeechLevels(of: [energy]), at: time, keeps: side, removed: removed, words: words)
     }
 
     func testFramesAreTenMillisecondsInMediaTime() {
@@ -113,18 +118,110 @@ final class SpeechEnergyTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(edge.suggestion), 11.64, accuracy: 0.015, "the pause after the word is nearer than the one before it")
     }
 
-    func testACutBetweenTwoWordsWithNoPauseIsFine() {
-        // Fluent speech: 40 ms between the words, too short for a pause, and
-        // the next word starts on a vowel, not a release.
-        let take = Take(words: [(11.0, 11.3), (11.34, 11.6), (12.0, 12.4)])
-        XCTAssertFalse(judge(take, at: 11.32, keeps: .before).clipped, "the cut is in the dip between the words")
-        XCTAssertFalse(judge(take, at: 11.32, keeps: .after).clipped)
+    func testACutBetweenTwoWordsWithNoPauseIsJudgedByHowQuietTheKeptSideIs() throws {
+        // Fluent speech: 60 ms between the words, too short for a pause. A
+        // cut in that dip keeps no voice beside it, so it's a clean join.
+        let dip = Take(words: [(10.6, 11.3), (11.36, 11.8), (12.4, 12.8)])
+        XCTAssertEqual(judge(dip, at: 11.33, keeps: .before).verdict, .clean, "the clip's last 25 ms is the dip")
+        XCTAssertEqual(judge(dip, at: 11.33, keeps: .after).verdict, .clean)
+
+        // The same words run together, as cutting a filler or a repeat out
+        // of running speech leaves them: the kept word is still sounding at
+        // the cut, however exactly it sits on the word boundary (#64).
+        let fluent = Take(words: [(10.6, 11.3), (11.3, 11.8), (12.4, 12.8)])
+        let edge = judge(fluent, at: 11.3, keeps: .before)
+        XCTAssertTrue(edge.clipped)
+        XCTAssertLessThan(try XCTUnwrap(edge.margin), CutAudit.clippedUnder)
+        XCTAssertEqual(edge.fix, .nothingNearby, "no pause within reach either side")
     }
 
-    func testALittleVoiceEitherSideIsntAClippedWord() {
+    func testCuttingTheLastOfAWordWhileItsSoundingClipsIt() throws {
+        // Only 30 ms of the word either side, but the cut is through the
+        // voice at full level, so it's heard as chopped.
         let take = Take(words: [(11.0, 11.6), (12.0, 12.5)])
-        XCTAssertFalse(judge(take, at: 11.57, keeps: .before).clipped, "30 ms of the word's tail cut off")
-        XCTAssertFalse(judge(take, at: 11.57, keeps: .after).clipped, "a 30 ms fragment of the word left at the clip's start")
+        let end = judge(take, at: 11.57, keeps: .before)
+        XCTAssertTrue(end.clipped, "30 ms of the word's tail cut off")
+        XCTAssertEqual(try XCTUnwrap(end.suggestion), 11.64, accuracy: 0.015, "on past the tail into the pause")
+        let start = judge(take, at: 11.57, keeps: .after)
+        XCTAssertTrue(start.clipped, "a 30 ms fragment of the word left at the clip's start")
+        XCTAssertEqual(try XCTUnwrap(start.suggestion), 11.64, accuracy: 0.015, "past the fragment")
+    }
+
+    func testACutInTheClosureBeforeAFinalTIsClipped() throws {
+        // "extract": the vowel, the 50 ms closure before the "t", a 30 ms
+        // burst, then a pause. The clip's last 25 ms is the quiet closure,
+        // so its level says nothing; the short burst past the cut, with a
+        // pause after it, is what gives it away: it belongs to the kept word.
+        let take = Take(words: [(10.8, 11.3), (12.0, 12.4)], releases: [(11.35, 11.38)])
+        let edge = judge(take, at: 11.33, keeps: .before)
+        XCTAssertTrue(edge.clipped, "\"extract\" cut to \"extrac\"")
+        XCTAssertGreaterThan(try XCTUnwrap(edge.margin), CutAudit.cleanFrom, "quiet beside the cut")
+        let pause = try XCTUnwrap(edge.pause)
+        XCTAssertEqual(pause.lowerBound, 11.38, accuracy: 0.015, "the pause after the burst")
+        let to = try XCTUnwrap(edge.suggestion)
+        XCTAssertGreaterThan(to, 11.38, "past the burst")
+        XCTAssertEqual(to, 11.42, accuracy: 0.015)
+        XCTAssertEqual(edge.fix, .trim(to: to))
+
+        // The pause it moves into is in the cut material, but it's not a
+        // word, so it may come back; the cut word after it may not.
+        let cut = judge(take, at: 11.33, keeps: .before, removed: 11.33...12.6, words: [11.97...12.42])
+        XCTAssertEqual(cut.fix, .trim(to: to))
+    }
+
+    func testTheKeptSidesLevelAgainstTheSpeechSaysHowCleanAJoinIs() throws {
+        // A word, then its last 30 ms some dB under the speech, cut there,
+        // with the next word (cut material) running straight on: no pause
+        // within reach either side.
+        func join(under: Double) -> CutAudit.Edge {
+            let take = Take(length: 6, words: [(10.5, 11.47), (11.5, 12.2), (13, 14)], softWords: [(11.47, 11.5, under)])
+            return judge(take, at: 11.5, keeps: .before)
+        }
+        let chopped = join(under: 3)
+        XCTAssertEqual(chopped.verdict, .clipped, "within 3 dB of the speech, like each of Mike's cut-offs")
+        XCTAssertEqual(try XCTUnwrap(chopped.margin), 3, accuracy: 2)
+        XCTAssertEqual(chopped.fix, .nothingNearby)
+        let marginal = join(under: 12)
+        XCTAssertEqual(marginal.verdict, .marginal)
+        XCTAssertFalse(marginal.clipped, "marginal doesn't fail")
+        XCTAssertEqual(try XCTUnwrap(marginal.margin), 12, accuracy: 2)
+        XCTAssertNil(marginal.fix)
+        let clean = join(under: 18)
+        XCTAssertEqual(clean.verdict, .clean, "a clean join is 15 dB or more under")
+        XCTAssertFalse(clean.clipped)
+    }
+
+    func testAFixNeverPutsARemovedWordBack() throws {
+        // "that [because] ...": the kept word runs straight into a cut one,
+        // and the only pause in reach is after the cut word.
+        let take = Take(length: 6, words: [(10.5, 11.5), (11.5, 11.75), (14.5, 15)])
+        let because = 11.53...11.72
+        let near = judge(take, at: 11.5, keeps: .before, removed: 11.5...12.4, words: [because])
+        XCTAssertTrue(near.clipped)
+        XCTAssertNil(near.suggestion, "trimming into that pause brings \"because\" back")
+        XCTAssertEqual(near.fix, .putBack, "0.9 s cut here: put it back, filler and all")
+        let far = judge(take, at: 11.5, keeps: .before, removed: 11.5...14.0, words: [because])
+        XCTAssertTrue(far.clipped)
+        XCTAssertNil(far.suggestion)
+        XCTAssertEqual(far.fix, .nothingNearby, "2.5 s is too much to put back")
+        // With no transcript to say a word's there, the audio can't tell.
+        XCTAssertEqual(try XCTUnwrap(judge(take, at: 11.5, keeps: .before, removed: 11.5...12.4).suggestion), 11.79, accuracy: 0.015)
+    }
+
+    func testAnEdgeInARealPauseIsClean() {
+        let take = Take(words: [(11.0, 11.5), (11.6, 12.0)])
+        for side in [CutAudit.Side.before, .after] {
+            let edge = judge(take, at: 11.55, keeps: side)
+            XCTAssertEqual(edge.verdict, .clean)
+            XCTAssertNil(edge.fix)
+        }
+    }
+
+    func testSeventyMillisecondsOfQuietIsAPause() {
+        // #64 measured real pauses at 70 ms or more under floor + 9 dB.
+        let take = Take(words: [(11.0, 11.5), (11.575, 12.0)])
+        XCTAssertEqual(judge(take, at: 11.54, keeps: .before).verdict, .clean)
+        XCTAssertEqual(judge(take, at: 11.54, keeps: .after).verdict, .clean)
     }
 
     func testAFinalSIsHeardAboveFourKilohertz() throws {
@@ -153,7 +250,9 @@ final class SpeechEnergyTests: XCTestCase {
         let edge = judge(take, at: 11.1, keeps: .after)
         XCTAssertTrue(edge.clipped)
         XCTAssertEqual(try XCTUnwrap(edge.lost), 0.1, accuracy: 0.015)
-        XCTAssertEqual(try XCTUnwrap(edge.suggestion), 10.96, accuracy: 0.015, "just inside the pause before the word")
+        // 0.08 s before the word: before a word, the end of the quiet is
+        // often its "p" or "t" bursting, after a silent closure.
+        XCTAssertEqual(try XCTUnwrap(edge.suggestion), 10.92, accuracy: 0.015, "inside the pause before the word")
     }
 
     func testNoPauseInReachLeavesItToAPerson() {
@@ -162,6 +261,7 @@ final class SpeechEnergyTests: XCTestCase {
         XCTAssertTrue(edge.clipped)
         XCTAssertNil(edge.suggestion)
         XCTAssertNil(edge.lost, "no pause within reach past the cut")
+        XCTAssertEqual(edge.fix, .nothingNearby)
     }
 
     func testATakeWithNoVoiceIsntJudged() {

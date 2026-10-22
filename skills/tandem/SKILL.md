@@ -646,6 +646,16 @@ and the upload batch.
 - **Pick moments that stand on their own:** a strong claim with its number,
   a rant, a "this broke" moment. Start about 0.1 s before the first word and
   end in the pause after a finished thought, checked with `tandem pauses`.
+- **Every Short stands alone.** Mike turned down a 43 s tip from the Tandem
+  video: "it's missing a lot of context around what tandem is. Also, it
+  kind of refers back to the video, but people have not watched... you've
+  got to really think about them as standalone things... or you've got to
+  insert the extra context" (2026-10-20). Read every line as a stranger:
+  cut or fix anything that points at the long video ("as you're seeing
+  here", "the process I go through", "like I said", "so yeah, that's X",
+  "can you get hold of it") or assumes they know the product, and put the
+  missing context in the hook title or an on-screen line. A "what is X"
+  Short is often the obvious first one to make.
 - **Keep the caveats.** Cutting "S tier or Haiku tier" straight after
   "Haiku costs like 40 times less" left out "it's kind of an unfair test"
   and "we weren't running the full model". Mike asked for them back so the
@@ -662,6 +672,37 @@ and the upload batch.
   re-rendered for the Short (a 1000 px window at 36 px, soft-wrapped,
   cropped to the window), and a table keeps only the columns he names, cut
   side by side. Look at every shot at about 540 px wide before showing him.
+- **Re-render web B-roll for the window, don't crop it.** Cropping the 16:9
+  page captures into the window cut lines off mid-sentence: "the B-roll is
+  clipped, it gets cut off" (Tandem Shorts, 2026-10-20). Re-capture each
+  page at 2160x1680 in a narrow browser window (380 to 640 CSS px wide, so
+  body text lands at about 37 px on the phone), keeping the same pens at the
+  same times, and place it full width at y 0.74, scale 1. The renderer is
+  `tandem/.work/screen-build/short5.mjs`; `portrait_crops.py` is only for
+  footage that can't be re-captured.
+- **Platform UI owns the bottom, so B-roll goes on top (Tandem Shorts,
+  2026-10-20).** Mike: "on platforms like TikTok or YouTube Shorts, they
+  have all the UI down the bottom... the thing that you should be focusing
+  on at any time [should be] at the top." This replaces the face-on-top,
+  window-below layout above. With no B-roll he's full-frame; while a shot
+  shows, it sits in a 2160x1680 window flush with the top (position y
+  0.21875, scale 1) and the camera under it drops to the bottom half (scale
+  2.4, y 0.80, blade the camera at each B-roll edge). Captions at y 0.47,
+  between the window and his cap; hook titles and on-screen tips at y 0.62,
+  never in the bottom quarter, where the title, channel and buttons sit.
+- **Centre his face, not the frame.** He sits left of centre in the 16:9
+  shot (nose about 39.5% across in the studio camera, 41% in Record It
+  takes), and the 9:16 full-frame crop shows only a third of the width, so
+  `tandem short` left his face at the left edge ("why is my face not centre
+  on these shorts?"). Set each full-frame camera clip's position x to
+  0.5 + (0.5 - faceX) x scale: 0.832 and 0.784 at scale 3.16.
+- **Lay one music bed under each Short.** The long video's music track is
+  locked, so it doesn't follow the cuts that stitch a Short together, and a
+  section card's +14 dB swell landed mid-Short: "The music gets turned up
+  loud in the middle of it for some reason" (What is Tandem, 2026-10-20).
+  Unlock, remove the beds under the Short, place one bed for its length at
+  -45 LUFS with a 0.8 s fade in and 2 s fade out and no keyframes, lock it
+  again.
 - **Fix the captions' words.** They come from the transcript, so they carry
   its mishearings: "comics" for Convex, "messages" for Meta's, "evils" for
   evals, "roots" for routes, "sinking" for thinking, "news models" for Muse
@@ -759,6 +800,44 @@ What he changed, in the order he asked:
   photos... surveying... 2D drawing" got a shot each, from his project
   archive (`~/dev/me/the-pool`). Crop plans and surveys to the drawing:
   their title blocks carry his address and the designer's phone and email.
+
+### A phone app demo as a portrait Short: Walkies (October 2026)
+
+A webcam take of Mike talking through his iPhone app, plus the phone's own
+screen recording, made into a sub-3:00 YouTube Short
+(`convex-videos/walkies/`). He asked for portrait himself ("should we do
+this as a portrait video?... under the 3 mins").
+
+- **Sync by eye when the phone has no voice.** An iOS screen recording
+  carries only app sounds, so `tandem sync` scored 14 and refused. The
+  file names (Record It's camera start and iOS's
+  `ScreenRecording_<date> <time>`) gave the offset to the second, and a
+  named moment confirmed it (the Woodhenge pin zoomed in as he said
+  "Woodhenge"). Put the phone file in the camera's take with
+  `updateMedia` (`takeID`, `takeOffset` = seconds into the take it
+  started), then `placeMedia` both. With an explicit `sourceStart`,
+  placeMedia gave both files the same media time and ignored the phone's
+  offset (mikecann/tandem#63): check the screen clip's source range after.
+- **Layout he passed:** the phone recording full height with a blurred,
+  darkened copy behind it filling the sides; Mike in a rounded face-cam
+  box (cutout off, cropped to his face, white border, shadow) bottom-left
+  above YouTube's title area. The cutout corner looked like a floating
+  torso in portrait. Slide the box off over pages it would cover (the shop
+  list) and back after. Where the phone just sits on a still map while he
+  talks, go full-frame on his face.
+- **Cut talk before features.** To get under 3:00 I cut the shell shop,
+  and Mike stopped the upload: "you didn't actually show the shop... cut
+  down a little bit of the talk at the end of the chef stuff... so we can
+  get some of the other features that the app has got in there". In a
+  demo Short, what the app can do on screen beats him talking over a
+  still screen.
+- **Hide notification banners** (Gmail and X pop-ups mid-recording) with
+  a `freezeFrame` copy of a clean frame, cropped to the top strip, on
+  B-roll, where the picture under the banner is still. `tandem check`
+  hung on a 9 s one (mikecann/tandem#62); check that stretch with
+  `tandem frames` instead.
+- **Run `tandem check` with the app holding the project.** Headless it
+  hung or lost the connection; through the app it took seconds.
 
 ### A two-person whiteboard interview: Ian Macartney on time in Convex (October 2026)
 

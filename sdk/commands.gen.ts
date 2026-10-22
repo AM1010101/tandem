@@ -90,7 +90,7 @@ export type Effect = {
   id?: string;
   /** Missing ones use the defaults. */
   params?: Record<string, ParamValue>;
-  /** pitchShift, colorAdjust, colorWheels, hsl, lut, sharpen, vignette, border, dropShadow, roundedCorners, blur or pixelate (see `effects`). */
+  /** compressor, limiter, pitchShift, voiceCleanup, colorAdjust, colorWheels, hsl, lut, sharpen, vignette, border, dropShadow, roundedCorners, blur or pixelate (see `effects`). */
   type: string;
 };
 
@@ -388,7 +388,7 @@ export type PlaceMediaArgs = {
   at: number;
   /** Track ID or name, like Music. Force the audio track (single file only). */
   audioTrackID?: string;
-  /** Default: all the media that's left. */
+  /** Length on the timeline. Default: all the media that's left (at speed, played at that speed). */
   duration?: number;
   /** Place the file's sound too. Default depends on the role (camera, music, sfx: yes). */
   includeAudio?: boolean;
@@ -400,8 +400,18 @@ export type PlaceMediaArgs = {
   pop?: boolean;
   /** Where to start in the take (or file), in seconds. Default: where all files have started. */
   sourceStart?: number;
+  /** Play it at this speed, like setSpeed: 1.5 fits 9.6 s of media into 6.4 s. The linked sound plays at the same speed, pitch corrected. Default 1. */
+  speed?: number;
   /** Track ID or name, like Music. Force the video track (single file only). */
   videoTrackID?: string;
+};
+
+/** Puts a file synced to a take by sound (tandem sync <file> sets its take) alongside the take's camera clips, linked to them so ripple cuts, trims and moves keep it in step. The take is cut where the file starts and stops. Another camera angle goes on its own cut track right above the camera's ("Angle 2"), its clips off until showAngle picks it, and its own sound isn't placed. A sound file (an external mic) goes on Voice, and the camera's own sound there moves to a muted "Camera sound" track, so the mic is what plays. */
+export type PlaceSyncedArgs = {
+  /** The synced file. */
+  mediaID: string;
+  /** Track ID or name, like Music. The track it goes on. Default: a new "Angle 2" track for a picture, Voice for sound. */
+  trackID?: string;
 };
 
 /** Adds one clip to a track: a text title, a solid, a graphic, an adjustment layer or part of a media file. */
@@ -429,7 +439,7 @@ export type RippleDeleteRangeArgs = {
   trackIDs?: Array<string>;
 };
 
-/** Ripple deletes several ranges at once, every one in the timeline's times before this command (as you read them), in any order. Tandem cuts them latest first so no cut moves another, and cuts overlapping or touching ranges once. Use it instead of sorting rippleDeleteRange commands latest first yourself. */
+/** Ripple deletes several ranges at once, every one in the timeline's times before this command (as you read them), in any order. Tandem cuts them latest first so no cut moves another, and cuts overlapping or touching ranges once. Use it instead of sorting rippleDeleteRange commands latest first yourself. It cuts exactly where you say: to cut words, use the cut operation (tandem cut), which puts both edges of each cut in a real pause. */
 export type CutRangesArgs = {
   /** The stretches to cut: start plus duration, or start and end. */
   ranges: Array<TimeRange>;
@@ -506,11 +516,11 @@ export type FitSectionCardsArgs = {
   clipIDs?: Array<string>;
 };
 
-/** Cuts clips at a time. With clipIDs only those clips (and their linked partners); otherwise every clip under the time on the given tracks, or on all targeted tracks. */
+/** Cuts clips at a time. With clipIDs only those clips (and their linked partners); otherwise every clip under the time on the given tracks, or on all targeted tracks. A clip cut earlier in the same batch is followed to the piece of it at the time, and a clip with nothing at the time fails, saying where it is. */
 export type BladeArgs = {
   /** Seconds. */
   at: number;
-  /** Only these clips. */
+  /** Only these clips. Blading one clip at several times in a batch works in any order. */
   clipIDs?: Array<string>;
   /** Track IDs or names, like ["Camera", "Voice"]. Only these tracks. */
   trackIDs?: Array<string>;
@@ -525,6 +535,13 @@ export type JoinArgs = {
 /** Joins every through-edit (see join) with its cut in range, both ends included, or on the whole timeline, in one go. Cuts that look like through-edits but would play differently joined are left, with a warning saying why. tandem join (the join tool) lists both first. */
 export type JoinThroughEditsArgs = {
   range?: TimeRange;
+};
+
+/** Shows one angle of a synced take over a range (snapped to frames): its clips there come on and the take's other angles there go off. Name the camera's own track to show the camera. The take is cut at the range's edges on every track it's on, as a through-edit, so the sound plays as before and each piece stays linked; later ripple cuts keep the switch where it was in the take. */
+export type ShowAngleArgs = {
+  range: TimeRange;
+  /** Track ID or name, like Music. The angle to show: its track, like "Angle 2", or "Camera" for the camera. */
+  trackID: string;
 };
 
 /** Moves a clip edge to a timeline time. With ripple the clip keeps its place and everything after it moves instead. */
@@ -560,6 +577,13 @@ export type SlideArgs = {
   clipID: string;
   /** Seconds. */
   delta: number;
+};
+
+/** Holds the frame a clip shows a frame before range over range, to cover a flash: a stale frame, or the preview jumping for a frame in a screen recording. Picture only: just this clip is cut, the held piece is a freeze frame, and every piece stays linked to the take, whose sound plays on uncut, so nothing moves. tandem check gives one for each flicker it can fix. The held piece is the clip's own ID when range starts at the clip's start, otherwise the first ID the batch makes. Several in one clip go latest first, as a cut keeps the clip's ID on the piece before it. */
+export type HoldFrameArgs = {
+  /** A clip of a video file on a video track. */
+  clipID: string;
+  range: TimeRange;
 };
 
 /** Changes speed, keeping the same media, so the clip gets shorter or longer. Linked clips change with it. */
@@ -718,8 +742,14 @@ export type SetKeyframesArgs = {
   parameter: string;
 };
 
-/** Levels every speech clip (camera and voice sound, and anything on a take track like Voice) to the project's speech level (settings.speechLoudness, default -20 LUFS) and clears its clip gain. Music and sound effects keep their gains. Change the level first with updateSettings if you want another. */
-export type NormalizeSpeechArgs = Record<string, never>;
+/** Levels every speech clip (camera and voice sound, and anything on a take track like Voice) to the project's speech level (settings.speechLoudness, default -20 LUFS) and clears its clip gain. Music and sound effects keep their gains. Change the level first with updateSettings if you want another. A clip that plays whose levelling would put its peaks over settings.truePeakCeiling also gets a compressor and a limiter holding them under it, in its audio effects; the result's warning names those clips. */
+export type NormalizeSpeechArgs = {
+  /** Each file's measured loudness by media ID. Leave it out: Tandem fills it in from its analysis. */
+  measured?: Record<string, {
+    integratedLUFS: number;
+    truePeakDBTP: number;
+  }>;
+};
 
 /** Adds a marker (marker, section, chapter, todo, or comment: a note Mike left for the next round). */
 export type AddMarkerArgs = {
@@ -749,6 +779,7 @@ export interface CommandArgs {
   updateMedia: UpdateMediaArgs;
   removeMedia: RemoveMediaArgs;
   placeMedia: PlaceMediaArgs;
+  placeSynced: PlaceSyncedArgs;
   insertClip: InsertClipArgs;
   removeClips: RemoveClipsArgs;
   rippleDeleteRange: RippleDeleteRangeArgs;
@@ -761,10 +792,12 @@ export interface CommandArgs {
   blade: BladeArgs;
   join: JoinArgs;
   joinThroughEdits: JoinThroughEditsArgs;
+  showAngle: ShowAngleArgs;
   trim: TrimArgs;
   roll: RollArgs;
   slip: SlipArgs;
   slide: SlideArgs;
+  holdFrame: HoldFrameArgs;
   setSpeed: SetSpeedArgs;
   moveClips: MoveClipsArgs;
   updateClip: UpdateClipArgs;
@@ -793,4 +826,4 @@ export type CommandName = keyof CommandArgs;
 /** One edit command: an object with exactly one key, the command's name. */
 export type Command = { [K in CommandName]: { [P in K]: CommandArgs[P] } }[CommandName];
 
-export const commandNames = ["updateProject","updateSettings","addTrack","removeTrack","moveTrack","updateTrack","addMedia","updateMedia","removeMedia","placeMedia","insertClip","removeClips","rippleDeleteRange","cutRanges","closeGap","insertTime","insertTemplate","addSectionCards","fitSectionCards","blade","join","joinThroughEdits","trim","roll","slip","slide","setSpeed","moveClips","updateClip","link","unlink","applyLayout","zoomToRegion","setFormatLayout","adoptFormat","addMotion","addTransition","updateTransition","removeTransition","addEffect","updateEffect","removeEffect","moveEffect","setKeyframes","normalizeSpeech","addMarker","updateMarker","removeMarker"] as const;
+export const commandNames = ["updateProject","updateSettings","addTrack","removeTrack","moveTrack","updateTrack","addMedia","updateMedia","removeMedia","placeMedia","placeSynced","insertClip","removeClips","rippleDeleteRange","cutRanges","closeGap","insertTime","insertTemplate","addSectionCards","fitSectionCards","blade","join","joinThroughEdits","showAngle","trim","roll","slip","slide","holdFrame","setSpeed","moveClips","updateClip","link","unlink","applyLayout","zoomToRegion","setFormatLayout","adoptFormat","addMotion","addTransition","updateTransition","removeTransition","addEffect","updateEffect","removeEffect","moveEffect","setKeyframes","normalizeSpeech","addMarker","updateMarker","removeMarker"] as const;

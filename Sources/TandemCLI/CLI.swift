@@ -274,6 +274,27 @@ struct CLI {
                 label: args.options["label"], expectedRevision: try args.integer("expect")
             )
             return show(try await client().call(request), json: json)
+        case "cut":
+            // Phrases are the positionals; each --at goes with the phrase
+            // in the same place, for one said more than once.
+            let ats = try args.values("at").map { try parseTime($0) }
+            guard ats.count <= args.positionals.count else {
+                throw UsageError(message: "Each --at goes with a phrase, in order: \(ats.count) --at for \(args.positionals.count) phrase\(args.positionals.count == 1 ? "" : "s").")
+            }
+            var remove = args.positionals.enumerated().map { CutTarget(phrase: $1, at: $0 < ats.count ? ats[$0] : nil) }
+            for text in args.values("range") {
+                let parts = text.split(separator: "-", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+                guard parts.count == 2 else { throw UsageError(message: "--range is <start>-<end>, like 2:14.2-2:16.05, not \"\(text)\".") }
+                remove.append(CutTarget(start: try parseTime(parts[0]), end: try parseTime(parts[1])))
+            }
+            guard !remove.isEmpty else {
+                throw UsageError(message: "`tandem cut` needs a phrase or a --range, like tandem cut \"as I said before\" or tandem cut --range 2:14.2-2:16.05.")
+            }
+            let request = CutRequest(
+                remove: remove, falseStart: args.has("false-start") ? true : nil, apply: args.has("apply"),
+                label: args.options["label"], expectedRevision: try args.integer("expect")
+            )
+            return show(try await client().call(request), json: json)
         case "join":
             try args.expectPositionals(atMost: 0, command: name)
             let request = JoinRequest(

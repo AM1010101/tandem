@@ -1,6 +1,6 @@
 # Cutting the take
 
-Recipes for tightening pauses, cutting a phrase or a rough cut, joining through-edits back up, keeping the camera's picture in sync with its sound, and adding another camera angle or an external mic.
+Recipes for tightening pauses, cutting a phrase, a false start or a rough cut pause to pause, joining through-edits back up, keeping the camera's picture in sync with its sound, and adding another camera angle or an external mic.
 
 ## Tighten pauses
 
@@ -57,32 +57,78 @@ plan's revision>`.
 ## Cut a phrase
 
 ```bash
-tandem search "as I said before"
+tandem cut "as I said before"                # the plan, nothing changes
+tandem cut "as I said before" --apply
 ```
 
 ```
-"as I said before" on the timeline, 1 time:
-  02:14.320-02:15.980  ...so the model [as I said before] picks the...  clips clip_voc7,clip_cam7
+Cut 1 stretch pause to pause (dry run, revision 57), removing 2.150s: 12:04.300 -> 12:02.150.
+  02:14.060-02:16.210  "as I said before"  ...so the model | picks the...  keeps 0.120s of pause; join clean (28 and 26 dB under the speech)
+Nothing changed yet. Run again with --apply (or apply: true) to make the cut.
 ```
 
-Cut that range from the whole take, reaching into the pauses either side so
-no breath is left behind (`tandem pauses --from 2:10 --to 2:20` shows them):
+Don't cut at the times `tandem search` gives. Transcript times are 30 to
+200 ms off the sound, and a cut there chops the word that stays while it's
+still sounding (#64). `tandem cut` finds the phrase as `search` does, then
+puts the start of the cut in the real pause before its first word and the
+end in the real pause after its last, found in the voice's own sound (the
+raw mic, read the way `check --cuts` reads it). The transcript only says
+roughly where the words are and which ones stay. A real pause is 80 ms or
+more of quiet, full band and above 4 kHz alike; a word the transcript has
+0.2 s late still lands on the right side of it.
 
-```json
-{"label": "Cut the repeated phrase", "expectedRevision": 57, "commands": [
-  {"rippleDeleteRange": {"range": {"start": 134.2, "end": 136.05}}}
-]}
+The join keeps the pause Mike's tighten rules would (0.4 s after a
+sentence, 0.12 s after a comma, 0.08 s mid-sentence, by the word before the
+cut), split either side as `tighten` splits it but never under 0.03 s after
+the word before or 0.08 s before the word after, and never closer than
+0.03 s to the words cut. Where neither pause was 0.5 s, the join keeps the
+longer one as it was. Each edge goes on a frame where one lands in its
+pause. Both sides of every join are judged as `check --cuts` judges them,
+and the plan gives each side's margin under the speech; a side that
+doesn't judge clean isn't cut.
+
+A stretch with no pause round it, like a filler or a repeat inside running
+speech ("do that [because of] to keep"), is left in, with the reason:
+cutting there clips a word however exactly it's placed, and on the Ian
+video leaving the filler in is what sounded right. So is one where the
+voice runs on more than 0.3 s past where the transcript has its words.
+
+A phrase said more than once needs `--at` with (roughly) the time of the
+one to cut; with several phrases, the first `--at` goes with the first
+phrase. In MCP and HTTP: `cut {"remove": [{"phrase": "as I said before"},
+{"phrase": "you know", "at": "3:10"}]}`, then again with `"apply": true,
+"expectedRevision": <the plan's revision>`.
+
+Every stretch goes into one `cutRanges`, so the whole take (camera, screen
+and voice) loses the same time, B-roll, music and titles follow, and one
+undo puts it all back. `--json` prints the plan with its `commands` if
+you'd rather adjust them and `apply` them yourself. Listen to the result
+with `tandem clip 2:08 2:20`.
+
+## Rough cuts and false starts
+
+For a rough cut, give `tandem cut` every stretch to drop as a timeline
+range, from roughly where its first word starts to where its last ends, in
+any order; it plans each one as it does a phrase:
+
+```bash
+tandem cut --range 0-18.15 --range 25.6-46.24 "as I said before" --apply
 ```
 
-Then check it with `tandem check --cuts --from 2:10 --to 2:20` (it gives the
-fix if a word got clipped: a trim into a pause, or putting a short cut back) and listen with `tandem clip 2:08 2:20`.
+A stretch over 2 s is a long false start: when there's no pause between
+its last word and the restart, it's cut pause to pause anyway, ending in
+the last pause inside it, so a word of it can come back ("the way we, we do
+it"). The result says which words come back. On the Ian video putting back
+a cut of 2 s or less sounded right, so anything longer costs more to keep
+than a repeated word. `--false-start` (or `"falseStart": true` on a
+stretch) does the same for a shorter one.
 
-For several phrases, or a rough cut that drops false starts and retakes,
-list every range as you read it in one `cutRanges` command rather than
-working out the order of ripple deletes. Its ranges are all in the times
-before it, in any order; Tandem cuts them latest first, cuts overlapping or
-touching ranges once, and one undo puts them all back. To keep only some
-stretches, cut the gaps between them:
+For an exact cut at times you've checked by ear, `cutRanges` still cuts
+exactly where you say. Its ranges are all in the times before it, in any
+order; Tandem cuts them latest first, cuts overlapping or touching ranges
+once, and one undo puts them all back. Then check it with
+`tandem check --cuts --from 2:10 --to 2:20`, which gives the fix if a word
+got clipped (a trim into a pause, or putting a short cut back):
 
 ```json
 {"label": "Rough cut: drop the false starts", "expectedRevision": 57, "commands": [

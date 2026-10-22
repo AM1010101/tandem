@@ -154,9 +154,15 @@ transitions, media or markers.
   pauses of 0.5 s or more). Keep his deliberate beats with
   `--protect <time,...>`, and add `--widen` to open joins a cut left too
   tight back out from the take's own silence (listen to those). Dry run
-  first, then `--apply`. For a rough cut or a list of stumbles, put every
-  range as you read it in one `cutRanges` command instead of sorting ripple
-  deletes latest first.
+  first, then `--apply`.
+- **Cut words with `tandem cut`,** not ranges from `search` times (they're
+  30 to 200 ms off the sound, and a cut on them clips the word that
+  stays). `tandem cut "<phrase>"` (or `--range <start>-<end>` for a rough
+  cut, `--at` for a phrase said twice) puts both edges of each cut in a
+  real pause and leaves in a filler with no pause round it, which is what
+  sounded right on the Ian video. Long false starts are cut pause to pause
+  anyway. Dry run first, then `--apply`; it's one undo step. Keep
+  `cutRanges` for exact cuts you've checked yourself.
 - **Pauses between sentences: 0.4 s.** It's the feel of his old Filmora
   silence detection (0.4 s softening buffer, 0.5 s minimum, 25% volume
   threshold). 0.2 s sounds rushed, as if the sentences are jammed together.
@@ -376,7 +382,8 @@ From his review comments on the Daytona and Build Your Own Convex videos
 - **Check cuts against the voice, not the transcript alone.** Word times
   can be off by up to 0.5 s ("since when?" ended half a second after the
   transcript said, and a drawn-out "Aaall... right" started 0.9 s early).
-  Most of his "word gets cut off" comments were this. After cutting, run
+  Most of his "word gets cut off" comments were this. Cut with `tandem cut`
+  so the edges start in pauses, and after any cutting run
   `tandem check --cuts` (with `--changed` or `--from`/`--to`): it reads the
   take's own sound either side of every cut, full band and above 4 kHz,
   flags each one the voice runs through, and ends with a `tandem apply`

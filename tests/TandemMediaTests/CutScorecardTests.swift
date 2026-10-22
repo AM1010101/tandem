@@ -133,6 +133,130 @@ final class CutScorecardTests: XCTestCase {
         XCTAssertFalse(results.isEmpty)
     }
 
+    /// How `CutPlanner` (`tandem cut`) does on the same edit: for every
+    /// labelled join cut out of one file (it has a `removed` range), plan
+    /// removing that same stretch from the sound alone. The set has no
+    /// transcript, so the removed range's ends stand in for the words'
+    /// times, as they are and shifted by up to 0.2 s either way, as off as
+    /// SpeechAnalyzer was on the Ian video (#64).
+    func testPlannerScorecard() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let edgesPath = environment["TANDEM_CUT_EDGES"], let mediaPath = environment["TANDEM_CUT_MEDIA"] else {
+            throw XCTSkip("set TANDEM_CUT_EDGES and TANDEM_CUT_MEDIA to score the cut planner")
+        }
+        let edges = try JSONDecoder().decode([Labelled].self, from: Data(contentsOf: URL(fileURLWithPath: edgesPath)))
+        let media = URL(fileURLWithPath: mediaPath, isDirectory: true)
+
+        /// One join: a stretch cut out of a file, and the labelled edges
+        /// either side of it.
+        struct Join {
+            var file: String
+            var removed: ClosedRange<Double>
+            var edges: [Labelled]
+            var clipped: Bool { edges.contains { $0.label == "clipped" } }
+        }
+        var joins: [Join] = []
+        for edge in edges {
+            guard let range = edge.removed, range.count == 2, range[1] > range[0] else { continue }
+            let removed = range[0]...range[1]
+            if let index = joins.firstIndex(where: { $0.file == edge.file && abs($0.removed.lowerBound - removed.lowerBound) < 0.0015 && abs($0.removed.upperBound - removed.upperBound) < 0.0015 }) {
+                joins[index].edges.append(edge)
+            } else {
+                joins.append(Join(file: edge.file, removed: removed, edges: [edge]))
+            }
+        }
+        joins.sort { ($0.file, $0.removed.lowerBound) < ($1.file, $1.removed.lowerBound) }
+
+        // The sound either side of each join's two edges, with room for the
+        // floor, the speech level and the shifts.
+        let around = CutAudit.around + CutAudit.reach + CutPlanner.slack + 0.2
+        var placers: [String: (start: CutPlacer, end: CutPlacer)] = [:]
+        for (file, group) in Dictionary(grouping: joins, by: \.file) {
+            let url = media.appendingPathComponent(file)
+            var windows: [(String, SpeechEnergy, SpeechEnergy)] = []
+            for join in group {
+                let key = "\(join.removed)"
+                windows.append((key,
+                    try energy(url, from: join.removed.lowerBound - around, to: join.removed.lowerBound + around),
+                    try energy(url, from: join.removed.upperBound - around, to: join.removed.upperBound + around)))
+            }
+            let levels = SpeechLevels(of: windows.flatMap { [$0.1, $0.2] })
+            for (key, start, end) in windows { placers[file + key] = (CutPlacer(start, levels: levels), CutPlacer(end, levels: levels)) }
+        }
+
+        func plan(_ join: Join, shift: Double) -> CutPlan {
+            let placer = placers[join.file + "\(join.removed)"]!
+            let from = join.removed.lowerBound + shift, to = join.removed.upperBound + shift
+            return CutPlanner.plan(
+                start: placer.start, CutPlanner.Boundary(time: from), end: placer.end, CutPlanner.Boundary(time: to),
+                keep: 0.08, falseStart: to - from > CutPlanner.falseStartFrom
+            )
+        }
+        func kind(_ plan: CutPlan) -> String {
+            if plan.cuts { return plan.falseStart ? "falseStart" : "clean" }
+            return plan.problem?.rawValue ?? "?"
+        }
+
+        var lines = ["Cut planner scorecard: \(joins.count) joins cut out of one file (\(joins.filter(\.clipped).count) with a clipped edge)"]
+        for shift in [0, -0.1, 0.1, -0.2, 0.2] {
+            let kinds = Dictionary(grouping: joins.map { kind(plan($0, shift: shift)) }, by: { $0 }).mapValues(\.count)
+            lines.append(String(format: "  ends shifted %+.1f s: ", shift) + kinds.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }.joined(separator: ", "))
+        }
+
+        // Against what finally worked, unshifted and shifted, every edge.
+        for shift in [0, -0.2, 0.2] {
+            var offsets: [Double] = []
+            var putBackAndKept = 0, putBackButCut = 0
+            var clippedCut = 0, clippedKept = 0, clippedNotClean = 0, clippedNear = 0
+            for join in joins {
+                let result = plan(join, shift: shift)
+                let worked = join.edges.map { Self.worked($0, in: edges) }
+                var near = true
+                for (labelled, fix) in zip(join.edges, worked) {
+                    guard case .trim(let time) = fix, result.cuts, let planned = labelled.keeps == "before" ? result.from : result.to else { continue }
+                    offsets.append(abs(planned - time))
+                    near = near && abs(planned - time) <= 0.0605
+                }
+                if worked.contains(.putBack) { if result.cuts { putBackButCut += 1 } else { putBackAndKept += 1 } }
+                guard join.clipped else { continue }
+                if result.cuts {
+                    clippedCut += 1
+                    if near { clippedNear += 1 }
+                } else if result.problem == .notClean {
+                    clippedNotClean += 1
+                } else {
+                    clippedKept += 1
+                }
+            }
+            offsets.sort()
+            lines.append(String(format: "  shifted %+.1f s:", shift))
+            lines.append(String(
+                format: "    planned edges against the fix that worked (%d): median %.0f ms, within 60 ms %d, over 150 ms %d",
+                offsets.count, offsets.isEmpty ? 0 : offsets[offsets.count / 2] * 1000, offsets.filter { $0 <= 0.0605 }.count, offsets.filter { $0 > 0.15 }.count
+            ))
+            lines.append("    joins the edit put back: planner kept \(putBackAndKept), cut pause to pause \(putBackButCut)")
+            lines.append("    clipped joins avoided: \(clippedCut + clippedKept) of \(joins.filter(\.clipped).count) (cut clean pause to pause \(clippedCut), \(clippedNear) of them within 60 ms of every fix that worked; kept \(clippedKept)); planned but not clean \(clippedNotClean)")
+        }
+
+        lines.append("  every join, unshifted (planned from-to, fixes that worked):")
+        for join in joins {
+            let result = plan(join, shift: 0)
+            let planned = result.from.map { String(format: "%.3f-%.3f", $0, result.to ?? 0) } ?? "-"
+            let worked = join.edges.map { labelled -> String in
+                switch Self.worked(labelled, in: edges) {
+                case .trim(let time): return "\(labelled.keeps) trim " + String(format: "%.3f", time)
+                case .putBack: return "\(labelled.keeps) putBack"
+                case .unknown: return "\(labelled.keeps) -"
+                }
+            }.joined(separator: ", ")
+            let margins = [result.start?.margin, result.end?.margin].map { $0.map { String(format: "%.0f", $0) } ?? "-" }.joined(separator: "/")
+            let labels = join.edges.map(\.label).joined(separator: "+")
+            lines.append(String(format: "    %@ %.3f-%.3f [%@]: %@ %@ margins %@ (worked: %@)", join.file.prefix(24).description, join.removed.lowerBound, join.removed.upperBound, labels, kind(result), planned, margins, worked))
+        }
+        print(lines.joined(separator: "\n"))
+        XCTAssertFalse(joins.isEmpty)
+    }
+
     /// Follows an edge's fix on to the labelled edge it made, if any, and
     /// says what finally worked there.
     static func worked(_ edge: Labelled, in edges: [Labelled]) -> Worked {

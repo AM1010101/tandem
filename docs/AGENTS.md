@@ -149,9 +149,11 @@ Keyframe times are seconds from the clip's start.
 
 **Several cuts in one batch.** Each command sees the timeline as the
 commands before it left it, so a ripple delete moves everything after it
-earlier. To cut many ranges you read (stumbles, retakes, a rough cut), put
-them all in one `cutRanges` command: its ranges are all in the times before
-it, in any order, and Tandem cuts them latest first.
+earlier. To cut words (stumbles, retakes, a rough cut), use `tandem cut`,
+which puts both edges of every cut in a real pause
+([cutting](agents/cutting.md#cut-a-phrase)). For exact ranges you've
+checked, put them all in one `cutRanges` command: its ranges are all in the
+times before it, in any order, and Tandem cuts them latest first.
 
 **Overlaps.** Clips on one track can't overlap. An overlap under a
 millisecond counts as touching, so rounding in a batch doesn't fail it: the
@@ -284,6 +286,7 @@ One line each; `tandem help <command>` has the options and what they do.
 | `tandem search "<phrase>"` | where a phrase is said |
 | `tandem pauses` | silences between words |
 | `tandem tighten` | shorten pauses (`--mike` for Mike's rules; dry run without `--apply`) |
+| `tandem cut "<phrase>"` | cut words with both edges in real pauses (`--range`, `--at`; dry run without `--apply`) |
 | `tandem join` | join through-edits (dry run without `--apply`) |
 | `tandem captions` | word-by-word captions (dry run without `--apply`) |
 | `tandem short` | lay out a 9:16 short (`--copy` for its own project) |
@@ -328,7 +331,7 @@ maps every command to its HTTP endpoint and MCP tool.
 | [agents/reading.md](agents/reading.md) | the timeline view, transcripts and words at cuts, search, pauses, clips, frames and contact sheets, render warnings |
 | [agents/json-output.md](agents/json-output.md) | `--json` shapes for timeline, media, transcript, wait, status, history, diff, clips, restore, apply |
 | [agents/edit-commands.md](agents/edit-commands.md) | batches, an index of every edit command, and what help doesn't say: levels, stickers, keyframe values, gain keyframes, crop units, `insertTime`, transitions and sounds, templates, section cards, joins |
-| [agents/cutting.md](agents/cutting.md) | Tighten pauses; Cut a phrase (and rough cuts); Join through-edits; Keep the camera in sync; Add another angle or an external mic |
+| [agents/cutting.md](agents/cutting.md) | Tighten pauses; Cut a phrase; Rough cuts and false starts; Join through-edits; Keep the camera in sync; Add another angle or an external mic |
 | [agents/broll-and-titles.md](agents/broll-and-titles.md) | Put B-roll over a sentence; Add a title (presets, animations, style); Add a section card |
 | [agents/layout-and-colour.md](agents/layout-and-colour.md) | Set the PiP layout; Zoom into the screen recording; Grade the camera take |
 | [agents/sound.md](agents/sound.md) | Level the voice; Tame the peaks on a quiet mic; Clean up a roomy mic; Check the sound; Put a swoosh on every push |

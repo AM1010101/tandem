@@ -86,6 +86,16 @@ enum Help {
                     Without them, every pause of --min (0.6) or more is shortened to --keep (0.15).
                     --protect 1:02.5,3:10 leaves the pauses containing those times alone (deliberate beats). --widen also widens joins between speech clips that leave less than the keep, with ripple trims into silence the take has either side (never past a transcribed word). Listen to widened joins: an um the transcript left out can come back.
                     """),
+        CommandHelp(name: "cut", usage: "tandem cut \"<phrase>\"... [--at <time>]... [--range <start>-<end>]... [--false-start] [--apply]", summary: "Cut words out of the whole take with both edges in real pauses, so nothing that stays is clipped (a dry run without --apply).", options: ["at", "range", "false-start", "apply", "label", "expect"],
+                    details: """
+                    Use it instead of building rippleDeleteRange or cutRanges from search times, which are 30 to 200 ms off the sound. Each phrase is found as tandem search finds it on the timeline; one said more than once needs --at with the time of the one to cut (the first --at goes with the first phrase, and so on). --range cuts a timeline stretch instead, from roughly where its words start to where they end.
+                    Each cut starts in the real pause before the first word and ends in the one after the last, found in the voice's own sound (the raw mic, as check --cuts reads it); the transcript only says roughly where the words are and which stay. The join keeps Mike's tighten pauses: 0.4 s after a sentence, 0.12 s after a comma, 0.08 s mid-sentence, never under 0.03 s after the word before or 0.08 s before the word after. Both sides of each join are judged as check --cuts would, with the margin.
+                    A stretch with no pause round it (a filler or a repeat in running speech) is left in and the reason given: cutting there clips a word, and leaving the filler in sounded right. A long false start (over 2 s, or every stretch with --false-start) is cut pause to pause anyway, even if a word of it comes back with the restart; the result says which.
+                    Every stretch is one cutRanges: the camera, screen and voice of the take all lose the same time, B-roll, music and titles follow, and one undo puts it all back. For an exact cut at times you've checked yourself, use cutRanges.
+                    Examples:
+                      tandem cut "as I said before" "you know" --at 2:14 --at 3:10
+                      tandem cut --range 1:02.4-1:09.8 --false-start --apply
+                    """),
         CommandHelp(name: "join", usage: "tandem join [--from <time>] [--to <time>] [--apply]", summary: "Join through-edits, cuts where a clip carries straight on into the next piece of the same file, so the take is one clip again (a dry run without --apply).", options: ["from", "to", "apply", "label", "expect"],
                     details: """
                     A through-edit is a cut where nothing changes: the same file at the same speed carries straight on (within half a frame) with the same settings. Putting cuts back with ripple trims leaves them behind. Each is joined into one clip with the first clip's ID and link group, along with the clips linked to it across the cut (camera, screen and voice), and what plays doesn't change.

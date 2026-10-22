@@ -1,6 +1,6 @@
 # JSON output
 
-The shapes of the `--json` results you'll read most (timeline, media, transcript, wait, status, history, diff, clips, restore, apply), and which fields can be missing.
+The shapes of the `--json` results you'll read most (timeline, media, transcript, wait, status, history, diff, clips, restore, apply, cut), and which fields can be missing.
 
 A `--json` result is an object, and the project's `revision` is in it.
 A field marked `?` can be missing (or `null`), so read it with a default
@@ -143,3 +143,28 @@ fix trims the clip before the join, which may not be `clipID`. Marginal
 joins are notes of kind `marginalJoin`, with `cut.margin`.
 A plain `tandem check --json` has `commands` and `revision` too when it
 can fix a flicker, and that problem's `fix` is the `holdFrame`.
+
+## cut
+
+```
+{"revision": 57, "removed": 2.15, "durationBefore", "durationAfter",
+ "commands": [{"cutRanges": {...}}],              // empty when nothing's cut
+ "applied"?: {...apply's result}, "warnings": [],
+ "cuts": [{"asked", "text", "start", "end", "status": "cut" | "kept", "before", "after", "falseStart",
+           "cut"?: {"start", "duration"}, "mediaID"?, "mediaStart"?, "mediaEnd"?, "keptBefore"?, "keptAfter"?,
+           "startEdge"?: {"verdict", "margin"}, "endEdge"?: {"verdict", "margin"},
+           "broughtBack"?, "reason"?, "problem"?, "problemEdge"?}]}   // in the order asked
+```
+
+`cuts` has one entry per stretch asked for. `start` and `end` are the
+stretch as found (a phrase's words, or the range given); `cut` is what
+comes out, on the timeline, and `mediaStart`/`mediaEnd` the same in the
+voice's file. `keptBefore` and `keptAfter` are the pause left either side
+of the join. `startEdge` and `endEdge` say how each side of the join
+sounds, as `check --cuts` judges it (`verdict` `clean`, `marginal` or
+`clipped`, and `margin` in dB under the speech level); in a long silence
+the margin is small because there's no speech near to measure against.
+A `kept` stretch has a `reason`, and a `problem` (`fluent`, `runsOn`,
+`noSpeech`, `nothingLeft` or `notClean`) at `problemEdge` (`start` or
+`end`) when the sound was read. `broughtBack` is the words a false start
+brings back.

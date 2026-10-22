@@ -245,6 +245,22 @@ final class CLITests: XCTestCase {
         let both = try tandem("tighten", "--keep", "0.2", "--sentence", "0.4", in: folder.url)
         XCTAssertEqual(both.status, 1)
         XCTAssertTrue(both.stderr.contains("give each kind its own"), both.stderr)
+        // With no transcript there's no phrase to find; a range is placed
+        // from the sound, and here there's none to read.
+        let phrase = try tandem("cut", "as I said", "--json", in: folder.url)
+        XCTAssertEqual(phrase.status, 1)
+        XCTAssertTrue(phrase.stdout.contains("isn't said on the timeline"), phrase.stdout)
+        let range = try tandem("cut", "--range", "1-2.5", "--false-start", "--json", in: folder.url)
+        XCTAssertEqual(range.status, 0, range.stderr)
+        let rangePlan = try ServiceJSON.decoder().decode(CutResult.self, from: Data(range.stdout.utf8))
+        XCTAssertEqual(rangePlan.cuts.map(\.status), [.kept])
+        XCTAssertEqual(rangePlan.cuts.first?.start, Time(seconds: 1))
+        XCTAssertTrue(rangePlan.commands.isEmpty)
+        let ats = try tandem("cut", "a", "--at", "1", "--at", "2", in: folder.url)
+        XCTAssertEqual(ats.status, 2)
+        XCTAssertTrue(ats.stderr.contains("Each --at goes with a phrase"), ats.stderr)
+        let help = try tandem("help", "cut", in: folder.url)
+        XCTAssertTrue(help.stdout.hasPrefix("Usage: tandem cut"), help.stdout)
 
         let project = try ProjectFile.load(from: folder.file("Loop.tandem"))
         XCTAssertEqual(project.revision, 3)

@@ -7,7 +7,7 @@ import XCTest
 /// "s" sounds (hiss above 4 kHz that hardly registers in the full band)
 /// and "k" releases (a loud burst of the same hiss) where asked. Times are
 /// media seconds from `start`.
-private struct Take {
+struct Take {
     static let rate = 32_000.0
     var start = 10.0
     var length = 4.0

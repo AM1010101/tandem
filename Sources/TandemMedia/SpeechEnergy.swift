@@ -246,7 +246,7 @@ public enum CutAudit {
         case before, after
     }
 
-    public enum Verdict: String, Sendable {
+    public enum Verdict: String, Codable, Sendable {
         case clean
         /// Not clean, not clipped: worth a listen, but it doesn't fail.
         case marginal

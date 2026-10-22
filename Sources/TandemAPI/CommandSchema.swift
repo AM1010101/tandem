@@ -607,7 +607,7 @@ extension CommandSchema {
         ),
         Entry(
             command: .cutRanges,
-            summary: "Ripple deletes several ranges at once, every one in the timeline's times before this command (as you read them), in any order. Tandem cuts them latest first so no cut moves another, and cuts overlapping or touching ranges once. Use it instead of sorting rippleDeleteRange commands latest first yourself.",
+            summary: "Ripple deletes several ranges at once, every one in the timeline's times before this command (as you read them), in any order. Tandem cuts them latest first so no cut moves another, and cuts overlapping or touching ranges once. Use it instead of sorting rippleDeleteRange commands latest first yourself. It cuts exactly where you say: to cut words, use the cut operation (tandem cut), which puts both edges of each cut in a real pause.",
             arguments: S.object([
                 "ranges": S.array(S.ref("TimeRange"), "The stretches to cut: start plus duration, or start and end."),
                 "trackIDs": S.tracks("Only cut these tracks (and ripple from them). Default: every cut track.")

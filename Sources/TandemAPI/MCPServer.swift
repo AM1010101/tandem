@@ -263,8 +263,8 @@ public final class MCPServer: @unchecked Sendable {
     of edit commands applied atomically as one undo step credited to you; label it with what it does (Mike reads the labels), pass \
     expectedRevision from the read you based the edit on (not a fresh status right before applying) so you never edit a timeline that \
     changed under you; Tandem finding new media in the folder doesn't count as a change. Try dryRun: true when unsure. `undo` \
-    reverts your last edit (count: n for several); only undo your own. `search` finds a phrase's timeline time, `pauses` lists silences and `tighten` shortens them \
-    (a dry run unless apply: true). Look at your work with `frame` and `clip` (a review MP4), and before handing back run `check` with \
+    reverts your last edit (count: n for several); only undo your own. `search` finds a phrase's timeline time, `cut` takes words out with both edges in real pauses (never cut \
+    words at search times yourself), `pauses` lists silences and `tighten` shortens them (both dry runs unless apply: true). Look at your work with `frame` and `clip` (a review MP4), and before handing back run `check` with \
     changed: true and fix what it finds (black frames, flickers, green screen that didn't key); its notes (dead air, page changes with no \
     transition, soft zooms) are judgement calls. Mike's saved segments (his intro, outro and \
     calls to action) are in `segments_list` and go in with `segments_insert`. Mike leaves comments on the timeline for the next round \
@@ -579,6 +579,25 @@ enum MCPTools {
                 "expectedRevision": S.integer("Refuse unless the project is at this revision.")
             ],
             readOnly: false
+        ),
+        Tool(
+            name: "cut", title: "Cut words pause to pause",
+            description: "Cuts words out of the whole take (camera, screen and voice; B-roll, music and titles follow) with both edges of each cut in a real pause found in the voice's sound, so nothing that stays is clipped. Use it instead of rippleDeleteRange or cutRanges at search times, which are 30 to 200 ms off the sound. Each stretch is a phrase (found as search finds it; one said more than once needs at) or a timeline start and end. The join keeps Mike's tighten pauses (0.4 s after a sentence, 0.12 s after a comma, 0.08 s mid-sentence), and both of its sides are judged as check cuts would. A stretch with no pause round it (a filler in running speech) is left in with the reason; a long false start (over 2 s, or falseStart: true) is cut pause to pause even if a word of it comes back. One cutRanges, one undo step. A dry run that returns the plan and the command unless apply: true.",
+            operation: .cut,
+            properties: [
+                "remove": S.array(S.object([
+                    "phrase": S.string("Words to cut, ignoring case and punctuation."),
+                    "at": time("For a phrase said more than once: the timeline time of the one to cut."),
+                    "start": time("A timeline range to cut instead of a phrase: roughly where its words start."),
+                    "end": time("And where they end."),
+                    "falseStart": S.boolean("Cut it as a long false start: pause to pause even if a word of it comes back.")
+                ]), "The stretches to cut, in any order."),
+                "falseStart": S.boolean("Cut every stretch as a long false start. Without it (or a stretch's own), stretches over 2 s are."),
+                "apply": S.boolean("Make the cut. Without it nothing changes."),
+                "label": S.string("Undo label."), "author": S.string("Who made the edit."),
+                "expectedRevision": S.integer("Refuse unless the project is at this revision.")
+            ],
+            required: ["remove"], readOnly: false
         ),
         Tool(
             name: "join", title: "Join through-edits",

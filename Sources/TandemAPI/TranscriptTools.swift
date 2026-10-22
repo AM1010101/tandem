@@ -558,11 +558,18 @@ public enum TranscriptTools {
 
     /// Where `phrase` occurs in a transcript: ranges of word indices.
     public static func matches(of phrase: String, in transcript: Transcript) -> [ClosedRange<Int>] {
+        matches(of: phrase, in: transcript.words.map(\.text))
+    }
+
+    /// Where `phrase` occurs in a run of words: ranges of their indices.
+    /// `overlapping` counts a match that starts inside the one before, so
+    /// "very very" is said twice in "very very very".
+    static func matches(of phrase: String, in words: [String], overlapping: Bool = false) -> [ClosedRange<Int>] {
         let wanted = tokens(phrase)
         guard !wanted.isEmpty else { return [] }
         var stream: [(token: String, word: Int)] = []
-        for (index, word) in transcript.words.enumerated() {
-            for token in tokens(word.text) { stream.append((token, index)) }
+        for (index, word) in words.enumerated() {
+            for token in tokens(word) { stream.append((token, index)) }
         }
         guard stream.count >= wanted.count else { return [] }
         var result: [ClosedRange<Int>] = []
@@ -571,7 +578,7 @@ public enum TranscriptTools {
             if (0..<wanted.count).allSatisfy({ stream[i + $0].token == wanted[$0] }) {
                 let range = stream[i].word...stream[i + wanted.count - 1].word
                 if result.last != range { result.append(range) }
-                i += wanted.count
+                i += overlapping ? 1 : wanted.count
             } else {
                 i += 1
             }

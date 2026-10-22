@@ -83,19 +83,27 @@ cut), split either side as `tighten` splits it but never under 0.03 s after
 the word before or 0.08 s before the word after, and never closer than
 0.03 s to the words cut. Where neither pause was 0.5 s, the join keeps the
 longer one as it was. Each edge goes on a frame where one lands in its
-pause. Both sides of every join are judged as `check --cuts` judges them,
-and the plan gives each side's margin under the speech; a side that
-doesn't judge clean isn't cut.
+pause. The pauses are timeline time, so on a clip at 2x the join keeps
+twice as much of the file. Each edge goes in a pause its own clip plays: a
+pause in the file past the clip's end isn't heard there. Both sides of
+every join are judged as `check --cuts` judges them, and the plan gives
+each side's margin under the speech; a side that doesn't judge clean isn't
+cut.
 
 A stretch with no pause round it, like a filler or a repeat inside running
 speech ("do that [because of] to keep"), is left in, with the reason:
 cutting there clips a word however exactly it's placed, and on the Ian
 video leaving the filler in is what sounded right. So is one where the
 voice runs on more than 0.3 s past where the transcript has its words.
+Sound no transcript word claims, inside the stretch or within 0.3 s of it,
+is cut with it. When cutting it would also cut a word that stays, it's
+left and the stretch's `missed` says how much, so listen there.
 
 A phrase said more than once needs `--at` with (roughly) the time of the
-one to cut; with several phrases, the first `--at` goes with the first
-phrase. In MCP and HTTP: `cut {"remove": [{"phrase": "as I said before"},
+one to cut, and that counts overlapping ones ("very very" is said twice in
+"very very very"); with several phrases, the first `--at` goes with the
+first phrase. Each voice track's words are matched on their own, so a
+phrase both mics of an interview hear is said once. In MCP and HTTP: `cut {"remove": [{"phrase": "as I said before"},
 {"phrase": "you know", "at": "3:10"}]}`, then again with `"apply": true,
 "expectedRevision": <the plan's revision>`.
 

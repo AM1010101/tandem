@@ -126,6 +126,10 @@ public struct CutStretch: Codable, Equatable, Sendable {
     /// (or this much sound, with no transcript).
     public var falseStart: Bool
     public var broughtBack: String?
+    /// Sound in the stretch asked for (or within the transcript's slack of
+    /// it) that the cut keeps, because a word that stays is said on the far
+    /// side of it: a word the transcript has well off, or missed.
+    public var missed: String?
     /// How each side of the join sounds, as `check --cuts` judges it.
     public var startEdge: CutJoinSide?
     public var endEdge: CutJoinSide?
@@ -166,6 +170,9 @@ extension CutResult: ReadableResult {
                 if stretch.falseStart {
                     line += stretch.broughtBack.map { "; a false start, so \"\($0)\" comes back" } ?? "; cut as a false start"
                 }
+                if let missed = stretch.missed {
+                    line += "; but \(missed) in the stretch asked for stays, as a word that stays is past it. Listen with tandem clip"
+                }
                 lines.append(line)
             }
             if !kept.isEmpty { lines.append("Left in:") }
@@ -204,7 +211,7 @@ extension TandemService {
                 guard target.start == nil, target.end == nil else {
                     throw ServiceError(.badRequest, "Give a stretch to cut as a phrase or as start and end, not both.")
                 }
-                asked.append((target, phrase, try Self.find(phrase, at: target.at, in: map)))
+                asked.append((target, phrase, try Self.find(phrase, at: target.at, in: map, project: project)))
             } else {
                 guard let start = target.start, let end = target.end else {
                     throw ServiceError(.badRequest, "Give a stretch to cut as a phrase, or as start and end.")
@@ -299,25 +306,40 @@ extension TandemService {
 
     /// Where `phrase` is said on the timeline: the one match, or the one at
     /// (or nearest) `at`.
-    static func find(_ phrase: String, at: Time?, in map: TranscriptTools.SpeechMap) throws -> TimeRange {
-        let wanted = TranscriptTools.tokens(phrase)
-        guard !wanted.isEmpty else { throw ServiceError(.badRequest, "Give at least one word to cut.") }
-        var stream: [(token: String, word: Int)] = []
-        for (index, word) in map.words.enumerated() {
-            for token in TranscriptTools.tokens(word.text) { stream.append((token, index)) }
+    static func find(_ phrase: String, at: Time?, in map: TranscriptTools.SpeechMap, project: Project) throws -> TimeRange {
+        guard !TranscriptTools.tokens(phrase).isEmpty else { throw ServiceError(.badRequest, "Give at least one word to cut.") }
+        // Each track's words on their own: two mics that both hear "as I
+        // said" would otherwise interleave as "as as I I said said".
+        var trackOf: [String: Int] = [:]
+        for (index, track) in TranscriptTools.speechTracks(project).enumerated() {
+            for clip in track.clips where trackOf[clip.id] == nil { trackOf[clip.id] = index }
         }
-        var found: [TimeRange] = []
-        var i = 0
-        while i + wanted.count <= stream.count {
-            if (0..<wanted.count).allSatisfy({ stream[i + $0].token == wanted[$0] }) {
-                let range = TimeRange(start: map.words[stream[i].word].start, end: map.words[stream[i + wanted.count - 1].word].end)
-                // Two voice tracks transcribed both say it once.
-                if !found.contains(where: { $0.overlaps(range) }) { found.append(range) }
-                i += wanted.count
-            } else {
-                i += 1
+        let byTrack = Dictionary(grouping: map.words, by: { trackOf[$0.clipID] ?? -1 })
+        // One said on several tracks is the same words: a match joins the
+        // one it overlaps most from another track. Matches that overlap on
+        // one track ("very very" in "very very very") are each their own.
+        var found: [(range: TimeRange, tracks: Set<Int>)] = []
+        for track in byTrack.keys.sorted() {
+            let words = byTrack[track] ?? []
+            for match in TranscriptTools.matches(of: phrase, in: words.map(\.text), overlapping: true) {
+                let range = TimeRange(start: words[match.lowerBound].start, end: words[match.upperBound].end)
+                func overlap(_ other: TimeRange) -> Time { min(range.end, other.end) - max(range.start, other.start) }
+                let same = found.indices
+                    .filter { !found[$0].tracks.contains(track) && overlap(found[$0].range) > .zero }
+                    .max { overlap(found[$0].range) < overlap(found[$1].range) }
+                if let same {
+                    found[same].tracks.insert(track)
+                } else {
+                    found.append((range, [track]))
+                }
             }
         }
+        let ranges = found.map(\.range).sorted { ($0.start, $0.end) < ($1.start, $1.end) }
+        return try pick(ranges, phrase: phrase, at: at)
+    }
+
+    /// The one place `phrase` is said, or the one at (or nearest) `at`.
+    static func pick(_ found: [TimeRange], phrase: String, at: Time?) throws -> TimeRange {
         guard !found.isEmpty else {
             throw ServiceError(.notFound, "\"\(phrase)\" isn't said on the timeline. tandem search \"\(phrase)\" finds it, in cut material too.")
         }
@@ -372,6 +394,20 @@ extension TandemService {
         return nil
     }
 
+    /// The stretch of its file a clip plays.
+    static func played(_ clip: Clip) -> ClosedRange<Double> { clip.sourceStart.seconds...clip.sourceEnd.seconds }
+
+    /// Whether a stretch's two edges are in one run of one file, so the
+    /// start has to come before the end in file time too: the same clip, or
+    /// one that carries straight on from the other in both timeline and file.
+    /// Clips of a file played out of order (the end of it, then the start)
+    /// are ordered by the timeline, not the file.
+    static func oneRun(_ first: Clip, _ last: Clip) -> Bool {
+        if first.id == last.id { return true }
+        return first.mediaID == last.mediaID && first.speed == last.speed
+            && abs((first.end - last.start).seconds) < 1e-6 && abs((first.sourceEnd - last.sourceStart).seconds) < 1e-6
+    }
+
     func plan(_ range: TimeRange, falseStart: Bool?, in project: Project) -> Planned {
         var planned = Planned(
             range: range, falseStart: falseStart ?? (range.duration.seconds > CutPlanner.falseStartFrom),
@@ -399,7 +435,10 @@ extension TandemService {
         let keptBefore = firstWords?.filter { mid($0) < from && first.sourceStart.seconds <= mid($0) && $0.end.seconds > from - reach } ?? []
         planned.first = CutEdge(
             clip: first, media: firstMedia, time: from,
-            boundary: CutPlanner.Boundary(time: from, before: keptBefore.map(span), after: firstWords == nil ? [] : cutFirst.map(span)),
+            boundary: CutPlanner.Boundary(
+                time: from, before: keptBefore.map(span), after: firstWords == nil ? [] : cutFirst.map(span),
+                within: Self.played(first), speed: first.speed
+            ),
             words: cutFirst, heard: firstWords != nil
         )
 
@@ -409,7 +448,10 @@ extension TandemService {
         let keptAfter = lastWords?.filter { mid($0) > to && mid($0) <= last.sourceEnd.seconds && $0.start.seconds < to + reach } ?? []
         planned.last = CutEdge(
             clip: last, media: lastMedia, time: to,
-            boundary: CutPlanner.Boundary(time: to, before: lastWords == nil ? [] : cutLast.map(span), after: keptAfter.map(span)),
+            boundary: CutPlanner.Boundary(
+                time: to, before: lastWords == nil ? [] : cutLast.map(span), after: keptAfter.map(span),
+                within: Self.played(last), speed: last.speed
+            ),
             words: cutLast, heard: lastWords != nil
         )
 
@@ -476,7 +518,7 @@ extension TandemService {
         }
         let plan = CutPlanner.plan(
             start: startPlacer, first.boundary, end: endPlacer, last.boundary, keep: planned.keep, tightenFrom: planned.tightenFrom,
-            falseStart: planned.falseStart, sameFile: first.media.id == last.media.id, snap: snap
+            falseStart: planned.falseStart, sameFile: Self.oneRun(first.clip, last.clip), snap: snap
         )
         stretch.falseStart = plan.falseStart
         stretch.problem = plan.problem
@@ -497,8 +539,12 @@ extension TandemService {
         }
         let start = times[.start] ?? timeline(from, first.clip)
         let end = times[.end] ?? timeline(to, last.clip)
-        let inside = first.clip.sourceStart.seconds - 1e-6 <= from && to <= last.clip.sourceEnd.seconds + 1e-6
-        guard inside, end > start else {
+        // Each edge inside its own clip: the planner only places them in
+        // pauses the clip plays, so this is a last guard.
+        func inside(_ time: Double, _ clip: Clip) -> Bool {
+            clip.sourceStart.seconds - 1e-6 <= time && time <= clip.sourceEnd.seconds + 1e-6
+        }
+        guard inside(from, first.clip), inside(to, last.clip), end > start else {
             stretch.reason = "the pause round it is already cut away at the join, so there's no pause to put the cut in. Cut it with cutRanges and listen."
             return stretch
         }
@@ -506,8 +552,14 @@ extension TandemService {
         stretch.cut = TimeRange(start: start, end: end)
         stretch.mediaStart = Time(seconds: from)
         stretch.mediaEnd = Time(seconds: to)
-        stretch.keptBefore = Time(seconds: (plan.keptBefore * 1000).rounded() / 1000)
-        stretch.keptAfter = Time(seconds: (plan.keptAfter * 1000).rounded() / 1000)
+        // The planner's pauses are file seconds: on the timeline a 2x clip
+        // plays them in half the time.
+        stretch.keptBefore = Time(seconds: (plan.keptBefore / first.clip.speed * 1000).rounded() / 1000)
+        stretch.keptAfter = Time(seconds: (plan.keptAfter / last.clip.speed * 1000).rounded() / 1000)
+        let missed = (plan.missed[.start] ?? []).map { ($0, first.clip.speed) } + (plan.missed[.end] ?? []).map { ($0, last.clip.speed) }
+        if !missed.isEmpty {
+            stretch.missed = String(format: "%.2f s of sound", missed.reduce(0) { $0 + ($1.0.upperBound - $1.0.lowerBound) / $1.1 })
+        }
         return stretch
     }
 

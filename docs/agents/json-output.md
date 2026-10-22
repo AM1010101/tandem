@@ -153,18 +153,20 @@ can fix a flicker, and that problem's `fix` is the `holdFrame`.
  "cuts": [{"asked", "text", "start", "end", "status": "cut" | "kept", "before", "after", "falseStart",
            "cut"?: {"start", "duration"}, "mediaID"?, "mediaStart"?, "mediaEnd"?, "keptBefore"?, "keptAfter"?,
            "startEdge"?: {"verdict", "margin"}, "endEdge"?: {"verdict", "margin"},
-           "broughtBack"?, "reason"?, "problem"?, "problemEdge"?}]}   // in the order asked
+           "broughtBack"?, "missed"?, "reason"?, "problem"?, "problemEdge"?}]}   // in the order asked
 ```
 
 `cuts` has one entry per stretch asked for. `start` and `end` are the
 stretch as found (a phrase's words, or the range given); `cut` is what
 comes out, on the timeline, and `mediaStart`/`mediaEnd` the same in the
 voice's file. `keptBefore` and `keptAfter` are the pause left either side
-of the join. `startEdge` and `endEdge` say how each side of the join
+of the join, in timeline seconds. `startEdge` and `endEdge` say how each side of the join
 sounds, as `check --cuts` judges it (`verdict` `clean`, `marginal` or
 `clipped`, and `margin` in dB under the speech level); in a long silence
 the margin is small because there's no speech near to measure against.
 A `kept` stretch has a `reason`, and a `problem` (`fluent`, `runsOn`,
 `noSpeech`, `nothingLeft` or `notClean`) at `problemEdge` (`start` or
 `end`) when the sound was read. `broughtBack` is the words a false start
-brings back.
+brings back. `missed` is sound in the stretch (or within 0.3 s of it) that
+no transcript word claims and the cut keeps, because cutting it would cut
+a word that stays too: listen there.

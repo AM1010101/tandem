@@ -161,6 +161,85 @@ final class CutPlanTests: XCTestCase {
         XCTAssertTrue(plans.allSatisfy { $0.start?.verdict == .clean && $0.end?.verdict == .clean })
     }
 
+    func testAPauseTheClipDoesntPlayIsntAPauseForItsEdge() throws {
+        // The clip plays the file to 10.9, in fluent speech, and a false
+        // start begins at 10.5. The file's next pause (11.0 to 11.4) is past
+        // the clip's end, so nobody hears it there: the next clip, of another
+        // stretch, plays instead. Without a pause the clip plays, the start
+        // has nowhere to go.
+        let take = Take(start: 9, length: 6, words: [(9.5, 11.0), (11.4, 12.0)])
+        let restart = Take(start: 18, length: 6, words: [(19.0, 19.5), (20.0, 20.5)])
+        let end = CutPlanner.Boundary(time: 19.5, before: [19.0...19.5], after: [20.0...20.5])
+        func start(playing within: ClosedRange<Double>) -> CutPlanner.Boundary {
+            CutPlanner.Boundary(time: 10.5, before: [9.5...10.0, 10.0...10.5], after: [10.5...10.9], within: within)
+        }
+        let result = CutPlanner.plan(
+            start: placer(take), start(playing: 9.0...10.9), end: placer(restart), end, keep: 0.12, falseStart: true, sameFile: false
+        )
+        XCTAssertFalse(result.cuts, "\(result)")
+        XCTAssertEqual(result.problem, .fluent)
+        XCTAssertEqual(result.problemEdge, .start)
+
+        // A clip that plays into the pause can cut to the part of it it plays.
+        let played = CutPlanner.plan(
+            start: placer(take), start(playing: 9.0...11.2), end: placer(restart), end, keep: 0.12, falseStart: true, sameFile: false
+        )
+        XCTAssertTrue(played.cuts, "\(played)")
+        let pause = try XCTUnwrap(played.startPause)
+        assertInside(pause, 11.0...11.2)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(played.from), 11.2)
+    }
+
+    func testSoundNoWordClaimsGoesWithTheStretchItsIn() throws {
+        // "So [um, the] right": two short removed words with a 0.15 s pause
+        // between them, and the transcript 0.2 s late on every word. The
+        // first removed word's time lands on the second's sound, so no word
+        // claims the first's, and the kept "So" is nearest it. It's inside
+        // the stretch asked for, allowing for the slack, so it goes: the cut
+        // starts in the pause after "So", not the one after "um".
+        let take = Take(length: 5, words: [(10.0, 10.4), (10.6, 10.7), (10.85, 11.05), (11.5, 11.8)])
+        let late = 0.2
+        let result = plan(
+            take, removing: (10.6 + late)...(11.05 + late), cut: [(10.6 + late)...(10.7 + late), (10.85 + late)...(11.05 + late)],
+            kept: [(10.0 + late)...(10.4 + late), (11.5 + late)...(11.8 + late)]
+        )
+        XCTAssertTrue(result.cuts, "\(result)")
+        assertInside(try XCTUnwrap(result.startPause), 10.4...10.6)
+        assertInside(try XCTUnwrap(result.endPause), 11.05...11.5)
+        XCTAssertTrue(result.missed.isEmpty, "\(result.missed)")
+    }
+
+    func testSoundTheCutHasToKeepIsSaid() throws {
+        // A bit of sound no word claims (10.7 to 10.78), then a short kept
+        // word ("a", 10.93 to 11.0), then the cut word, which the transcript
+        // starts 0.25 s early. The sound is within the slack of the stretch,
+        // but cutting it would cut "a" too, so it stays, and the plan says
+        // so rather than pass as a clean cut of all that was asked.
+        let take = Take(length: 5, words: [(10.0, 10.4), (10.7, 10.78), (10.93, 11.0), (11.3, 11.6), (12.0, 12.4)])
+        let result = plan(take, removing: 11.05...11.6, cut: [11.05...11.6], kept: [10.0...10.4, 10.93...11.0, 12.0...12.4])
+        XCTAssertTrue(result.cuts, "\(result)")
+        assertInside(try XCTUnwrap(result.startPause), 11.0...11.3)
+        let missed = try XCTUnwrap(result.missed[.start])
+        XCTAssertEqual(missed.count, 1, "\(missed)")
+        assertInside(try XCTUnwrap(missed.first), 10.6...10.85)
+        XCTAssertNil(result.missed[.end])
+    }
+
+    func testTheKeepIsTimelineSecondsOnAFastClip() throws {
+        // At 2x, the comma's 0.12 s on the timeline is 0.24 s of the file:
+        // 0.12 of each pause, where at 1x it's 0.06 and 0.08.
+        let take = Take(length: 5, words: [(10.5, 11.0), (11.4, 11.9), (12.3, 12.8)])
+        let placer = placer(take)
+        let result = CutPlanner.plan(
+            start: placer, CutPlanner.Boundary(time: 11.4, before: [10.5...11.0], after: [11.4...11.9], speed: 2),
+            end: placer, CutPlanner.Boundary(time: 11.9, before: [11.4...11.9], after: [12.3...12.8], speed: 2),
+            keep: 0.12, falseStart: false
+        )
+        XCTAssertTrue(result.cuts, "\(result)")
+        XCTAssertEqual(result.keptBefore, 0.12, accuracy: 0.001)
+        XCTAssertEqual(result.keptAfter, 0.12, accuracy: 0.001)
+    }
+
     func testAnEdgeThatWouldntBeCleanIsntCut() {
         // Snapped (to a frame, say) out of its pause and into the word:
         // judged clipped, so the stretch isn't cut.

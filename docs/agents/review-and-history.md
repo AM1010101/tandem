@@ -101,35 +101,36 @@ video), or snapped to the quietest point near a word's end, which lands in
 the gaps inside words. So it goes by the sound alone. For every cut edge
 on the speech tracks (two pieces of the take meeting, not a through-edit,
 or a piece beside a gap) it reads the file's own sound either side of the
-edit, in 10 ms frames, over the full band and again above 4 kHz, where a
-final "s" or "t" is heard. Levels come from the take's own sound around
-its cuts: quiet is 9 dB over its noise floor (the quietest tenth), and
-never more than 25 dB under its loud tenth (15 dB above 4 kHz, where
-breath and room tone reach too). A real pause is quiet for 0.07 s or more
-in both bands; a shorter gap (the closure before the "t" of "extract") is
-inside a word. A take with no voice in it (a screen recording's system
-sound) isn't judged.
+edit, in 5 ms frames, over the full band and again above 4 kHz, where a
+final "s" or "t" is heard. Levels come from the 3 s either side of each
+edge, since a take's loudness drifts: quiet is 9 dB over the noise floor
+there (the quietest tenth), or 20 dB over it above 4 kHz, where breath
+and mouth noise reach too. A real pause is quiet for 0.08 s or more in
+both bands; a shorter gap (the closure before the "t" of "extract", which
+ran to 0.095 s on the Ian video) is inside a word. A take with no voice in
+it (a screen recording's system sound) isn't judged.
 
 An edge with the frame on either side of it in a real pause is fine: the
 clip ends in silence, or ends right as a word it doesn't keep starts.
-Otherwise it's judged by its margin: how far the clip's 25 ms beside the
-edge is under the speech level (the loud end, 92nd percentile, of the 3 s
-either side). On the Ian video every cut Mike heard as a cut-off was
+Any other edge is in sound. Voice at speech level (within 10 dB of it)
+past the edge, in what's cut away, before a pause, clips it whatever the
+clip's own side sounds like: that's the rest of the word or the next word
+of fluent speech, like the "t" released after the closure a cut is in, or
+the "pro" left before a clip that started on the transcript's time for
+"processed". On the Ian video most of the cuts a quiet clip's side passed
+were like that. Otherwise it's judged by its margin: how far the clip's
+25 ms beside the edge is under the speech level (the loud end, 92nd
+percentile, of the 3 s either side). The cut-offs Mike heard there were
 within about 3 dB, and the clean joins 15 dB or more under. Under 9 dB is
 a clipped word, a problem that fails the check; 9 to 15 dB is a marginal
-join, a note to listen to; 15 or more is clean. Two more are clipped
-whatever the margin: a short burst past the edge with a pause after it
-(the "t" released after the closure the cut is in), and, when the join
-isn't clean, the rest of a word running on past the edge to a pause within
-0.3 s (the "pro" left before a clip that started on the transcript's time
-for "processed").
+join, a note to listen to; 15 or more is clean.
 
 Each clipped edge says which clip's start or end, how much voice is cut
 off, the margin, and its fix (`fixKind`):
 
 - `trimToPause`: the trim (with ripple) that moves the edge into a real
-  pause within 0.3 s, on a frame. It goes on past the cut-off sound into a
-  pause in the cut material, 0.04 s in (the start of a clip goes 0.08 s
+  pause within 0.5 s, on a frame. It goes on past the cut-off sound into a
+  pause in the cut material, 0.03 s in (the start of a clip goes 0.08 s
   before its word, since a "p" or "t" bursts after a silent closure), or
   back into a pause in what the clip keeps, dropping a fragment. The
   transcript is used only to rule out a trim that would bring a cut word

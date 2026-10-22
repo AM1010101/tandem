@@ -10,46 +10,96 @@ import Foundation
 public struct CutPlacer: Sendable {
     public let energy: SpeechEnergy
     public let levels: SpeechLevels
-    /// Per frame: quiet in both bands, and part of a real pause.
-    private let quiet: [Bool]
-    private let inPause: [Bool]
 
     private static let step = SpeechEnergy.frameSeconds
 
     public init(_ energy: SpeechEnergy, levels: SpeechLevels) {
         self.energy = energy
         self.levels = levels
+    }
+
+    /// What's quiet and what's speech around one edge, from the sound
+    /// `CutAudit.around` either side of it, and the real pauses there.
+    ///
+    /// The floor is local because a take's loudness drifts: on the Ian
+    /// video (#64) a floor and a loud cap for the whole take let soft
+    /// syllables inside words count as pauses, and the pause search that
+    /// worked there took its floor from the few seconds by the join.
+    public struct Around: Sendable {
+        /// The quietest tenth, full band and above 4 kHz, dB.
+        public var floor: Float
+        public var highFloor: Float
+        /// Quiet is under these.
+        public var quiet: Float
+        public var highQuiet: Float
+        /// The speech level: the loud end of the sound here, dB.
+        public var speech: Float
+        /// The frames these cover, and which of them are quiet and in a
+        /// real pause.
+        let frames: Range<Int>
+        let quietFrames: [Bool]
+        let pauseFrames: [Bool]
+        /// How many frames were read.
+        let count: Int
+
+        /// Before the first frame read or after the last is the file's
+        /// start or end (reads reach well past every edge otherwise), so
+        /// it's a pause. Past the stretch looked at is never reached.
+        func isPause(_ index: Int) -> Bool {
+            if index < 0 || index >= count { return true }
+            return frames.contains(index) && pauseFrames[index - frames.lowerBound]
+        }
+
+        func isQuiet(_ index: Int) -> Bool {
+            if index < 0 || index >= count { return true }
+            return frames.contains(index) && quietFrames[index - frames.lowerBound]
+        }
+    }
+
+    public func around(_ time: Double) -> Around {
         let count = energy.full.count
-        let quiet = (0..<count).map { energy.full[$0] < levels.full && energy.high[$0] < levels.high }
-        // Quiet runs long enough to be pauses. Beyond the frames read is the
-        // file's start or end (reads reach well past every edge otherwise),
-        // so it counts as a pause, and so does a run reaching it.
-        let pauseFrames = Int((CutAudit.minPause / Self.step).rounded())
-        var inPause = [Bool](repeating: false, count: count)
+        let span = Int((CutAudit.around / Self.step).rounded())
+        let centre = energy.index(of: time)
+        let frames = max(0, min(count, centre - span))..<max(0, min(count, centre + span))
+        func percentile(_ values: ArraySlice<Float>, _ p: Double) -> Float {
+            let sorted = values.sorted()
+            return sorted.isEmpty ? -120 : sorted[min(sorted.count - 1, Int(Double(sorted.count) * p))]
+        }
+        let floor = percentile(energy.full[frames], CutAudit.floorPercentile)
+        let highFloor = percentile(energy.high[frames], CutAudit.floorPercentile)
+        let quiet = floor + CutAudit.overFloor
+        let highQuiet = highFloor + CutAudit.highOverFloor
+        let quietFrames = frames.map { energy.full[$0] < quiet && energy.high[$0] < highQuiet }
+
+        // Quiet runs long enough to be pauses, and runs reaching the start
+        // or end of the frames read: that's the file's start or end.
+        let pauseLength = Int((CutAudit.minPause / Self.step).rounded())
+        var pauseFrames = [Bool](repeating: false, count: quietFrames.count)
         var runStart = 0
-        for index in 0...count where index == count || !quiet[index] {
-            if index > runStart, index - runStart >= pauseFrames || runStart == 0 || index == count {
-                for k in runStart..<index { inPause[k] = true }
+        for index in 0...quietFrames.count where index == quietFrames.count || !quietFrames[index] {
+            let atFileEdge = (runStart == 0 && frames.lowerBound == 0) || (index == quietFrames.count && frames.upperBound == count)
+            if index > runStart, index - runStart >= pauseLength || atFileEdge {
+                for k in runStart..<index { pauseFrames[k] = true }
             }
             runStart = index + 1
         }
-        self.quiet = quiet
-        self.inPause = inPause
+        return Around(
+            floor: floor, highFloor: highFloor, quiet: quiet, highQuiet: highQuiet,
+            speech: percentile(energy.full[frames], CutAudit.speechPercentile),
+            frames: frames, quietFrames: quietFrames, pauseFrames: pauseFrames, count: count
+        )
     }
 
-    func isPause(_ index: Int) -> Bool { index < 0 || index >= inPause.count || inPause[index] }
-    func isQuiet(_ index: Int) -> Bool { index < 0 || index >= quiet.count || quiet[index] }
-
     /// The pause holding frame `index`, in media time.
-    public func pause(at index: Int) -> ClosedRange<Double> {
-        let count = inPause.count
+    func pause(at index: Int, in near: Around) -> ClosedRange<Double> {
+        let count = energy.full.count
         // Past the frames read: the file's start or end, of no known length,
         // so it's given room for the pad.
         if index < 0 { return (energy.start - 1)...energy.start }
         if index >= count { return energy.end...(energy.end + 1) }
         var low = index, high = index
-        while low - 1 >= 0, inPause[low - 1] { low -= 1 }
-        while high + 1 < count, inPause[high + 1] { high += 1 }
+        while low - 1 >= 0, near.isPause(low - 1) { low -= 1 }
+        while high + 1 < count, near.isPause(high + 1) { high += 1 }
         return (energy.start + Double(low) * Self.step)...(energy.start + Double(high + 1) * Self.step)
     }
 
@@ -66,6 +116,10 @@ public struct CutPlacer: Sendable {
     }
 
     public func score(at time: Double, keeps side: CutAudit.Side) -> JoinScore {
+        score(at: time, keeps: side, speech: around(time).speech)
+    }
+
+    func score(at time: Double, keeps side: CutAudit.Side, speech: Float) -> JoinScore {
         let step = Self.step
         let span = side == .before ? (time - CutAudit.keptSpan)...time : time...(time + CutAudit.keptSpan)
         // Power over the span, each frame by how much of it is in the span.
@@ -79,37 +133,39 @@ public struct CutPlacer: Sendable {
             if to > from { power += pow(10, Double(energy.full[index]) / 10) * (to - from) }
         }
         let kept = power > 0 ? max(-120, Float(10 * log10(power / CutAudit.keptSpan))) : -120
-        let low = max(0, energy.index(of: time - CutAudit.speechSpan))
-        let high = min(energy.full.count, energy.index(of: time + CutAudit.speechSpan))
-        let around = low < high ? energy.full[low..<high].sorted() : []
-        let speech = around.isEmpty ? -120 : around[min(around.count - 1, Int(Double(around.count) * CutAudit.speechPercentile))]
         return JoinScore(keptDB: kept, speechDB: speech)
     }
 
     /// The frames from one beside an edge, going away from it, up to the
-    /// first frame of a pause.
+    /// first frame of a pause, or `reach` and no further.
     struct Run {
         var frames: [Int]
         var pause: Int
-        /// Seconds from the edge to the pause.
-        var distance: Double
+        /// Seconds from the edge to the pause, when it's within `reach`.
+        var distance: Double?
     }
 
-    func run(from frame: Int, _ direction: Int, edge time: Double) -> Run {
+    func run(from frame: Int, _ direction: Int, edge time: Double, in near: Around) -> Run {
         var frames: [Int] = []
         var index = frame
-        while !isPause(index) {
+        let limit = Int((CutAudit.reach / Self.step).rounded()) + 1
+        while !near.isPause(index), frames.count <= limit {
             frames.append(index)
             index += direction
         }
         let boundary = energy.start + Double(direction > 0 ? index : index + 1) * Self.step
-        return Run(frames: frames, pause: index, distance: abs(boundary - time))
+        let distance = abs(boundary - time)
+        return Run(frames: frames, pause: index, distance: near.isPause(index) && distance <= CutAudit.reach + 1e-9 ? distance : nil)
     }
 
-    /// Frames at speech level, in the full band and above 4 kHz.
-    func speech(_ frames: [Int]) -> (full: Int, high: Int) {
+    /// Frames at speech level, in the full band and above 4 kHz. Never
+    /// quiet, either: in a take with next to nothing above 4 kHz, its loud
+    /// tenth there is room noise.
+    func speech(_ frames: [Int], in near: Around) -> (full: Int, high: Int) {
         let inside = frames.filter { $0 >= 0 && $0 < energy.full.count }
-        return (inside.filter { energy.full[$0] >= levels.fullSpeech }.count, inside.filter { energy.high[$0] >= levels.highSpeech }.count)
+        let full = max(near.quiet, near.speech - CutAudit.runOnUnder)
+        let high = max(near.highQuiet, levels.highSpeech)
+        return (inside.filter { energy.full[$0] >= full }.count, inside.filter { energy.high[$0] >= high }.count)
     }
 
     public func judge(
@@ -120,50 +176,52 @@ public struct CutPlacer: Sendable {
         let before = Int((x - 1e-6).rounded(.up)) - 1
         let after = Int((x + 1e-6).rounded(.down))
         let (keptFrame, keptStep, lostFrame, lostStep) = side == .before ? (before, -1, after, 1) : (after, 1, before, -1)
-        if isPause(keptFrame) || isPause(lostFrame) { return .clean }
+        let near = around(time)
+        if near.isPause(keptFrame) || near.isPause(lostFrame) { return .clean }
 
-        let score = score(at: time, keeps: side)
-        let lost = run(from: lostFrame, lostStep, edge: time)
-        let kept = run(from: keptFrame, keptStep, edge: time)
-        let reachable = { (run: Run) in run.distance <= CutAudit.reach + 1e-9 }
-        let lostSpeech = speech(Array(lost.frames.prefix(Int((CutAudit.reach / step).rounded()))))
-        let voiced = max(lostSpeech.full, lostSpeech.high) >= Int((CutAudit.minSpeech / step).rounded())
-        // The voice past the edge stops at a pause just after it: the rest
-        // of the word the clip keeps, not a word of the cut material.
-        let runsOn = voiced && reachable(lost)
-        let isBurst = runsOn && lost.distance <= CutAudit.burst + 1e-9
+        let score = score(at: time, keeps: side, speech: near.speech)
+        let lost = run(from: lostFrame, lostStep, edge: time, in: near)
+        let kept = run(from: keptFrame, keptStep, edge: time, in: near)
+        let lostSpeech = speech(Array(lost.frames.prefix(Int((CutAudit.reach / step).rounded()))), in: near)
+        // Voice at speech level past the edge, before any real pause: the
+        // edge is inside a word, or in fluent speech, whatever the clip's
+        // side sounds like. On the Ian video most of the cuts the level
+        // passed were in a quiet gap inside a word (the closure in
+        // "extract", "because", "index"), where the clip's last 25 ms reads
+        // 15 to 24 dB under the speech.
+        let runsOn = max(lostSpeech.full, lostSpeech.high) >= Int((CutAudit.minSpeech / step).rounded())
         let verdict: CutAudit.Verdict
-        if score.margin < CutAudit.clippedUnder || isBurst || (runsOn && score.margin < CutAudit.cleanFrom) {
+        if score.margin < CutAudit.clippedUnder || runsOn {
             verdict = .clipped
         } else {
             verdict = score.margin < CutAudit.cleanFrom ? .marginal : .clean
         }
 
         var gap: Double?
-        for frame in [keptFrame, lostFrame] where isQuiet(frame) {
+        for frame in [keptFrame, lostFrame] where near.isQuiet(frame) {
             var low = frame, high = frame
-            while !isPause(low - 1), isQuiet(low - 1) { low -= 1 }
-            while !isPause(high + 1), isQuiet(high + 1) { high += 1 }
+            while !near.isPause(low - 1), near.isQuiet(low - 1) { low -= 1 }
+            while !near.isPause(high + 1), near.isQuiet(high + 1) { high += 1 }
             gap = Double(high - low + 1) * step
             break
         }
         var edge = CutAudit.Edge(
-            verdict: verdict, margin: score.margin, kept: kept.distance, lost: reachable(lost) ? lost.distance : nil,
-            gap: gap, highBandOnly: voiced && lostSpeech.full == 0, pause: nil, suggestion: nil, fix: nil
+            verdict: verdict, margin: score.margin, kept: kept.distance ?? Double(kept.frames.count) * step, lost: lost.distance,
+            gap: gap, highBandOnly: runsOn && lostSpeech.full == 0, pause: nil, suggestion: nil, fix: nil
         )
         guard verdict == .clipped else { return edge }
 
         // On past what's cut off, into a pause in the cut material; or back
         // into a pause in what the clip keeps, dropping a fragment.
         var moves: [(to: Double, pause: ClosedRange<Double>)] = []
-        if reachable(lost) {
-            let pause = pause(at: lost.pause)
+        if lost.distance != nil {
+            let pause = pause(at: lost.pause, in: near)
             let to = target(in: pause, direction: lostStep, startOfClip: side == .after)
             let inCut = removed.map { $0.lowerBound - 1e-6 <= to && to <= $0.upperBound + 1e-6 } ?? true
             if inCut, !Self.holdsWord(words, min(time, to)...max(time, to)) { moves.append((to, pause)) }
         }
-        if reachable(kept) {
-            let pause = pause(at: kept.pause)
+        if kept.distance != nil {
+            let pause = pause(at: kept.pause, in: near)
             let to = target(in: pause, direction: keptStep, startOfClip: false)
             if !Self.holdsWord(words, min(time, to)...max(time, to)) { moves.append((to, pause)) }
         }

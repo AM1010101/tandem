@@ -15,10 +15,9 @@ import TandemMedia
 /// `CutAudit` the stretch cut at the join and the transcript's words only
 /// so a fix never brings a cut word back.
 enum CutCheck {
-    /// Sound read either side of each edge: the 3 s the speech level is
-    /// taken over, which is room to find a pause too, and enough of the take
-    /// around it for its noise floor.
-    static let window = CutAudit.speechSpan
+    /// Sound read either side of each edge: the 3 s its noise floor and
+    /// speech level are taken over, which is room to find a pause too.
+    static let window = CutAudit.around
     static let label = "Move clipped cuts into pauses"
 
     /// One edge of a speech clip where the take is cut: two clips of it

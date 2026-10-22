@@ -2,7 +2,7 @@ import Accelerate
 import AVFoundation
 import Foundation
 
-/// How loud a stretch of a file's sound is, in 10 ms frames: RMS in dB over
+/// How loud a stretch of a file's sound is, in 5 ms frames: RMS in dB over
 /// the full band, and again above 4 kHz.
 ///
 /// The high band is there for the ends of words: a final "s" or "t" hardly
@@ -12,7 +12,9 @@ import Foundation
 /// envelopes) found the same: the cuts Mike heard clipped were the ones the
 /// full band called quiet and the high band didn't.
 public struct SpeechEnergy: Sendable {
-    public static let frameSeconds = 0.01
+    /// 5 ms, as the pause search that worked on the Ian video used (#64):
+    /// a 25 ms join is five frames, and a pause is placed to within one.
+    public static let frameSeconds = 0.005
     /// Where the high band starts.
     public static let highBand = 4000.0
     /// What a file is read at: high enough to keep an "s" (up to 16 kHz).
@@ -115,64 +117,38 @@ public struct SpeechEnergy: Sendable {
     }
 }
 
-/// What counts as quiet, and as speech, in a take, from the frames read
-/// around its cuts: its noise floor (the quietest tenth) and its loud
-/// tenth, in each band.
-///
-/// Quiet is 9 dB over the floor (#64 measured real pauses on the Ian video
-/// that way, on the raw mic), and never more than 25 dB under the loud
-/// tenth in the full band, or 15 dB under it above 4 kHz. Breath, mouth
-/// noise and room tone reach above 4 kHz too, and on the Tandem video
-/// (October 2026) a high-band threshold set from the floor alone called
-/// them voice at half the edges of an edit Mike had approved. Speech, the
-/// level a clipped word has to reach to count, is within 20 dB of the loud
-/// tenth in the full band and 10 dB above 4 kHz, where an "s" sits.
+/// What a take's voice is like, from the frames read around its cuts:
+/// how loud its loud tenth is above 4 kHz, and whether there's a voice at
+/// all. What's quiet is worked out at each edge instead
+/// (`CutPlacer.around`), from the sound either side of it.
 public struct SpeechLevels: Equatable, Sendable {
-    /// Quiet is under these.
-    public var full: Float
-    public var high: Float
-    /// Speech is at or over these.
-    public var fullSpeech: Float
-    public var highSpeech: Float
     /// The loud tenth above 4 kHz: a "k" or "t" released after its closure
     /// gets near it.
     public var highLoud: Float
+    /// Speech above 4 kHz, where an "s" sits, is at or over this: within
+    /// 10 dB of the loud tenth.
+    public var highSpeech: Float
     /// A take whose loud tenth is this quiet carries no voice (a screen
     /// recording's system sound, mostly digital silence), so its cuts
     /// aren't judged.
     public var isVoice: Bool
 
-    static let overFloor: Float = 9
-    static let quietUnderLoud: Float = 25
-    static let highQuietUnderLoud: Float = 15
-    static let speechUnderLoud: Float = 20
     static let highSpeechUnderLoud: Float = 10
     static let quietestVoice: Float = -60
 
-    public init(full: Float, high: Float, fullSpeech: Float, highSpeech: Float, highLoud: Float, isVoice: Bool = true) {
-        self.full = full
-        self.high = high
-        self.fullSpeech = fullSpeech
-        self.highSpeech = highSpeech
+    public init(highLoud: Float, isVoice: Bool = true) {
         self.highLoud = highLoud
+        highSpeech = highLoud - Self.highSpeechUnderLoud
         self.isVoice = isVoice
     }
 
     /// Levels from every frame read of one take.
     public init(of readings: [SpeechEnergy]) {
-        func spread(_ values: [Float]) -> (floor: Float, loud: Float) {
+        func loud(_ values: [Float]) -> Float {
             let sorted = values.sorted()
-            guard !sorted.isEmpty else { return (-120, -120) }
-            return (sorted[sorted.count / 10], sorted[min(sorted.count - 1, sorted.count * 9 / 10)])
+            return sorted.isEmpty ? -120 : sorted[min(sorted.count - 1, sorted.count * 9 / 10)]
         }
-        let full = spread(readings.flatMap(\.full))
-        let high = spread(readings.flatMap(\.high))
-        self.full = max(full.floor + Self.overFloor, full.loud - Self.quietUnderLoud)
-        self.high = max(high.floor + Self.overFloor, high.loud - Self.highQuietUnderLoud)
-        fullSpeech = max(self.full, full.loud - Self.speechUnderLoud)
-        highSpeech = max(self.high, high.loud - Self.highSpeechUnderLoud)
-        highLoud = high.loud
-        isVoice = full.loud > Self.quietestVoice
+        self.init(highLoud: loud(readings.flatMap(\.high)), isVoice: loud(readings.flatMap(\.full)) > Self.quietestVoice)
     }
 }
 
@@ -180,22 +156,29 @@ public struct SpeechLevels: Equatable, Sendable {
 /// the transcript's times (they're 30 to 100 ms off, sometimes 0.2 s).
 ///
 /// An edge in a real pause is clean: quiet for `minPause` or more in the
-/// full band and above 4 kHz alike. Shorter quiet gaps are inside words
-/// (the closure before the "t" of "extract").
+/// full band and above 4 kHz alike, where quiet is `overFloor` over the
+/// quietest tenth of the sound `around` either side (`highOverFloor` above
+/// 4 kHz). Shorter quiet gaps are inside words (the closure before the "t"
+/// of "extract").
 ///
-/// Otherwise it's judged by how far under the speech level the clip's own
-/// 25 ms beside the edge is (`CutPlacer.score`). On the Ian video (October
-/// 2026, #64) every cut Mike heard as a cut-off was within about 3 dB of the
-/// speech, and the clean joins 15 dB or more under it, so under
-/// `clippedUnder` is clipped and under `cleanFrom` marginal. Two things
-/// clip a word with the clip's side quiet, and are clipped whatever its
-/// level:
-/// - a short burst of voice past the edge with a pause after it
-///   (`burst`): the "t" released after the closure the edge is in, which
-///   belongs to the kept word;
-/// - voice past the edge running into a pause within `reach`, when the
-///   join isn't clean: the rest of the word, like the "pro" of "processed"
-///   left before a clip that started on the transcript's time for it.
+/// Any other edge is in sound, and two things say how it sounds:
+/// - voice at speech level (`runOnUnder`) past the edge, in the material
+///   cut away, before a pause: the rest of the word, or the next word of
+///   fluent speech, so it's clipped however quiet the clip's own side is.
+///   That's the "t" released after the closure an edge is in, and the
+///   "pro" of "processed" left before a clip that started on the
+///   transcript's time for it;
+/// - otherwise, how far under the speech level the clip's own 25 ms beside
+///   the edge is (`CutPlacer.score`). On the Ian video (October 2026, #64)
+///   the cut-offs Mike heard in his second review were within about 3 dB
+///   of the speech, and the clean joins 15 dB or more under it, so under
+///   `clippedUnder` is clipped and under `cleanFrom` marginal.
+///
+/// On the Ian video's 124 labelled cut edges (`CutScorecardTests`), a
+/// take-wide quiet level, and a quiet clip's side counting as clean, passed
+/// 37 of the 64 clipped edges; these rules pass 9, call 5 marginal, and
+/// flag 4 of the 25 clean ones (two of them joins the edit kept at 6 to
+/// 7 dB under the speech, which any level check flags).
 ///
 /// A clipped edge's fix moves it into a real pause (`CutPlacer`): past the
 /// cut-off sound into a pause in the cut material, unless that would bring
@@ -204,22 +187,41 @@ public struct SpeechLevels: Equatable, Sendable {
 /// less is better put back whole, filler and all, which is what sounded
 /// right on the Ian video.
 public enum CutAudit {
-    public static let minPause = 0.07
-    /// How far an edge may move to reach a pause.
-    public static let reach = 0.3
+    /// The quiet a real pause lasts. #64 measured 70 ms on the Ian video,
+    /// but closures inside words there ran to 95 ms; 80 ms catches most of
+    /// them and still passes the pauses Mike kept (fitted to its 124 edges).
+    public static let minPause = 0.08
+    /// Quiet is this many dB over the floor (#64, measured on the raw mic).
+    public static let overFloor: Float = 9
+    /// And this many over the floor above 4 kHz, where breath and mouth
+    /// noise reach well over floor + 9 in a pause, and an "s" on Ian's mic
+    /// 40 dB over it. 30 would pass one more of the Ian video's clean edges
+    /// but miss three more clipped ones, and the higher it is, the more a
+    /// soft "s" after the edge counts as a pause (a guess between the two).
+    public static let highOverFloor: Float = 20
+    /// The floor is the quietest tenth of the sound this far either side of
+    /// the edge (#64's pause search took it over the 4 s past the join).
+    public static let around = 3.0
+    public static let floorPercentile = 0.1
+    /// How far an edge may move to reach a pause, and how far past it voice
+    /// counts as cut off. The fixes that worked on the Ian video moved edges
+    /// up to half a second (fitted: 0.3 s reached too few of them, and 1.5 s
+    /// went to pauses past the one that worked).
+    public static let reach = 0.5
     /// How far into the pause a moved edge goes, so the word's tail (or the
-    /// breath before the next one) isn't right on the cut.
-    public static let pad = 0.04
+    /// breath before the next one) isn't right on the cut (#64, measured).
+    public static let pad = 0.03
     /// How far before its word the start of a clip goes when it moves back
     /// into the pause before it. The end of the quiet before a word is often
     /// its "p" or "t" bursting, not its start: "processed" started at
     /// 647.60 on Ian's mic, 60 ms before its "p" did.
     public static let lead = 0.08
-    /// Voice at speech level past the edge that counts as cut off.
+    /// Voice past the edge at least this long, at speech level, is cut off.
     public static let minSpeech = 0.02
-    /// Voice past the edge this short, with a pause after it, is a
-    /// consonant's burst, not a word.
-    public static let burst = 0.1
+    /// Speech level for that is within this many dB of the speech level in
+    /// the full band (or at `SpeechLevels.highSpeech` above 4 kHz). A guess,
+    /// from #64's "fix anything within about 10 dB of speech".
+    public static let runOnUnder: Float = 10
     /// The clip's 25 ms beside the edge, this many dB or less under the
     /// speech level, is clipped. Between Mike's cut-offs (about 3) and the
     /// clean joins (15 or more); the line itself is a guess.
@@ -228,9 +230,8 @@ public enum CutAudit {
     public static let cleanFrom: Float = 15
     /// How much of the clip beside the edge the join's level is taken over.
     public static let keptSpan = 0.025
-    /// The speech level is the loud end (`speechPercentile` of 10 ms
-    /// frames) of the sound this far either side of the edge.
-    public static let speechSpan = 3.0
+    /// The speech level is the loud end (`speechPercentile` of 5 ms frames)
+    /// of the sound `around` either side of the edge.
     public static let speechPercentile = 0.92
     /// A cut this long or shorter, with no pause to move to, is put back.
     public static let putBackLimit = 2.0

@@ -301,7 +301,7 @@ final class CheckAPITests: XCTestCase {
 
         let text = result.readableText
         XCTAssertTrue(text.hasPrefix("Checked 00:00.000-01:00.000 (4 cut edges) in "), text)
-        XCTAssertTrue(text.contains("  00:30.000  Clipped word at the end of clip_voc1: the voice runs on 0.12 s past the cut; the clip's last 25 ms is at speech level. Trim the end 0.167 s later, into the pause after it.  On: clip_voc1 take1-camera, clip_voc2 take1-camera"), text)
+        XCTAssertTrue(text.contains("  00:30.000  Clipped word at the end of clip_voc1: the voice runs on 0.12 s past the cut; the clip's last 25 ms is 1.2 dB under the speech. Trim the end 0.167 s later, into the pause after it.  On: clip_voc1 take1-camera, clip_voc2 take1-camera"), text)
         XCTAssertTrue(text.contains("Fix: tandem apply --expect \(result.revision ?? 0) --label \"Move clipped cuts into pauses\" '[{\"trim\":"), text)
 
         // Applying the fix leaves nothing to find.
@@ -347,9 +347,11 @@ final class CheckAPITests: XCTestCase {
     }
 
     func testAMarginalJoinIsANote() async throws {
-        // The first piece's last 30 ms are 12 dB under the speech, and the
-        // cut word runs on with no pause in reach.
-        let h = try voicedHarness(words: [(1, 3.6), (29, 29.97), (30, 30.6), (33, 33.8)], soft: [(29.97, 30, 12)])
+        // The first piece's last 30 ms trail off 12 dB under the speech, and
+        // what's cut after them is the rest of that soft tail, then a pause:
+        // nothing at speech level is cut off, so only the level says how it
+        // sounds. (A cut word running on past the cut would clip it.)
+        let h = try voicedHarness(words: [(1, 3.6), (29, 29.97), (33, 33.8)], soft: [(29.97, 30.1, 12)])
         defer { h.close() }
         let result = try await CheckRequest(cuts: true).run(on: h.service, context: h.context)
         XCTAssertTrue(result.ok, "marginal doesn't fail: \(result.problems)")

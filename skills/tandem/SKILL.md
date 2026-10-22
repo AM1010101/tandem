@@ -388,9 +388,9 @@ From his review comments on the Daytona and Build Your Own Convex videos
   are short quiet gaps (the closure before the "k" of "takes" or the "t" of
   "parts"), and a final "s" hardly registers below 4 kHz, so the snap lands
   mid-word and cuts "takes" to "ta" (three of these on the Tandem video,
-  October 2026). A real pause is quiet for 70 ms or more in the full band
+  October 2026). A real pause is quiet for 80 ms or more in the full band
   and above 4 kHz alike, which is what the check goes by. Listen with
-  `tandem clip` to any it can't fix (no pause within 0.3 s).
+  `tandem clip` to any it can't fix (no pause within 0.5 s).
 - **Sweep for leftovers after a rebuild.** Restoring cut stretches left 88
   clips of 1 to 10 ms (one flickered) and some microsecond overlaps that
   made every later `apply` fail with "Clips X and Y overlap". After a big

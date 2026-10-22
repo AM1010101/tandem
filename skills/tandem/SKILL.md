@@ -92,9 +92,11 @@ rounds up.
    what you changed and finds black frames, flickers, green screen that
    didn't key and white blocks. A flicker it can fix (a frame jumping in
    a screen recording) comes with a `holdFrame`, in the `tandem apply` on
-   its last line. If you cut the take, also run
-   `tandem check --changed --cuts` for words clipped at the cuts. Fix every problem it reports. Its notes
-   are judgement calls, but go through each one:
+   its last line. Fix every problem it reports. If you cut the take, also
+   run `tandem check --changed --cuts` and the listen check for words
+   clipped at the cuts, and judge its cut findings by ear rather than
+   applying them blind (see "How Mike likes a take cut"). Its notes are
+   judgement calls, but go through each one:
    - soft zooms;
    - dead air: 0.8 s or more of a still picture with nothing said and no
      sound effect or music swell. Cut it, or keep it only if the pause
@@ -163,14 +165,68 @@ transitions, media or markers.
   sound is: listen to them, and cut a stray "um" with `tandem cut --range`
   if it should go. Bark writes most "um"s as words, so they split pauses
   and stay until they're cut.
-- **Cut words with `tandem cut`,** not ranges from `search` times (they're
-  30 to 200 ms off the sound, and a cut on them clips the word that
-  stays). `tandem cut "<phrase>"` (or `--range <start>-<end>` for a rough
-  cut, `--at` for a phrase said twice) puts both edges of each cut in a
-  real pause and leaves in a filler with no pause round it, which is what
-  sounded right on the Ian video. Long false starts are cut pause to pause
-  anyway. Dry run first, then `--apply`; it's one undo step. Keep
-  `cutRanges` for exact cuts you've checked yourself.
+- **Never place an edge from transcript times,** with or without a margin.
+  Mike heard Ian "cut off" 10 times over 4 review rounds on the whiteboard
+  interview: "it's quite a common problem that we seem to get wrong,
+  correctly placing the cut points" (2026-10-22). Word times are 30 to
+  200 ms off the sound, sometimes more: "processed" started 0.2 s early, so
+  an edge on it cut off "pro". Don't snap to the quietest point near a
+  word's end either: the closure before a final "t" or "k" is a silence
+  inside the word, so "extract" became "extrac" and "takes" became "ta".
+  A final "s" hardly registers below 4 kHz, so look above it too. And a
+  clean-sounding cut in the short gap before a sentence's last word drops
+  that word whole: "a couple lies about [time.]" on the Ian cold open.
+  A filler taken out of running speech ("do that [because of] to keep")
+  leaves no pause at all, so the kept word is chopped mid-sound.
+- **Cut with `tandem cut`,** not `cutRanges` built from `search` times.
+  `tandem cut "<phrase>"` (or `--range <start>-<end>` for a rough cut,
+  `--at` for a phrase said twice) puts both edges of each cut in a real
+  pause found in the audio and leaves in a filler with no pause round it,
+  which is what sounded right on the Ian video. Long false starts are cut
+  pause to pause anyway. Dry run first, then `--apply`; it's one undo step.
+  Keep `cutRanges` for exact cuts you've checked yourself.
+- **Then check every join two ways,** after every batch and across the
+  whole timeline, not just the joins you touched. In round 3 Mike still
+  found two cut-offs, both at edges placed from transcript times and never
+  re-checked. Neither check is enough alone.
+  - `tandem check --cuts` (with `--changed` or `--from`/`--to`) reads the
+    take's own sound either side of every cut. Use it rather than an
+    energy script of your own (agents wrote one about 15 times).
+  - A listen check: render the voice as it plays (`tandem clip T T --tracks
+    Voice --audio-only`), transcribe each join's clipped side on its own,
+    padded with a second of silence, with the local Whisper above, and
+    compare its edge words with the take's. It caught the "pro" cut off
+    "processed", which every level check passed.
+- **When Whisper drops an edge word, the edge is wrong.** Whisper fills in
+  a partly cut word, so a word missing entirely is mostly gone. On the Ian
+  cold open it dropped "time." from "a couple lies about time."; the agent
+  overruled it from the waveform, and Mike: "again its cut off here, Ian
+  doesnt say what there are a couple of lies about" (2026-10-22). The cut
+  sat in the 55 ms gap just before "time", so all of it went. Move the
+  edge until the word comes back.
+- **Still confirm `check --cuts` with a listen.** Since 22 Oct 2026 it
+  uses the transcript's word times to tell a short gap between words from
+  a dip inside one (9 of the Ian video's 290 approved joins flagged, down
+  from 25). Its fixes move outward first and never drop a kept word, and
+  it flags a clip that ends just before its sentence's last word with that
+  word cut. Its word times can still be off (Bark put a 45 ms gap between
+  "problem." and "There's" inside "There"), so listen to what it flags
+  before you act on it.
+- **Fixes, in order:** move the edge into a real pause nearby (70 ms or
+  more, found in the audio), or into the gap between words just before the
+  next cut word, even under 70 ms; put back a removed filler of 2 s or less,
+  since a natural "um" beats a chopped word; cut a long false start pause
+  to pause, even if a word of the restart comes back; a 50 to 80 ms fade
+  only as a last resort.
+- **Restored words must finish the thought.** "but it does, you know..."
+  put back on its own sounded like Ian being cut off.
+- **The raw-mic floor rule is a minimum, not proof.** On the raw mic (not
+  the voice-isolated mix, whose near-digital silence breaks it), the kept
+  audio must sit within about 9 dB of the room's quiet level (the 8th
+  percentile over ±3 s) for 40 ms before each out-point and 40 ms after
+  each in-point, and no in-point may open on a 15 to 20 ms blip of the cut
+  word's tail. The "time." cut passed it: it sat in the gap before the
+  word, and the word went missing whole.
 - **Pauses between sentences: 0.4 s.** It's the feel of his old Filmora
   silence detection (0.4 s softening buffer, 0.5 s minimum, 25% volume
   threshold). 0.2 s sounds rushed, as if the sentences are jammed together.
@@ -250,6 +306,10 @@ From his review comments on the Daytona and Build Your Own Convex videos
   doubles: undo old hand slips (Daytona's +0.09 s) before using it. Don't
   chase exact: the webcam only gives about 22.5 real frames a second (it
   repeats 3 of every 12), so sync wobbles by up to 30 ms whatever you pick.
+- **Edits can break sync too.** On the Ian video one `placeMedia` with
+  `mode: overwrite` trimmed 60 ms off the next voice clip's head and put
+  Ian's voice 60 ms early for 20 minutes. Place or insert instead, and check
+  voice-to-picture sync across the whole timeline after every batch.
 - **Open on his face.** The first thing on screen is Mike talking to camera,
   and B-roll comes in after his first line. Build Your Own Convex opened on
   24 s of kinetic text, a cartoon and a terminal before his face appeared,
@@ -267,7 +327,11 @@ From his review comments on the Daytona and Build Your Own Convex videos
   real pause between words. Never 0.2 s off a cut or mid-word. If less than
   about 1.5 s of camera would show between two B-roll shots, join them. A
   quick flash back to the camera looks like a glitch. Use `holdEdges` when a
-  shot runs short.
+  shot runs short. The same goes for a camera cut under B-roll: a shot that
+  starts just after one, or ends just before one, shows a few frames and
+  jumps again, "a double jump... it's kind of a bit disorientating" (Ian
+  video). Within about 0.75 s, extend the B-roll to the cut, holding its
+  edge frame.
 - **Show what he says.** When he names a thing (a dashboard table, a docs
   page, a claim someone made, a price), put the real thing on screen while
   he says it. A highlight (the $200 free credit) appears when he says it,
@@ -317,6 +381,10 @@ From his review comments on the Daytona and Build Your Own Convex videos
   `tandem loudness --from T --to T --tracks Music`. A chill lounge kit sat under demo sound effects
   without fighting them: Rhodes, soft pads, round bass and brushed drums at
   about 85 BPM, with no hi-hats, bells, glockenspiel or marimba.
+- **Show options in the chat.** When he's picking between looks, beds or
+  layouts, send the stills or preview MP4s as files in the conversation,
+  not paths: "How do I view those? Can you just show me them in here?"
+  (Ian video).
 - **Re-check the music after his own edit pass.** He locks the music track
   so his cuts can't slice it, but a locked track never moves, so his ripple
   cuts leave it behind: on the Tandem video the music ran 2.5 minutes past
@@ -387,31 +455,21 @@ From his review comments on the Daytona and Build Your Own Convex videos
 - **Screen recordings fill the frame,** for people watching on a phone:
   one static `zoomToRegion` per page, fitted to the content with a small
   margin, at most 1.5x, and no zoom changes within a page.
-- **Check cuts against the voice, not the transcript alone.** Word times
-  can be off by up to 0.5 s ("since when?" ended half a second after the
-  transcript said, and a drawn-out "Aaall... right" started 0.9 s early).
-  Most of his "word gets cut off" comments were this. Cut with `tandem cut`
-  so the edges start in pauses, and after any cutting run
-  `tandem check --cuts` (with `--changed` or `--from`/`--to`): it reads the
-  take's own sound either side of every cut, full band and above 4 kHz,
-  flags each one the voice runs through, and ends with a `tandem apply`
-  that trims each clipped edge into a real pause, or puts a short cut
-  back where a trim would bring a cut word back. Use it instead
-  of writing your own energy script or running Whisper on a `tandem clip`
-  (agents wrote that script about 15 times). Don't snap a cut to the
-  "quietest point near the word end" by hand either: inside a word there
-  are short quiet gaps (the closure before the "k" of "takes" or the "t" of
-  "parts"), and a final "s" hardly registers below 4 kHz, so the snap lands
-  mid-word and cuts "takes" to "ta" (three of these on the Tandem video,
-  October 2026). A real pause is quiet for 80 ms or more in the full band
-  and above 4 kHz alike, which is what the check goes by. Listen with
-  `tandem clip` to any it can't fix (no pause within 0.5 s).
-- **Sweep for leftovers after a rebuild.** Restoring cut stretches left 88
-  clips of 1 to 10 ms (one flickered) and some microsecond overlaps that
-  made every later `apply` fail with "Clips X and Y overlap". After a big
-  restructure, list clips shorter than a frame and adjacent clips that
-  overlap at all, and close them up (remove the sliver, pull the next clip's
-  start back to it; mikecann/tandem#48 and #49).
+- **Split overlays before a ripple edit under them.** B-roll and graphics
+  are follow tracks: a ripple cut under one shortens it at its tail, so
+  the graphic runs late and loses its ending ("you seem to have cut off the
+  end of the motion graphic", Ian video). Blade the overlay at both ends of
+  the cut range first. To add time under one, blade it at the join and
+  insert a freeze-frame clip (`freezeFrame: true, holdEdges: true`) for
+  the added time: extending the left piece replays frames, so the graphic
+  jumps back.
+- **Sweep for leftovers after any batch of cuts or a rebuild.** Restoring
+  cut stretches left 88 clips of 1 to 10 ms (one flickered) and some
+  microsecond overlaps that made every later `apply` fail with "Clips X and
+  Y overlap". List clips shorter than a frame and adjacent clips that
+  overlap at all, and close them up (remove the sliver, pull the next
+  clip's start back to it; mikecann/tandem#48 and #49). Fill tiny picture
+  gaps, and drop fades on joins that became continuous: they dip mid-word.
 - **Before uploading,** watch the start of the export, where sync problems
   show first. The limiter takes about 8 dB off his voice's peaks to reach
   -14 LUFS, and he hears that as artificial, so he asked for -16 after
@@ -420,6 +478,54 @@ From his review comments on the Daytona and Build Your Own Convex videos
   last round, where the limiter squashed 18 s of it (up to 10 dB off his
   loudest words), and -16 left 4 s. Every export preset masters to the
   project's target and says what it used.
+
+### A hot-takes cold open
+
+The best moments cut together before the first line, to draw people in.
+Plain bites butted together "isn't very exciting": "The whole point of the
+montage open is supposed to have like text on the screen and you know it
+kind of cuts quickly with sound effects and music and all that kind of
+stuff" (Ian video, 2026-10-21). The full build is in
+`convex-videos/ian-whiteboard-sept-2026/cold-open.md`.
+
+- **Build it last,** once the rest of the video is right: "leave that
+  montage until the end... focus on just getting the video right first".
+- **About 30 s, six to eight bites,** alternating speakers and angles.
+  The model is the editor-made open of the earlier Ian video, "What is the
+  Convex WorkPool?" (youtube.com/watch?v=DQZCQ-Y1ZBM): "picked out the
+  really spicy, interesting parts... quick cuts and added text over the
+  top". The Ian open ran 36 s with seven bites, and he kept them all.
+- **Pick the spicy bites, each a finished thought.** Place and
+  listen-check every bite edge as in "How Mike likes a take cut": the last
+  cut-off Mike heard on the Ian video was the end of a bite.
+- **Room between bites:** 0.3 to 0.5 s of real room tone at every join.
+  Butting bites about 0.1 s apart made the lines run together. Widen each
+  bite into its own pauses, and where a take has none, run the picture on
+  silently for 0.2 to 0.3 s.
+- **A reaction beat after each punchline:** 0.5 to 0.8 s of the listener
+  reacting silently (taken from while they listen), so the text can be
+  read before the next bite.
+- **A push with a swoosh between bites,** 0.5 s, so they read as separate
+  moments: "you have like a sound effect or a swipe... to indicate that
+  it's a different topic... Otherwise, you're kind of almost faking what
+  the video is about" (2026-10-22). Not a coloured swipe graphic: "just do
+  like a push and the kind of swipe sound". Where the shots either side
+  sit on different video tracks (close-up over wide), change one angle so
+  the push stays on one track.
+- **Kinetic text of each punchline, in their exact words,** in Convex
+  colours with the highlighter look: white bold text with a soft shadow,
+  the punchline on a rough yellow felt-tip swipe (red for the "wrong"
+  lines). No solid boxes behind it: he disliked dark boxes and the VS Code
+  palette ("use the convex colours"). Show him a few looks as stills over
+  real frames. The text has no exit fade: a matching push on Graphics
+  carries it off with the picture. `motion-graphics` has the build.
+- **Dramatic music:** "dramatic is best for an opening montage like this
+  to make it sound exciting". Generate three or four beds and show each as
+  a preview MP4 with the montage, fitted so its big moments land on cuts
+  (a start offset, or whole bars repeated, with the loop length found by
+  self-similarity) and its final hit on the cut into the first line. His
+  pick, a dark electronic cue, sat about 8 LU under the voices, far above a
+  chapter bed, with a riser into an impact on the last cut.
 
 ### A second voice: the Let's Build It announcement (with his son Josh)
 
@@ -654,6 +760,54 @@ What he changed, in the order he asked:
   archive (`~/dev/me/the-pool`). Crop plans and surveys to the drawing:
   their title blocks carry his address and the designer's phone and email.
 
+### A two-person whiteboard interview: Ian Macartney on time in Convex (October 2026)
+
+Mike interviews Ian, a Convex engineer, at a whiteboard (37:45, about 10
+review rounds, `convex-videos/ian-whiteboard-sept-2026/`): a wide camera of
+both, a close-up of Ian, and a mic on Ian that picks up both voices. Its
+cut-offs are in "How Mike likes a take cut", its cold open above.
+
+- **Name the angles,** and change angle on a cut: C, Ian's close-up (the
+  close-up track on over the wide); W, the wide; W2, a slightly tighter
+  wide (`zoomToRegion` {x 0.065, y 0.04, w 0.87, h 0.87}); P, Ian's
+  punch-in from the wide ({0, 0, 0.714, 0.714}); M, Mike's single from the
+  wide ({0.375, 0.17, 0.625, 0.625}). Change angle at each jump cut that
+  isn't under B-roll.
+- **No slow zooms.** "Is it you that's moving the camera around here?
+  Because it's kind of disorientating a little bit", and "I don't think
+  it's appropriate necessarily for this video" (2026-10-21). All 77
+  animated close-up pushes came out. Steady framings only.
+- **Show whoever's talking:** "While I'm talking you should show me on
+  screen, or at least zoom out to the wide angle." On one shared mic
+  neither level nor pitch tells them apart, so label the turns from the
+  transcript and check the uncertain ones against frames. M for Mike's
+  short turns; for long ones alternate W and W2, because he often points
+  at the board, or Ian is writing on it.
+- **Hide the camera operator's moves** (reframes, focus pulls) with the
+  other angle.
+- **Fill a mic dropout from a camera's mic.** Ian's mic dropped out for
+  11.6 s. The wide camera's sound covered it, EQ'd with ffmpeg's
+  `firequalizer` to the mic's long-term spectrum and raised 36 dB. Check
+  the gap's loudness after: it first went in at -60 LUFS.
+- **People mentioned get a photo and a lower third,** found from their
+  company's pages (Emma from the Convex About page). A nickname earns a
+  gag: Ian as "the GOAT" got a cartoon goat in a circle above his lower
+  third, with a bleat.
+- **Handwritten section titles,** writing on like a marker on the
+  whiteboard over the camera dimmed behind, as sentence-case questions
+  ("Is time a lie in Convex?") with no "08 / 10" counter. Mike picked them
+  from four looks. `motion-graphics` has the build and the timing.
+- **Graphics never cover Ian drawing or pointing at the board,** and draw
+  things the way he drew them (also in `motion-graphics`).
+- **A review copy for the guest:** `tandem export --preset youtube1080`
+  (5.7 GB for 37 minutes, about 10 minutes), put in the Convex Dropbox
+  with rclone on Bruce, since the laptop has no Dropbox app. scp it to
+  `bruce:/Volumes/CannMedia/ConvexFootage/exports/`, `rclone copyto` it
+  into `dropbox:/Convex Workspace/Video/Sept-office-interviews/3. Exports/`
+  under a name that says it's an edit (the raw interview exports live
+  there too), check the size with `rclone lsf --format sp`, make the link
+  with `rclone link "<path>"`, and delete the staging copy on Bruce.
+
 ## Rules
 
 - Insert at a cut's exact time, read from the clips (`start + duration`),
@@ -697,7 +851,12 @@ What he changed, in the order he asked:
     file straight through one clip again, after putting a cut back, never a
     lift and trim by hand.
 - New files you make (B-roll, sound effects, stills) go in the video
-  folder, then `tandem media --refresh` adds them.
+  folder, then `tandem media --refresh` adds them. Temporary files
+  (ProRes masters before converting to HEVC with alpha, test renders) go
+  in `$TMPDIR` or the scratchpad, never the video folder: Tandem adds
+  anything that appears there, and deleting 10 converted intermediates on
+  the Ian video gave Mike a "10 media files are missing" dialog. If one
+  gets registered anyway, `removeMedia` it before deleting the file.
 - Find music, sound effects, stickers and icons with `tandem assets search`
   and add them with `tandem assets use <id> --at <time>`. Mike's shared
   library is `~/Movies/Tandem Library`.

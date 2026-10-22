@@ -194,19 +194,19 @@ transitions, media or markers.
   - `tandem check --cuts` (with `--changed` or `--from`/`--to`) reads the
     take's own sound either side of every cut. Use it rather than an
     energy script of your own (agents wrote one about 15 times).
-  - A listen check: render the voice as it plays (`tandem clip T T --tracks
-    Voice --audio-only`), transcribe each join's clipped side on its own,
-    padded with a second of silence, with the local Whisper above, and
-    compare its edge words with the take's. It caught the "pro" cut off
-    "processed", which every level check passed.
-  - A read across every join: transcribe the whole rendered voice track,
-    put the words either side of each join together, and read them (or
-    have a model read them) for anything that doesn't run on: a dropped
-    first or last word, a stray fragment of a cut word, a half-thought.
-    Then listen-check each one it flags against the take. After Mike signed
-    off the Ian video, this found five more cut-offs that the audio checks
-    passed ("in the recent | point" for "recent past", a lost "It's", a
-    stray "do", "the" and "okay").
+  - `tandem check --cuts --listen` renders the voice across each join,
+    transcribes it, and flags a kept word at the join that isn't heard or
+    is cut short, or a piece of a cut word left in. It replaces the
+    hand-rolled Whisper listen, which caught the "pro" cut off "processed"
+    that every level check passed.
+  - Then read every join's take/heard pair in its output, not just the
+    problems, for a sentence that no longer says what he said, and
+    `tandem clip` around anything that reads wrong. "a little bit [okay]
+    that" passes both the levels and the listen: only reading catches it.
+    After Mike signed off the Ian video, reading the joins found six more
+    cut-offs ("in the recent | point" for "recent past", a lost "It's", a
+    stray "do", "the", "this" and "okay"), and the listen found a seventh
+    ("about the re- |" for "requests").
 - **When Whisper drops an edge word, the edge is wrong.** Whisper fills in
   a partly cut word, so a word missing entirely is mostly gone. On the Ian
   cold open it dropped "time." from "a couple lies about time."; the agent
@@ -218,10 +218,12 @@ transitions, media or markers.
   uses the transcript's word times to tell a short gap between words from
   a dip inside one (9 of the Ian video's 290 approved joins flagged, down
   from 25). Its fixes move outward first and never drop a kept word, and
-  it flags a clip that ends just before its sentence's last word with that
-  word cut. Its word times can still be off (Bark put a 45 ms gap between
-  "problem." and "There's" inside "There"), so listen to what it flags
-  before you act on it.
+  it flags a dropped first or last word, a fragment of a cut word, and a
+  word cut with the filler it runs into ("you have [this, like]"). Its word
+  times can still be off (Bark put a 45 ms gap between "problem." and
+  "There's" inside "There"), so run `check --cuts --listen`, read every
+  join's take/heard pair as above, and `tandem clip` around anything it
+  flags or that reads wrong before you act on it.
 - **Fixes, in order:** move the edge into a real pause nearby (70 ms or
   more, found in the audio), or into the gap between words just before the
   next cut word, even under 70 ms; put back a removed filler of 2 s or less,

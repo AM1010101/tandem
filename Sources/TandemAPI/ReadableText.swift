@@ -180,13 +180,32 @@ extension PausesResult: ReadableResult {
         } else {
             lines.append("\(pauses.count) pause\(pauses.count == 1 ? "" : "s") of \(TimeText.duration(minimum)) or more, \(TimeText.duration(total)) in all:")
             for pause in pauses {
-                lines.append("  \(pause.start)-\(pause.end)  \(TimeText.duration(pause.duration))  ...\(pause.before) | \(pause.after)...")
+                lines.append("  \(pause.start)-\(pause.end)  \(TimeText.duration(pause.duration))  ...\(pause.before) | \(pause.after)...\(pause.sound.map(\.readableText) ?? "")")
             }
         }
         if !missing.isEmpty {
             lines.append("No transcript yet for \(missing.joined(separator: ", ")), so pauses there aren't listed.")
         }
+        for warning in warnings ?? [] { lines.append("Warning: \(warning)") }
         return lines.joined(separator: "\n")
+    }
+}
+
+extension PauseSound {
+    /// What the sound under a pause has, after its line in `pauses`.
+    var readableText: String {
+        if runsThrough {
+            return "  no real pause: the voice runs through it" + (heard.first.map { " (\($0.start)-\($0.end))" } ?? "")
+        }
+        var parts = ["heard as \(TimeText.duration(duration))"]
+        if !heard.isEmpty { parts.append(heardText) }
+        return "  " + parts.joined(separator: ", ")
+    }
+
+    /// Where the sound no word accounts for is, like "sound at
+    /// 01:02.300-01:02.650 on Voice".
+    var heardText: String {
+        "sound at " + heard.map { "\($0.start)-\($0.end) on \($0.tracks.joined(separator: " and "))" }.joined(separator: ", ")
     }
 }
 
@@ -221,7 +240,9 @@ extension TightenResult: ReadableResult {
             }
             for cut in cuts {
                 let kind = bySentence ? (cut.kind.map { " \($0.rawValue)" } ?? "") : ""
-                lines.append("  \(cut.pause.start)-\(cut.pause.end)  \(TimeText.duration(cut.pause.duration))\(kind) -> cut \(cut.cut.start)-\(cut.cut.end)  ...\(cut.pause.before) | \(cut.pause.after)...")
+                // Sound left in beside the cut is worth a listen.
+                let beside = cut.pause.sound.flatMap { $0.heard.isEmpty ? nil : ", beside \($0.heardText)" } ?? ""
+                lines.append("  \(cut.pause.start)-\(cut.pause.end)  \(TimeText.duration(cut.pause.duration))\(kind) -> cut \(cut.cut.start)-\(cut.cut.end)  ...\(cut.pause.before) | \(cut.pause.after)...\(beside)")
             }
             if !widened.isEmpty {
                 lines.append("Widen \(widened.count) join\(widened.count == 1 ? "" : "s") to their keep, from silence in the take:")
@@ -236,6 +257,7 @@ extension TightenResult: ReadableResult {
         if !protected.isEmpty {
             lines.append("Left \(protected.count) protected pause\(protected.count == 1 ? "" : "s") alone: \(protected.map { "\($0.start)-\($0.end)" }.joined(separator: ", ")).")
         }
+        lines += skippedText
         for warning in warnings { lines.append("Warning: \(warning)") }
         if let applied {
             lines.append("Applied as revision \(applied.revision) (\"\(applied.label)\"). Undo with `tandem undo`.")
@@ -243,6 +265,39 @@ extension TightenResult: ReadableResult {
             lines.append("Nothing changed yet. Run again with --apply (or apply: true) to make the cut.")
         }
         return lines.joined(separator: "\n")
+    }
+}
+
+extension TightenResult {
+    /// The pauses left alone for what's in their sound, by why.
+    var skippedText: [String] {
+        func plural(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
+        var lines: [String] = []
+        let heard = skipped.filter { $0.reason == .sound || $0.reason == .speech }
+        if !heard.isEmpty {
+            lines.append("Left \(plural(heard.count, "pause")) with sound in \(heard.count == 1 ? "it" : "them") alone (listen with tandem clip):")
+            for skip in heard {
+                let why = skip.reason == .speech
+                    ? "no real pause, the voice runs through it"
+                    : (skip.pause.sound.map { "\($0.heardText), no quiet long enough beside it" } ?? "sound in it")
+                lines.append("  \(skip.pause.start)-\(skip.pause.end)  \(TimeText.duration(skip.pause.duration))  ...\(skip.pause.before) | \(skip.pause.after)...  \(why)")
+            }
+        }
+        let short = skipped.filter { $0.reason == .short }
+        if !short.isEmpty {
+            lines.append("Left \(plural(short.count, "pause")) alone that \(short.count == 1 ? "is" : "are") under the minimum measured from the sound: \(short.map { "\($0.pause.start)-\($0.pause.end)" + ($0.pause.sound.map { " (\(TimeText.duration($0.duration)))" } ?? "") }.joined(separator: ", ")).")
+        }
+        let notClean = skipped.filter { $0.reason == .notClean }
+        if !notClean.isEmpty {
+            lines.append("Left \(plural(notClean.count, "pause")) alone whose join check --cuts wouldn't call clean:")
+            for skip in notClean {
+                let sides = [("start", skip.startEdge), ("end", skip.endEdge)].compactMap { name, edge in
+                    edge.map { "\(name) \($0.verdict.rawValue) (\(String(format: "%.1f", $0.margin)) dB under the speech)" }
+                }
+                lines.append("  \(skip.pause.start)-\(skip.pause.end)  \(sides.joined(separator: ", "))")
+            }
+        }
+        return lines
     }
 }
 

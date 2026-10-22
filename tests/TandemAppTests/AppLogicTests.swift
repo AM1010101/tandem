@@ -330,31 +330,50 @@ final class PauseTighteningTests: XCTestCase {
         ])
     }
 
-    func testFindsLongPausesInTimelineTime() throws {
+    /// No file to listen to here, so the plan is the transcript's gaps, as
+    /// `tandem tighten` falls back to (TightenSoundTests has the sound).
+    let folder = ProjectFolder(root: FileManager.default.temporaryDirectory.appendingPathComponent("tandem-no-media-\(UUID().uuidString)"))
+
+    func plan(_ f: AppFixture, minimum: Double, keep: Double, within: TimeRange? = nil, transcript: Transcript? = nil) async -> [TimeRange] {
+        let words = transcript ?? self.transcript()
+        let made = await PauseTightening.plan(
+            in: f.project, transcript: { $0.id == "med_camera" ? words : nil }, folder: folder,
+            minimum: t(minimum), keep: t(keep), within: within
+        )
+        return made.cuts.map(\.cut)
+    }
+
+    func testFindsLongPausesInTimelineTime() async throws {
         let f = try AppFixture()
-        // The voice clip shows the camera file from 0, at timeline 0.
-        let ranges = PauseTightening.ranges(in: f.project, transcript: { $0.id == "med_camera" ? self.transcript() : nil }, minimum: t(1), keep: t(0.2))
-        XCTAssertEqual(ranges, [TimeRange(start: t(2.2), end: t(3.3)), TimeRange(start: t(4.2), end: t(10))])
-        let batch = try XCTUnwrap(PauseTightening.batch(ranges))
-        XCTAssertEqual(batch.commands.first, .rippleDeleteRange(range: TimeRange(start: t(4.2), end: t(10))), "latest first")
+        // The voice clip shows the camera file from 0, at timeline 0. It
+        // leaves 0.2 s of each pause in all, as tandem tighten --keep does.
+        let made = await PauseTightening.plan(
+            in: f.project, transcript: { $0.id == "med_camera" ? self.transcript() : nil }, folder: folder, minimum: t(1), keep: t(0.2)
+        )
+        XCTAssertEqual(made.cuts.map(\.cut), [TimeRange(start: t(2.1), end: t(3.4)), TimeRange(start: t(4.1), end: t(10.1))])
+        XCTAssertTrue(made.warnings.contains { $0.contains("take1-camera.mov") }, "\(made.warnings)")
+        let batch = try XCTUnwrap(PauseTightening.batch(made.cuts))
+        XCTAssertEqual(batch.commands.first, .rippleDeleteRange(range: TimeRange(start: t(4.1), end: t(10.1))), "latest first")
         try f.apply(batch)
-        XCTAssertEqual(f.clips("Camera").map(\.range).last?.end, t(60) - t(1.1) - t(5.8))
+        XCTAssertEqual(f.clips("Camera").map(\.range).last?.end, t(60) - t(1.3) - t(6))
         assertValid(f.project)
     }
 
-    func testAPauseACutRunsThroughIsFoundOnce() throws {
+    func testAPauseACutRunsThroughIsFoundOnce() async throws {
         let f = try AppFixture()
         // Cut 2.5-3.0 out of the pause between "have" (ends 2) and "evals"
         // (starts 3.5): what's left of it is still one pause.
         try f.apply(EditBatch(label: "Cut", commands: [.rippleDeleteRange(range: TimeRange(start: t(2.5), end: t(3)))]))
-        let ranges = PauseTightening.ranges(in: f.project, transcript: { $0.id == "med_camera" ? self.transcript() : nil }, minimum: t(0.9), keep: t(0.2))
-        XCTAssertEqual(ranges.first, TimeRange(start: t(2.2), end: t(2.8)))
+        let ranges = await plan(f, minimum: 0.9, keep: 0.2)
+        XCTAssertEqual(ranges.first, TimeRange(start: t(2.1), end: t(2.9)))
     }
 
-    func testRespectsTheInOutRange() throws {
+    func testRespectsTheInOutRange() async throws {
         let f = try AppFixture()
-        let ranges = PauseTightening.ranges(in: f.project, transcript: { _ in self.transcript() }, minimum: t(1), keep: t(0.2), within: TimeRange(start: t(0), end: t(5)))
-        XCTAssertEqual(ranges, [TimeRange(start: t(2.2), end: t(3.3)), TimeRange(start: t(4.2), end: t(5))])
+        // Only pauses wholly between in and out: the one from 4 to 10.2
+        // runs past it.
+        let ranges = await plan(f, minimum: 1, keep: 0.2, within: TimeRange(start: t(0), end: t(5)))
+        XCTAssertEqual(ranges, [TimeRange(start: t(2.1), end: t(3.4))])
     }
 }
 

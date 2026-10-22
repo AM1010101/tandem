@@ -162,7 +162,10 @@ public enum TranscriptAlignment {
                     var pick: (cost: Double, previous: Int?)?
                     for (run, entry) in before where run <= choice.run {
                         let cost = entry.cost + choice.cost + (lean && run == choice.run ? sentenceLean : 0)
-                        if pick == nil || cost < pick!.cost { pick = (cost, run) }
+                        // Ties go to the earlier run, as the last word's pick
+                        // does: a dictionary's order changes from run to run,
+                        // so without it the same take aligned differently.
+                        if pick == nil || cost < pick!.cost || (cost == pick!.cost && run < pick!.previous!) { pick = (cost, run) }
                     }
                     if let pick { row[choice.run] = pick }
                 }

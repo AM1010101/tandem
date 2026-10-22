@@ -87,9 +87,12 @@ clips in the range).
   lists matches in material that was cut out.
 - `pauses --min 0.6` lists the gaps between words in timeline time. Only
   gaps fully covered by transcribed speech count, so a hole in the take or a
-  clip still waiting for its transcript is never reported as a pause. A
-  breath, click or "um" between two words (SpeechAnalyzer leaves ums out)
-  is part of the pause, so `tighten` cuts it with the silence.
+  clip still waiting for its transcript is never reported as a pause. Each
+  gap is listened to on every unmuted track of the take: `sound` has the
+  gap as it's heard (from the end of the last word's sound to the start of
+  the next's), its real pauses, and any sound in it no word accounts for
+  (`heard`, with the tracks it's on): a breath, an "um" SpeechAnalyzer left
+  out, someone off mic. `tighten` cuts beside that sound, never through it.
 - `media` shows each file's analysis state. Transcripts, loudness, proxies
   and cutout mattes are made in the background; tools that need a
   transcript say which files don't have one yet. `tandem wait` waits for

@@ -22,7 +22,7 @@ keep with `--sentence`, `--comma` and `--mid`; a kind with no keep is left
 alone, and a comma without one uses `--mid`. `--min` (default 0.5 here) is
 the shortest sentence pause that changes and `--mid-min` (default 0.5) the
 shortest comma or mid-sentence one. Each cut is as many whole frames as fit,
-centred in the pause, so what's kept is within a frame of the keep.
+so what's kept is within a frame of the keep.
 
 `--protect` takes timeline times, comma separated (or the option again):
 the pauses containing them are left alone, for the beats Mike wants kept (a
@@ -40,13 +40,34 @@ back, so listen to widened joins. It's off unless you ask, and leaves
 through-edits and protected joins alone.
 
 Without any of those, every pause of at least `--min` (0.6) is shortened to
-`--keep` (0.15), cut from the middle so half the kept silence stays after
-the last word and half before the next one, with the cut edges rounded
-inwards to frames.
+`--keep` (0.15), half the kept pause after the last word and half before the
+next one, with the cut edges rounded inwards to frames.
 
-Word edges come from the voice, so a pause is the real gap between words
-(breaths and clicks in it included), not what's left between the
-transcript's stretched word times. The plan is a batch of
+The transcript only finds the pauses. Each one is then listened to, on
+every unmuted audio track of the take that plays there (the voice, another
+mic, a device's own recording cut with the take; not music, sound effects
+or video tracks' sound), each against its own file's floor, the way
+`check --cuts` reads the sound:
+
+- The keep is measured from the sound: from the end of the last word's
+  sound to the start of the next word's, not the transcript's times (they
+  can be 0.2 s off). `--min` is too, so a gap the transcript makes 0.6 s
+  that's 0.4 s in the sound isn't cut.
+- The cut goes in a real pause (quiet on every track) and never through
+  sound no word accounts for: someone off mic, an app talking, a breath,
+  an "um" the transcript left out. That sound stays where it is and the
+  cut goes in the longest quiet beside it, keeping at least 30 ms either
+  side, so a gap with sound in it can end up longer than the keep. If
+  there's no quiet long enough, the pause is left alone.
+- Both sides of every join are judged as `check --cuts` judges them, and a
+  cut whose join wouldn't be clean is left out.
+
+The plan says which pauses it left alone and why (sound in them, with
+where and on which track; under the minimum in the sound; a join that
+wouldn't be clean), and each cut beside sound says where that sound is, so
+listen to those with `tandem clip`. To take out an "um" it kept, cut it
+with `tandem cut --range`. A file whose sound can't be read is tightened
+from the transcript's gaps as before, with a warning. The plan is a batch of
 `rippleDeleteRange` commands (and the widening's `trim`s), latest first so
 every time is in the current timeline's times; `--json` prints it if you'd
 rather adjust it and `apply` it yourself. `--from` and `--to` limit it to

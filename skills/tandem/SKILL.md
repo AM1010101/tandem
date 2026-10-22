@@ -154,7 +154,11 @@ transitions, media or markers.
   pauses of 0.5 s or more). Keep his deliberate beats with
   `--protect <time,...>`, and add `--widen` to open joins a cut left too
   tight back out from the take's own silence (listen to those). Dry run
-  first, then `--apply`.
+  first, then `--apply`. It places each cut in the sound of every track
+  that plays there, never through sound the transcript doesn't know about
+  (someone off mic, an app, a breath, an "um"), and lists the pauses it
+  left alone for that, with where the sound is: listen to them, and cut a
+  stray "um" with `tandem cut --range` if it should go.
 - **Cut words with `tandem cut`,** not ranges from `search` times (they're
   30 to 200 ms off the sound, and a cut on them clips the word that
   stays). `tandem cut "<phrase>"` (or `--range <start>-<end>` for a rough

@@ -342,6 +342,14 @@ that play the file, a word shows once, on the clip that plays most of it
 less than half of it is left, because it was cut. A clip that plays the
 same stretch again shows its words again.
 
+Words only say roughly where a cut goes. `CutPlacer` (TandemMedia) finds
+the real pauses in a file's own sound, against a local floor, and judges
+both sides of a join; `check --cuts`, `tandem cut` (`CutPlanner`) and
+tighten all use it. Tighten listens to each transcript gap with `GapSound`
+on every unmuted take track that plays there, laid over each other on the
+timeline, and `SoundTightening` (TandemAPI) plans the cuts from that for
+the CLI, MCP and the app's Tighten pauses alike.
+
 ## Rendering
 
 `CompositionBuilder` turns a project into an `AVMutableComposition`, an

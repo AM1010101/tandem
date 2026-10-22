@@ -347,6 +347,15 @@ func headless<R>(_ url: URL, analysis: FakeAnalysis = FakeAnalysis(), _ body: (T
     return try body(service)
 }
 
+func assertServiceErrorAsync(_ code: ServiceError.Code, file: StaticString = #filePath, line: UInt = #line, _ body: () async throws -> Void) async {
+    do {
+        try await body()
+        XCTFail("expected a \(code.rawValue) error", file: file, line: line)
+    } catch {
+        XCTAssertEqual((error as? ServiceError)?.code, code.rawValue, "\(error)", file: file, line: line)
+    }
+}
+
 func assertServiceError(_ code: ServiceError.Code, file: StaticString = #filePath, line: UInt = #line, _ body: () throws -> Void) {
     XCTAssertThrowsError(try body(), file: file, line: line) { error in
         XCTAssertEqual((error as? ServiceError)?.code, code.rawValue, "\(error)", file: file, line: line)

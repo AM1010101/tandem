@@ -554,14 +554,14 @@ enum MCPTools {
         ),
         Tool(
             name: "pauses", title: "List pauses",
-            description: "Silences between words on the voice tracks, in timeline time, with the words either side.",
+            description: "Silences between words on the voice tracks, in timeline time, with the words either side and what the sound has in each (sound: the gap as it's heard on every unmuted take track, its real pauses, and heard: sound no word accounts for, with its tracks).",
             operation: .pauses,
             properties: ["min": time("Shortest pause to list. Default 0.6 s."), "from": time("Start of the range."), "to": time("End of the range.")],
             readOnly: true, idempotent: true
         ),
         Tool(
             name: "tighten", title: "Tighten pauses",
-            description: "Shortens pauses with frame-aligned ripple deletes that cut the whole take and let B-roll, music and titles follow: by what each pause follows (mike: true for Mike's rules, 0.4 s after a sentence, 0.12 s after a comma, 0.08 s mid-sentence, only pauses of 0.5 s or more; or sentence, comma and mid keeps of your own), or every pause longer than min down to keep. protect leaves pauses containing those times alone; widen: true also widens joins between speech clips that leave less than the keep, from silence in the take either side. A dry run that returns the plan and the commands unless apply: true.",
+            description: "Shortens pauses with frame-aligned ripple deletes that cut the whole take and let B-roll, music and titles follow: by what each pause follows (mike: true for Mike's rules, 0.4 s after a sentence, 0.12 s after a comma, 0.08 s mid-sentence, only pauses of 0.5 s or more; or sentence, comma and mid keeps of your own), or every pause longer than min down to keep. protect leaves pauses containing those times alone; widen: true also widens joins between speech clips that leave less than the keep, from silence in the take either side. Each cut goes in a real pause in the sound of every unmuted take track there, with the keep measured from the words' sound, never through sound no word accounts for (someone off mic, an app, a breath), and only with a clean join; skipped lists the pauses it left alone and why. A dry run that returns the plan and the commands unless apply: true.",
             operation: .tighten,
             properties: [
                 "mike": S.boolean("Mike's rules: sentence 0.4, comma 0.12, mid 0.08, min 0.5, midMin 0.5. The other fields override them."),
@@ -571,7 +571,7 @@ enum MCPTools {
                 "midMin": time("Comma and mid-sentence pauses at least this long change, so breaths stay. Default 0.5 s."),
                 "protect": S.array(time("A timeline time."), "Leave the pauses containing these times alone."),
                 "widen": S.boolean("Also widen joins that leave less than the keep, with ripple trims into silence the take has either side (never past a transcribed word)."),
-                "min": time("Pauses at least this long get shortened. Default 0.6 s, or 0.5 s for sentence pauses with the keeps by kind."),
+                "min": time("Pauses at least this long (in the sound) get shortened. Default 0.6 s, or 0.5 s for sentence pauses with the keeps by kind."),
                 "keep": time("How much of every pause to keep. Default 0.15 s. Not with sentence, comma, mid or mike."),
                 "apply": S.boolean("Make the cut. Without it nothing changes."),
                 "from": time("Only pauses after this time."), "to": time("Only pauses before this time."),

@@ -57,7 +57,7 @@ struct TimelineToolbar: View {
                     .foregroundStyle(Theme.textMuted.color)
             }
             .buttonStyle(.plain)
-            .tip("Tighten pauses: remove long silences from the take, found from its transcript")
+            .tip("Tighten pauses: remove long silences from the take, found from its transcript and its sound")
             .popover(isPresented: $showTighten, arrowEdge: .top) {
                 TightenPausesPopover(model: model) { showTighten = false }
             }

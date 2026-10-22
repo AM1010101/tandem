@@ -156,7 +156,7 @@ final class SectionCardsAPITests: XCTestCase {
         // The pause from "section." (29.9) to "Now" (30.5), across the cut
         // at 30, tightened the way `tandem tighten` does it: 0.1 s kept on
         // each side of the cut, which stays at 30.
-        let tightened = try h.service.tighten(TightenRequest(min: 0.5, keep: 0.15, apply: true, from: t(29.5), to: t(31)), context: h.context)
+        let tightened = try await h.service.tighten(TightenRequest(min: 0.5, keep: 0.15, apply: true, from: t(29.5), to: t(31)), context: h.context)
         XCTAssertEqual(tightened.cuts.map(\.cut), [TimeRange(start: t(30), end: t(30.4))])
         func now() throws -> WordTiming {
             try XCTUnwrap(h.service.transcript(id: nil, from: nil, to: nil).words.first { $0.text == "Now" })

@@ -379,7 +379,19 @@ public final class TandemService: @unchecked Sendable {
         return PausesResult(revision: revision, minimum: minimum, pauses: pauses, total: total, missing: map.missing)
     }
 
-    public func tighten(_ request: TightenRequest, context: CallContext) throws -> TightenResult {
+    /// Pauses with what the sound under each has (`tandem pauses`): the gap
+    /// as it's heard, its real pauses, and sound in it no word accounts for.
+    public func listenedPauses(minimum: Time, from: Time?, to: Time?) async throws -> PausesResult {
+        var result = try pauses(minimum: minimum, from: from, to: to)
+        let (project, _) = coordinator.snapshot()
+        let map = TranscriptTools.speechMap(project, analysis: analysis)
+        let heard = await SoundTightening.listened(result.pauses, map: map, project: project, folder: folder)
+        result.pauses = heard.pauses
+        result.warnings = heard.warnings
+        return result
+    }
+
+    public func tighten(_ request: TightenRequest, context: CallContext) async throws -> TightenResult {
         let rules = try pauseRules(for: request)
         let (project, revision) = coordinator.snapshot()
         try checkExpected(request.expectedRevision, at: revision)
@@ -387,10 +399,13 @@ public final class TandemService: @unchecked Sendable {
         let protect = request.protect ?? []
         let found = TranscriptTools.pauses(in: map, minimum: min(rules.minimum, rules.midMinimum), from: request.from, to: request.to)
         let protected = found.filter { TranscriptTools.isProtected($0, by: protect) }
-        let cuts = TranscriptTools.plan(
-            found.filter { !TranscriptTools.isProtected($0, by: protect) }, rules: rules,
-            frameRate: project.settings.frameRate, snug: request.bySentence
+        // Each cut placed in the sound under its pause, on every track the
+        // take plays there (`SoundTightening`).
+        let planned = await SoundTightening.plan(
+            found.filter { !TranscriptTools.isProtected($0, by: protect) }, rules: rules, snug: request.bySentence,
+            map: map, project: project, folder: folder
         )
+        let cuts = planned.cuts
         let widened = request.widen == true
             ? TranscriptTools.widening(in: map, project: project, rules: rules, protect: protect, from: request.from, to: request.to) { analysis.transcript(for: $0) }
             : []
@@ -398,7 +413,7 @@ public final class TandemService: @unchecked Sendable {
         let removed = cuts.reduce(Time.zero) { $0 + $1.cut.duration }
         let added = widened.reduce(Time.zero) { $0 + $1.added }
 
-        var warnings: [String] = []
+        var warnings = planned.warnings
         if !map.missing.isEmpty {
             let names = map.missing.compactMap { project.media($0)?.path }.joined(separator: ", ")
             warnings.append("No transcript yet for \(names), so pauses there aren't included.")
@@ -416,7 +431,7 @@ public final class TandemService: @unchecked Sendable {
             keep: rules.sentence ?? rules.comma ?? rules.mid ?? .zero,
             sentence: bySentence ? rules.sentence : nil, comma: bySentence ? rules.comma : nil,
             mid: bySentence ? rules.mid : nil, midMinimum: bySentence ? rules.midMinimum : nil,
-            cuts: cuts, widened: widened, protected: protected, removed: removed, added: added,
+            cuts: cuts, widened: widened, protected: protected, skipped: planned.skipped, removed: removed, added: added,
             durationBefore: project.duration, durationAfter: project.duration - removed + added,
             commands: commands, applied: nil, warnings: warnings, missing: map.missing
         )

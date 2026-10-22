@@ -70,8 +70,25 @@ export type SearchHit = {
 };
 export type SearchResult = { revision: number; hits: SearchHit[] };
 
-export type Pause = { start: number; end: number; duration: number; before: string; after: string; clipIDs: string[] };
-export type PausesResult = { revision: number; minimum: number; total: number; pauses: Pause[]; missing: unknown[] };
+export type PauseSound = {
+  start: number;
+  end: number;
+  duration: number;
+  quiet: { start: number; duration: number }[];
+  heard: { start: number; end: number; tracks: string[] }[];
+  runsThrough: boolean;
+};
+export type Pause = {
+  start: number;
+  end: number;
+  duration: number;
+  before: string;
+  after: string;
+  clipIDs: string[];
+  /** What the sound under the gap has, on every unmuted take track. */
+  sound?: PauseSound;
+};
+export type PausesResult = { revision: number; minimum: number; total: number; pauses: Pause[]; missing: unknown[]; warnings?: string[] };
 
 export type MediaInfo = {
   id: string;

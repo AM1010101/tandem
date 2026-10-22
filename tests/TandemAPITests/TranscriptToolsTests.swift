@@ -242,11 +242,11 @@ final class TranscriptToolsTests: XCTestCase {
         XCTAssertTrue(TranscriptTools.plan([tiny], keep: t(0.15), frameRate: .fps30).isEmpty)
     }
 
-    func testTightenDryRunThenApplyThenUndo() throws {
+    func testTightenDryRunThenApplyThenUndo() async throws {
         let h = try ServiceHarness()
         defer { h.close() }
         let before = h.service.coordinator.project
-        let plan = try h.service.tighten(TightenRequest(min: 0.6, keep: 0.15), context: h.context)
+        let plan = try await h.service.tighten(TightenRequest(min: 0.6, keep: 0.15), context: h.context)
         XCTAssertEqual(plan.cuts.count, 4)
         XCTAssertNil(plan.applied)
         XCTAssertEqual(h.service.coordinator.project, before, "a dry run changes nothing")
@@ -255,7 +255,7 @@ final class TranscriptToolsTests: XCTestCase {
         XCTAssertEqual(latest.start, plan.cuts.last?.cut.start, "latest cut first")
         XCTAssertEqual(plan.durationAfter, plan.durationBefore - plan.removed)
 
-        let applied = try h.service.tighten(TightenRequest(min: 0.6, keep: 0.15, apply: true), context: h.context)
+        let applied = try await h.service.tighten(TightenRequest(min: 0.6, keep: 0.15, apply: true), context: h.context)
         XCTAssertEqual(applied.applied?.revision, 2)
         XCTAssertEqual(applied.applied?.label, "Tighten 4 pauses to 0.150s")
         XCTAssertEqual(h.service.coordinator.project.duration, plan.durationAfter)
@@ -267,15 +267,15 @@ final class TranscriptToolsTests: XCTestCase {
         XCTAssertEqual(h.service.coordinator.project, before)
     }
 
-    func testTightenRefusesToDesyncALockedTake() throws {
+    func testTightenRefusesToDesyncALockedTake() async throws {
         var project = APIFixture.project()
         project.videoTracks[1].locked = true
         let h = try ServiceHarness(project: project)
         defer { h.close() }
-        let plan = try h.service.tighten(TightenRequest(), context: h.context)
+        let plan = try await h.service.tighten(TightenRequest(), context: h.context)
         XCTAssertTrue(plan.warnings.contains { $0.contains("\"Camera\" is locked") }, "\(plan.warnings)")
-        assertServiceError(.locked) { _ = try h.service.tighten(TightenRequest(apply: true), context: h.context) }
-        assertServiceError(.badRequest) { _ = try h.service.tighten(TightenRequest(min: 0.5, keep: 0.5), context: h.context) }
+        await assertServiceErrorAsync(.locked) { _ = try await h.service.tighten(TightenRequest(apply: true), context: h.context) }
+        await assertServiceErrorAsync(.badRequest) { _ = try await h.service.tighten(TightenRequest(min: 0.5, keep: 0.5), context: h.context) }
     }
 }
 

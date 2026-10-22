@@ -345,7 +345,7 @@ public struct PausesRequest: ServiceCall {
     }
 
     public func run(on service: TandemService, context: CallContext) async throws -> PausesResult {
-        try service.pauses(minimum: Time(seconds: min ?? TranscriptTools.defaultMinimum), from: from, to: to)
+        try await service.listenedPauses(minimum: Time(seconds: min ?? TranscriptTools.defaultMinimum), from: from, to: to)
     }
 }
 
@@ -359,6 +359,36 @@ public struct Pause: Codable, Equatable, Sendable {
     public var after: String
     /// Speech clips under the pause.
     public var clipIDs: [String]
+    /// What the sound under it has, on every track the take plays there
+    /// (`tandem pauses` and `tighten` listen). Nil when there's no sound to
+    /// listen to, like a file that isn't there.
+    public var sound: PauseSound? = nil
+}
+
+/// The sound under a gap between two words, heard on every unmuted track
+/// of the take that plays there (`GapSound`).
+public struct PauseSound: Codable, Equatable, Sendable {
+    /// From the end of the last word's sound to the start of the next
+    /// word's, in timeline time. The transcript's word times can be 30 to
+    /// 200 ms off the sound, so this is the gap as it's heard.
+    public var start: Time
+    public var end: Time
+    public var duration: Time
+    /// The real pauses in it: quiet on every track.
+    public var quiet: [TimeRange]
+    /// Sound in it no transcript word accounts for: a breath, a second
+    /// speaker off mic, an app talking, on the tracks named.
+    public var heard: [HeardSound]
+    /// The voice runs right through the gap with no real pause: the
+    /// transcript's times are off, or the speech there is quiet.
+    public var runsThrough: Bool
+}
+
+public struct HeardSound: Codable, Equatable, Sendable {
+    public var start: Time
+    public var end: Time
+    /// The tracks it's heard on.
+    public var tracks: [String]
 }
 
 public struct PausesResult: Codable, Sendable {
@@ -367,6 +397,7 @@ public struct PausesResult: Codable, Sendable {
     public var pauses: [Pause]
     public var total: Time
     public var missing: [String]
+    public var warnings: [String]? = nil
 }
 
 /// What a pause follows: the end of a sentence (. ? !), a comma (, ; :) or
@@ -454,7 +485,7 @@ public struct TightenRequest: ServiceCall {
     public var bySentence: Bool { sentence != nil || comma != nil || mid != nil || mike == true }
 
     public func run(on service: TandemService, context: CallContext) async throws -> TightenResult {
-        try service.tighten(self, context: context)
+        try await service.tighten(self, context: context)
     }
 }
 
@@ -465,13 +496,42 @@ public struct PlannedCut: Codable, Equatable, Sendable {
     /// What the pause follows, and how much of it is kept.
     public var kind: PauseKind?
     public var keep: Time?
+    /// How each side of the join sounds, as `check --cuts` judges it, on
+    /// the track it's worst on. Set when the cut was placed from the sound.
+    public var startEdge: CutJoinSide?
+    public var endEdge: CutJoinSide?
 
-    public init(pause: Pause, cut: TimeRange, kind: PauseKind? = nil, keep: Time? = nil) {
+    public init(pause: Pause, cut: TimeRange, kind: PauseKind? = nil, keep: Time? = nil, startEdge: CutJoinSide? = nil, endEdge: CutJoinSide? = nil) {
         self.pause = pause
         self.cut = cut
         self.kind = kind
         self.keep = keep
+        self.startEdge = startEdge
+        self.endEdge = endEdge
     }
+}
+
+/// A pause tighten would have shortened but left alone, and why.
+public struct SkippedPause: Codable, Equatable, Sendable {
+    public enum Reason: String, Codable, Sendable {
+        /// The voice runs right through it: no real pause in the sound.
+        case speech
+        /// Sound the transcript has no word for (`pause.sound.heard`) leaves
+        /// no real pause long enough for the cut.
+        case sound
+        /// Measured from the sound, it's shorter than the minimum.
+        case short
+        /// A side of the join would be judged clipped or marginal.
+        case notClean
+    }
+
+    public var pause: Pause
+    public var reason: Reason
+    public var kind: PauseKind
+    public var keep: Time
+    /// For `notClean`: how each side of the join would have sounded.
+    public var startEdge: CutJoinSide?
+    public var endEdge: CutJoinSide?
 }
 
 /// A join between two speech clips widened back to its keep with silence
@@ -512,6 +572,10 @@ public struct TightenResult: Codable, Sendable {
     public var widened: [PlannedWiden]
     /// Pauses left alone because they contain a `protect` time.
     public var protected: [Pause]
+    /// Pauses left alone because of what the sound under them has: sound
+    /// in them, too short once measured from the sound, or a join that
+    /// wouldn't be clean.
+    public var skipped: [SkippedPause]
     public var removed: Time
     public var added: Time
     public var durationBefore: Time

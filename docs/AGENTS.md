@@ -284,7 +284,7 @@ One line each; `tandem help <command>` has the options and what they do.
 | `tandem transcribe <id or path>` | a transcript of any file with sound |
 | `tandem wait [transcript\|matte\|proxy\|jobs\|export]` | wait for background work |
 | `tandem search "<phrase>"` | where a phrase is said |
-| `tandem pauses` | silences between words |
+| `tandem pauses` | silences between words, and what the sound has in them |
 | `tandem tighten` | shorten pauses (`--mike` for Mike's rules; dry run without `--apply`) |
 | `tandem cut "<phrase>"` | cut words with both edges in real pauses (`--range`, `--at`; dry run without `--apply`) |
 | `tandem join` | join through-edits (dry run without `--apply`) |

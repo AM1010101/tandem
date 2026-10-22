@@ -185,10 +185,10 @@ transitions, media or markers.
   which is what sounded right on the Ian video. Long false starts are cut
   pause to pause anyway. Dry run first, then `--apply`; it's one undo step.
   Keep `cutRanges` for exact cuts you've checked yourself.
-- **Then check every join two ways,** after every batch and across the
+- **Then check every join three ways,** after every batch and across the
   whole timeline, not just the joins you touched. In round 3 Mike still
   found two cut-offs, both at edges placed from transcript times and never
-  re-checked. Neither check is enough alone.
+  re-checked. No one check is enough alone.
   - `tandem check --cuts` (with `--changed` or `--from`/`--to`) reads the
     take's own sound either side of every cut. Use it rather than an
     energy script of your own (agents wrote one about 15 times).
@@ -197,6 +197,14 @@ transitions, media or markers.
     padded with a second of silence, with the local Whisper above, and
     compare its edge words with the take's. It caught the "pro" cut off
     "processed", which every level check passed.
+  - A read across every join: transcribe the whole rendered voice track,
+    put the words either side of each join together, and read them (or
+    have a model read them) for anything that doesn't run on: a dropped
+    first or last word, a stray fragment of a cut word, a half-thought.
+    Then listen-check each one it flags against the take. After Mike signed
+    off the Ian video, this found five more cut-offs that the audio checks
+    passed ("in the recent | point" for "recent past", a lost "It's", a
+    stray "do", "the" and "okay").
 - **When Whisper drops an edge word, the edge is wrong.** Whisper fills in
   a partly cut word, so a word missing entirely is mostly gone. On the Ian
   cold open it dropped "time." from "a couple lies about time."; the agent

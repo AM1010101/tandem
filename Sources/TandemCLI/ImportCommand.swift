@@ -39,9 +39,9 @@ struct ImportCommand {
                 try ProjectFile.load(from: b).project, named: b.deletingPathExtension().lastPathComponent
             )
             if json {
-                print(String(decoding: try ServiceJSON.encoder(pretty: true).encode(comparison), as: UTF8.self))
+                StandardOutput.line(String(decoding: try ServiceJSON.encoder(pretty: true).encode(comparison), as: UTF8.self))
             } else {
-                print(comparison.text)
+                StandardOutput.line(comparison.text)
             }
             return 0
         default:
@@ -72,11 +72,11 @@ struct ImportCommand {
                 var project: String
                 var report: ImportReport
             }
-            print(String(decoding: try ServiceJSON.encoder(pretty: true).encode(Output(project: projectURL.path, report: result.report)), as: UTF8.self))
+            StandardOutput.line(String(decoding: try ServiceJSON.encoder(pretty: true).encode(Output(project: projectURL.path, report: result.report)), as: UTF8.self))
         } else {
-            print(result.report.text)
-            print("")
-            print("Wrote \(projectURL.path)")
+            StandardOutput.line(result.report.text)
+            StandardOutput.line("")
+            StandardOutput.line("Wrote \(projectURL.path)")
         }
         return result.report.count(.failed) > 0 ? 1 : 0
     }

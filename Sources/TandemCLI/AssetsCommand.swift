@@ -104,9 +104,9 @@ struct AssetsCommand {
     private func show<R: Encodable & ReadableResult>(_ result: R, json: Bool) -> Int32 {
         if json {
             guard let data = try? ServiceJSON.encoder(pretty: true).encode(result) else { return 1 }
-            print(String(decoding: data, as: UTF8.self))
+            StandardOutput.line(String(decoding: data, as: UTF8.self))
         } else {
-            print(result.readableText)
+            StandardOutput.line(result.readableText)
         }
         return 0
     }

@@ -410,6 +410,51 @@ final class CLITests: XCTestCase {
         XCTAssertEqual(mcp.terminationStatus, 0)
     }
 
+    /// Core ML (through Bark) and other native libraries can print straight
+    /// to descriptor 1. That has to land on stderr, not in front of the JSON.
+    func testStrayNativeOutputGoesToStderr() throws {
+        let folder = TempFolder()
+        let stray = ["TANDEM_TEST_STRAY_STDOUT": "1"]
+        let effects = try tandem("effects", "--json", in: folder.url, env: stray)
+        XCTAssertEqual(effects.status, 0, effects.stderr)
+        XCTAssertFalse(effects.stdout.contains("E5RT"), effects.stdout)
+        XCTAssertNoThrow(try JSONSerialization.jsonObject(with: Data(effects.stdout.utf8)), effects.stdout)
+        XCTAssertTrue(effects.stderr.contains("E5RT encountered an STL exception (write)"), effects.stderr)
+        XCTAssertTrue(effects.stderr.contains("E5RT encountered an STL exception (stdio)"), effects.stderr)
+
+        let version = try tandem("--version", in: folder.url, env: stray)
+        XCTAssertEqual(version.stdout, "tandem \(TandemAPI.version)\n")
+
+        let failed = try tandem("status", "--json", in: folder.url, env: stray)
+        XCTAssertEqual(failed.status, 1)
+        XCTAssertNoThrow(try JSONSerialization.jsonObject(with: Data(failed.stdout.utf8)), failed.stdout)
+    }
+
+    func testMCPStdoutStaysJSONWhenALibraryPrints() async throws {
+        let folder = TempFolder()
+        _ = try APIFixture.write(to: folder.url)
+        let mcp = Process()
+        mcp.executableURL = Self.binary
+        mcp.arguments = ["mcp"]
+        mcp.currentDirectoryURL = folder.url
+        mcp.environment = Self.environment(["TANDEM_TEST_STRAY_STDOUT": "1"])
+        let input = Pipe(), output = Pipe()
+        mcp.standardInput = input
+        mcp.standardOutput = output
+        mcp.standardError = Pipe()
+        let exited = ExitSignal(mcp)
+        try mcp.run()
+        defer { if mcp.isRunning { mcp.terminate() } }
+        input.fileHandleForWriting.write(Data((#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"claude-code","version":"1"}}}"# + "\n").utf8))
+        try input.fileHandleForWriting.close()
+        let stopped = await exited.value(timeout: 20)
+        guard stopped else { return XCTFail("exits when stdin closes") }
+        let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        XCTAssertEqual(text.split(separator: "\n").count, 1, text)
+        let reply = try JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))
+        XCTAssertEqual(reply[json: "result"]?[json: "protocolVersion"], .string("2025-06-18"))
+    }
+
     /// Finding what changed, putting it back, and finding clip IDs, the
     /// way agents do between Mike's rounds.
     func testDiffRestoreHistoryAndClips() throws {

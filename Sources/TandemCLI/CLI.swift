@@ -29,11 +29,11 @@ struct CLI {
             return usage(error.localizedDescription, command: nil)
         }
         if parsed.has("version") && parsed.command == nil {
-            print("tandem \(TandemAPI.version)")
+            StandardOutput.line("tandem \(TandemAPI.version)")
             return 0
         }
         guard let name = parsed.command else {
-            print(Help.overview)
+            StandardOutput.line(Help.overview)
             return parsed.has("help") ? 0 : 2
         }
         // Titles can use the shared library's fonts wherever this process
@@ -48,9 +48,9 @@ struct CLI {
                     let hint = Arguments.closest(topic, in: names).map { " Did you mean `tandem help \($0)`?" } ?? ""
                     return usage("There's no `\(topic)` command or edit command.\(hint)", command: nil)
                 }
-                print(text)
+                StandardOutput.line(text)
             } else {
-                print(Help.overview)
+                StandardOutput.line(Help.overview)
             }
             return 0
         }
@@ -59,7 +59,7 @@ struct CLI {
             return usage("There's no `\(name)` command.\(hint)", command: nil)
         }
         if parsed.has("help") {
-            print(Help.detail(command))
+            StandardOutput.line(Help.detail(command))
             return 0
         }
         do {
@@ -84,7 +84,7 @@ struct CLI {
             return show(try EffectsResult.catalog(type: args.positionals.first), json: json)
         case "schema":
             let data = try ServiceJSON.encoder(pretty: true).encode(CommandSchema.document)
-            print(String(decoding: data, as: UTF8.self))
+            StandardOutput.line(String(decoding: data, as: UTF8.self))
             return 0
         case "serve":
             return try await serve(args)
@@ -121,7 +121,7 @@ struct CLI {
             let status = try await client().call(StatusRequest())
             // Just the number, for scripts; --json has it as `revision` too.
             if args.has("revision") && !json {
-                print(status.revision)
+                StandardOutput.line(String(status.revision))
                 return 0
             }
             return show(status, json: json)
@@ -425,10 +425,10 @@ struct CLI {
             defer { service.shutdown() }
             return show(service.status(), json: true)
         }
-        print("Created \(url.path), \(project.settings.width)x\(project.settings.height), with \(project.allTracks.count) tracks (\(project.allTracks.map(\.name).joined(separator: ", "))).")
+        StandardOutput.line("Created \(url.path), \(project.settings.width)x\(project.settings.height), with \(project.allTracks.count) tracks (\(project.allTracks.map(\.name).joined(separator: ", "))).")
         let added = refresh.added
-        print(added.isEmpty ? "No media found in the folder yet. Add files and run `tandem media --refresh`." : "Added \(added.count) media file\(added.count == 1 ? "" : "s") from the folder.")
-        for line in Self.newMediaLines(refresh, in: project) { print(line) }
+        StandardOutput.line(added.isEmpty ? "No media found in the folder yet. Add files and run `tandem media --refresh`." : "Added \(added.count) media file\(added.count == 1 ? "" : "s") from the folder.")
+        for line in Self.newMediaLines(refresh, in: project) { StandardOutput.line(line) }
         return 0
     }
 
@@ -485,8 +485,7 @@ struct CLI {
             throw error
         }
         let project = session.coordinator.project
-        print("Serving \"\(project.name)\" on http://127.0.0.1:\(host.port) (pid \(getpid())). The token is in \(ProjectSession.lockURL(for: url).path). Stop with Ctrl-C.")
-        fflush(stdout)
+        StandardOutput.line("Serving \"\(project.name)\" on http://127.0.0.1:\(host.port) (pid \(getpid())). The token is in \(ProjectSession.lockURL(for: url).path). Stop with Ctrl-C.")
         let log = Task {
             for await event in host.service.events.subscribe() where event.isChange {
                 let line = "r\(event.revision ?? 0) \(event.kind.rawValue) \"\(event.label ?? "")\" by \(event.author ?? "?")\n"
@@ -500,7 +499,7 @@ struct CLI {
         log.cancel()
         host.stop()
         session.close()
-        print("Stopped. Saved revision \(session.savedRevision).")
+        StandardOutput.line("Stopped. Saved revision \(session.savedRevision).")
         return 0
     }
 
@@ -508,7 +507,7 @@ struct CLI {
         // A client that goes away mid-write shouldn't kill the process.
         signal(SIGPIPE, SIG_IGN)
         let options = MCPServer.Options(project: args.options["project"], directory: directory, author: args.options["author"], environment: environment)
-        await MCPServer(options: options).run()
+        await MCPServer(options: options, output: StandardOutput.handle).run()
         return 0
     }
 
@@ -520,7 +519,7 @@ struct CLI {
         }
         for try await event in client.events() {
             if json {
-                print(String(decoding: try ServiceJSON.encoder().encode(event), as: UTF8.self))
+                StandardOutput.line(String(decoding: try ServiceJSON.encoder().encode(event), as: UTF8.self))
             } else {
                 var line = "\(formatter.string(from: event.date))  "
                 switch event.kind {
@@ -534,9 +533,8 @@ struct CLI {
                 default:
                     line += "r\(event.revision ?? 0)  \(event.kind.rawValue)  \(event.label ?? "")  (\(event.author ?? "?"))"
                 }
-                print(line)
+                StandardOutput.line(line)
             }
-            fflush(stdout)
         }
         return 0
     }
@@ -549,8 +547,7 @@ struct CLI {
         guard !json else { return nil }
         let progress = WaitProgress(request)
         return { event in
-            for line in progress.lines(for: event) { print(line) }
-            fflush(stdout)
+            for line in progress.lines(for: event) { StandardOutput.line(line) }
         }
     }
 
@@ -685,7 +682,7 @@ struct CLI {
         }
         let chosen = all ? listed.comments.map(\.id) : ids
         guard !chosen.isEmpty else {
-            print("No comments to resolve.")
+            StandardOutput.line("No comments to resolve.")
             return 0
         }
         let batch = CommentEdits.remove(chosen, label: label ?? (chosen.count == 1 ? "Resolve comment" : "Resolve \(chosen.count) comments"))
@@ -696,16 +693,16 @@ struct CLI {
     private func show<R: Encodable & ReadableResult>(_ result: R, json: Bool) -> Int32 {
         if json {
             guard let data = try? ServiceJSON.encoder(pretty: true).encode(result) else { return 1 }
-            print(String(decoding: data, as: UTF8.self))
+            StandardOutput.line(String(decoding: data, as: UTF8.self))
         } else {
-            print(result.readableText)
+            StandardOutput.line(result.readableText)
         }
         return 0
     }
 
     private func fail(_ error: ServiceError, json: Bool) -> Int32 {
         if json, let data = try? ServiceJSON.encoder(pretty: true).encode(ErrorEnvelope(error: error)) {
-            print(String(decoding: data, as: UTF8.self))
+            StandardOutput.line(String(decoding: data, as: UTF8.self))
         } else {
             FileHandle.standardError.write(Data("error: \(error.message)\n".utf8))
         }

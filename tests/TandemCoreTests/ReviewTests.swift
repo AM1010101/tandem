@@ -379,6 +379,49 @@ final class ReviewLogTests: XCTestCase {
         XCTAssertEqual(log.entries.map(\.label), ["More B-roll"])
     }
 
+    /// The app checks what's been watched on every frame while playing, so
+    /// it has to stay quick on a real edit: the Nipunn interview had 2,232
+    /// clips and 1,676 agent cuts waiting, and finding each cut's clip by
+    /// searching the whole project took the main thread ~190 ms a frame,
+    /// which made zooming while playing crawl.
+    func testCheckingWhatWasWatchedStaysQuickWithThousandsOfCuts() throws {
+        let (_, c) = try Fixture.edited()
+        var project = c.project
+        let location = try XCTUnwrap(project.trackLocations.first { project[$0].name == "Camera" })
+        let template = try XCTUnwrap(project[location].clips.first)
+        var track = project[location]
+        track.clips = (0..<2_000).map { index in
+            var clip = template
+            clip.id = "clip_\(index)"
+            clip.start = t(Double(index))
+            clip.duration = t(1)
+            clip.linkGroup = nil
+            return clip
+        }
+        project[location] = track
+        // Cuts pinned to clips all along the take, so each is looked up.
+        let removals = (0..<1_600).map { index in
+            ReviewRemoval(trackID: track.id, time: t(Double(index)), duration: t(0.5), anchorClipID: "clip_\(index)", anchorEdge: .start, from: [])
+        }
+        var changes = ReviewChanges()
+        changes.removals = removals
+        let entry = ReviewEntry(revision: 1, label: "Cuts", author: "claude", date: Date(), changes: changes)
+
+        // A frame's worth of play near the start: nothing is watched yet,
+        // so every cut is checked and none goes.
+        var log = ReviewLog(entries: [entry])
+        let started = CFAbsoluteTimeGetCurrent()
+        XCTAssertFalse(log.markWatched([TimeRange(start: t(0.1), end: t(0.15))], in: project))
+        let elapsed = CFAbsoluteTimeGetCurrent() - started
+        XCTAssertLessThan(elapsed, 0.05, "took \(Int(elapsed * 1_000)) ms; it runs every frame while playing")
+
+        // And it still finds the cuts by their clips: played across the
+        // third clip's start, that cut goes and the rest stay.
+        XCTAssertTrue(log.markWatched([TimeRange(start: t(1.5), end: t(2.5))], in: project))
+        XCTAssertEqual(log.entries[0].removals.count, 1_599)
+        XCTAssertFalse(log.entries[0].removals.contains { $0.anchorClipID == "clip_2" })
+    }
+
     /// The highlight is on the clip's ID, so it stays with the clip when
     /// Mike tightens the take before it and then moves it.
     func testTheHighlightFollowsItsClipThroughARippleAndAMove() throws {

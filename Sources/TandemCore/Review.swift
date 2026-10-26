@@ -66,7 +66,17 @@ public struct ReviewRemoval: Codable, Equatable, Sendable {
     /// Where the mark is in `project`: beside its anchor wherever that has
     /// moved, or where it was recorded when the anchor's gone.
     public func time(in project: Project) -> Time {
-        guard let anchorClipID, let clip = project.clip(anchorClipID) else { return time }
+        time(anchor: anchorClipID.flatMap { project.clip($0) })
+    }
+
+    /// The same, with the project's clips by ID: `project.clip` searches
+    /// every track, which adds up over hundreds of cuts.
+    public func time(clips: [String: Clip]) -> Time {
+        time(anchor: anchorClipID.flatMap { clips[$0] })
+    }
+
+    private func time(anchor clip: Clip?) -> Time {
+        guard let clip else { return time }
         return (anchorEdge == .end ? clip.end : clip.start) + offset
     }
 }
@@ -394,9 +404,11 @@ extension ReviewLog {
                 guard let transition = transitions[id], let span = Self.span(of: transition, clips: clips) else { return false }
                 return covered(span.start, span.end)
             }
-            // A cut is a moment: watched when play went across it.
+            // A cut is a moment: watched when play went across it. This
+            // runs every frame while playing, so the clips come from the
+            // table above rather than a search of the project per cut.
             entry.removals.removeAll { removal in
-                let at = removal.time(in: project)
+                let at = removal.time(clips: clips)
                 let reach = Time(seconds: 0.25)
                 return seen.contains { $0.start <= at - reach && at + reach <= $0.end }
             }

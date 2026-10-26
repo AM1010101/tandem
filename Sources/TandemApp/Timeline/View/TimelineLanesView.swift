@@ -1385,6 +1385,9 @@ final class TimelineLanesView: TimelineChildView {
     }
 
     /// The edit a library drag would make at `time` on `lane`, previewed.
+    // Unoptimised because Swift 6.3.3's CopyPropagation pass crashes on it
+    // in release builds. It runs once per drag move, so speed doesn't matter.
+    @_optimize(none)
     private func workOutDrop(_ dragged: LibraryDrag, at time: Time, lane: TimelineLane?, target: DropTarget, point: CGPoint, model: EditorModel) -> NSDragOperation {
         let at = Timecode.string(time, rate: model.frameRate)
         let batch: EditBatch?
